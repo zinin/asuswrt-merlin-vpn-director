@@ -367,6 +367,50 @@ step_configure_clients() {
 }
 
 ###############################################################################
+# Step 6: Show summary
+###############################################################################
+
+step_show_summary() {
+    print_header "Step 6: Configuration Summary"
+
+    printf "Xray Server:\n"
+    printf "  Address: %s\n" "$SELECTED_SERVER_ADDRESS"
+    printf "  Port: %s\n" "$SELECTED_SERVER_PORT"
+    printf "\n"
+
+    printf "Xray Exclusions: %s\n\n" "$XRAY_EXCLUDE_SETS_LIST"
+
+    printf "Xray Clients:\n"
+    if [ -n "$XRAY_CLIENTS_LIST" ]; then
+        printf '%s' "$XRAY_CLIENTS_LIST" | while read -r ip; do
+            [ -n "$ip" ] && printf "  - %s\n" "$ip"
+        done
+    else
+        printf "  (none)\n"
+    fi
+    printf "\n"
+
+    printf "Tunnel Director Rules:\n"
+    if [ -n "$TUN_DIR_RULES_LIST" ]; then
+        printf '%s' "$TUN_DIR_RULES_LIST" | while read -r rule; do
+            [ -n "$rule" ] && printf "  - %s\n" "$rule"
+        done
+    else
+        printf "  (none)\n"
+    fi
+    printf "\n"
+
+    server_ip_count=$(printf '%s\n' "$XRAY_SERVERS_IPS" | wc -w | tr -d ' ')
+    printf "XRAY_SERVERS ipset: %s IP addresses\n" "$server_ip_count"
+    printf "\n"
+
+    if ! confirm "Proceed with configuration?"; then
+        print_info "Configuration cancelled"
+        exit 0
+    fi
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -379,6 +423,7 @@ main() {
     step_select_xray_server          # Step 3
     step_configure_xray_exclusions   # Step 4
     step_configure_clients           # Step 5
+    step_show_summary                # Step 6
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
