@@ -178,7 +178,7 @@ get_prerouting_base_pos() {
 tun_dir_rules="$(tmp_file)"
 
 # Write rules (one per line) -> normalized version
-printf '%s\n' $TUN_DIR_RULES > "$tun_dir_rules"
+printf '%s\n' $TUN_DIR_RULES | awk 'NF' > "$tun_dir_rules"
 
 # Hash of an empty ruleset (used for baseline checks)
 empty_rules_hash="$(printf '' | compute_hash)"
