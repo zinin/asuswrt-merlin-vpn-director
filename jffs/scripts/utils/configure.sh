@@ -411,6 +411,56 @@ step_show_summary() {
 }
 
 ###############################################################################
+# Step 7: Generate config files
+###############################################################################
+
+step_generate_configs() {
+    print_header "Step 7: Generating Configs"
+
+    # Generate xray/config.json from template
+    print_info "Generating Xray config..."
+
+    if [ ! -f "$JFFS_DIR/xray/config.sh.template" ]; then
+        print_error "Template not found: $JFFS_DIR/xray/config.sh.template"
+        print_info "Run install.sh first to download required files"
+        exit 1
+    fi
+
+    sed "s|{{XRAY_SERVER_ADDRESS}}|$SELECTED_SERVER_ADDRESS|g" \
+        /opt/etc/xray/config.json.template 2>/dev/null | \
+        sed "s|{{XRAY_SERVER_PORT}}|$SELECTED_SERVER_PORT|g" | \
+        sed "s|{{XRAY_USER_UUID}}|$SELECTED_SERVER_UUID|g" \
+        > "$XRAY_CONFIG_DIR/config.json"
+    print_success "Generated $XRAY_CONFIG_DIR/config.json"
+
+    # Generate xray/config.sh from template
+    print_info "Generating xray/config.sh..."
+
+    # Prepare multiline values for sed (escape newlines)
+    xray_clients_escaped=$(printf '%s' "$XRAY_CLIENTS_LIST" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
+    xray_servers_escaped=$(printf '%s' "$XRAY_SERVERS_IPS" | tr ' ' '\n' | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
+
+    sed "s|{{XRAY_CLIENTS}}|$xray_clients_escaped|g" \
+        "$JFFS_DIR/xray/config.sh.template" | \
+        sed "s|{{XRAY_SERVERS}}|$xray_servers_escaped|g" | \
+        sed "s|{{XRAY_EXCLUDE_SETS}}|$XRAY_EXCLUDE_SETS_LIST|g" \
+        > "$JFFS_DIR/xray/config.sh"
+    chmod +x "$JFFS_DIR/xray/config.sh"
+    print_success "Generated $JFFS_DIR/xray/config.sh"
+
+    # Generate firewall/config.sh from template
+    print_info "Generating firewall/config.sh..."
+
+    tun_dir_escaped=$(printf '%s' "$TUN_DIR_RULES_LIST" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
+
+    sed "s|{{TUN_DIR_RULES}}|$tun_dir_escaped|g" \
+        "$JFFS_DIR/firewall/config.sh.template" \
+        > "$JFFS_DIR/firewall/config.sh"
+    chmod +x "$JFFS_DIR/firewall/config.sh"
+    print_success "Generated $JFFS_DIR/firewall/config.sh"
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -424,6 +474,7 @@ main() {
     step_configure_xray_exclusions   # Step 4
     step_configure_clients           # Step 5
     step_show_summary                # Step 6
+    step_generate_configs            # Step 7
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
