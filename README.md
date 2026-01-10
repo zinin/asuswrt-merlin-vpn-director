@@ -12,7 +12,12 @@ Selective traffic routing through Xray TPROXY and OpenVPN tunnels.
 ## Quick Install
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh?v=$(date +%s)" | sh
+curl -fsSL \
+  -H "Cache-Control: no-cache" \
+  -H "Pragma: no-cache" \
+  -H "If-Modified-Since: Thu, 01 Jan 1970 00:00:00 GMT" \
+  "https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh?v=$(date +%s)" \
+| sh
 ```
 
 After installation, run the configuration wizard:
