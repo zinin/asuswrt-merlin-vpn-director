@@ -89,6 +89,7 @@ download_scripts() {
         "jffs/scripts/vpn-director/tunnel_director.sh" \
         "jffs/scripts/vpn-director/xray_tproxy.sh" \
         "jffs/scripts/vpn-director/configure.sh" \
+        "jffs/scripts/vpn-director/import_server_list.sh" \
         "jffs/scripts/vpn-director/vpn-director.json.template" \
         "jffs/scripts/vpn-director/utils/common.sh" \
         "jffs/scripts/vpn-director/utils/firewall.sh" \
@@ -123,8 +124,11 @@ download_scripts() {
 print_next_steps() {
     print_header "Installation Complete"
 
-    printf "Next step: Run the configuration wizard:\n\n"
-    printf "  ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
+    printf "Next steps:\n\n"
+    printf "  1. Import VLESS servers:\n"
+    printf "     ${GREEN}/jffs/scripts/vpn-director/import_server_list.sh${NC}\n\n"
+    printf "  2. Run configuration wizard:\n"
+    printf "     ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
     printf "Or edit configs manually:\n"
     printf "  /jffs/scripts/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"
