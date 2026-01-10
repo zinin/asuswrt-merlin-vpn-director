@@ -9,9 +9,9 @@
 set -euo pipefail
 
 ###################################################################################################
-# 1. Configuration file path
+# 1. Configuration file path (can be overridden via environment)
 ###################################################################################################
-VPD_CONFIG_FILE="/jffs/scripts/vpn-director/vpn-director.json"
+VPD_CONFIG_FILE="${VPD_CONFIG_FILE:-/jffs/scripts/vpn-director/vpn-director.json}"
 
 ###################################################################################################
 # 2. Validate config exists and is valid JSON
