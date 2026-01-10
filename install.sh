@@ -186,6 +186,12 @@ parse_vless_uri() {
     # Extract name (after #, URL-decoded)
     name="${rest##*#}"
     name=$(printf '%s' "$name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
+    # Remove leading emoji flags if present
+    # Emoji flags are 8 bytes (two 4-byte regional indicators)
+    # Check if first byte is F0-F4 (4-byte UTF-8 leader)
+    case $(printf '%s' "$name" | head -c1 | od -An -tx1 2>/dev/null | tr -d ' ') in
+        f[0-4]) name=$(printf '%s' "$name" | cut -b9-) ;;
+    esac
     rest="${rest%%#*}"
 
     # Extract UUID (before @)
