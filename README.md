@@ -15,6 +15,12 @@ Selective traffic routing through Xray TPROXY and OpenVPN tunnels.
 curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh | sh
 ```
 
+After installation, run the configuration wizard:
+
+```bash
+/jffs/scripts/utils/configure.sh
+```
+
 ## Requirements
 
 - Asuswrt-Merlin firmware
@@ -62,6 +68,21 @@ Traffic from specified LAN clients is transparently redirected through Xray usin
 ### Tunnel Director
 
 Routes traffic from specified LAN clients through OpenVPN tunnels based on destination. By default, excludes Russian IPs to allow direct access to local services.
+
+## Startup Scripts
+
+This project uses [Asuswrt-Merlin user scripts](https://github.com/RMerl/asuswrt-merlin.ng/wiki/User-scripts)
+for automatic startup:
+
+| Script | When Called | Purpose |
+|--------|-------------|---------|
+| `services-start` | After all services started at boot | Builds ipsets, starts Xray TPROXY |
+| `firewall-start` | After firewall rules applied | Applies Tunnel Director rules |
+
+**Note:** Installation overwrites these files. If you have custom logic,
+back up your scripts before installing.
+
+To enable user scripts: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
 
 ## License
 
