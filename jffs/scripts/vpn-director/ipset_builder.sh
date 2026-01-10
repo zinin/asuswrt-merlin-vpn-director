@@ -57,15 +57,13 @@ done
 ###################################################################################################
 # 0b. Load utils and shared variables
 ###################################################################################################
-. /jffs/scripts/utils/common.sh
-. /jffs/scripts/utils/firewall.sh
-
-DIR="$(get_script_dir)"
-. "$DIR/config.sh"
-. "$DIR/fw_shared.sh"
+. /jffs/scripts/vpn-director/utils/common.sh
+. /jffs/scripts/vpn-director/utils/firewall.sh
+. /jffs/scripts/vpn-director/utils/shared.sh
+. /jffs/scripts/vpn-director/configs/config-tunnel-director.sh
 
 # Load Xray config for XRAY_EXCLUDE_SETS (optional)
-XRAY_CONFIG="/jffs/scripts/xray/config.sh"
+XRAY_CONFIG="/jffs/scripts/vpn-director/configs/config-xray.sh"
 if [ -f "$XRAY_CONFIG" ]; then
     . "$XRAY_CONFIG"
 fi
@@ -567,9 +565,9 @@ fi
 save_hashes
 
 # Start Tunnel Director if requested
-[ "$start_tun_dir" -eq 1 ] && "$DIR/tunnel_director.sh"
+[ "$start_tun_dir" -eq 1 ] && /jffs/scripts/vpn-director/tunnel_director.sh
 
 # Start Xray TPROXY if requested
-[ "$start_xray_tproxy" -eq 1 ] && /jffs/scripts/xray/xray_tproxy.sh
+[ "$start_xray_tproxy" -eq 1 ] && /jffs/scripts/vpn-director/xray_tproxy.sh
 
 exit 0

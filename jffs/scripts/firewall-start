@@ -15,4 +15,4 @@
 #/jffs/scripts/firewall/wan_firewall.sh
 
 # Apply Tunnel Director rules
-/jffs/scripts/firewall/tunnel_director.sh
+/jffs/scripts/vpn-director/tunnel_director.sh

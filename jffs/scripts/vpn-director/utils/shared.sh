@@ -1,7 +1,7 @@
 #!/usr/bin/env ash
 
 ###################################################################################################
-# fw_shared.sh - INTERNAL shared library for ipset_builder.sh and tunnel_director.sh
+# shared.sh - INTERNAL shared library for ipset_builder.sh and tunnel_director.sh
 # -------------------------------------------------------------------------------------------------
 # Purpose:
 #   Provides helper functions and state file paths shared by the scripts.

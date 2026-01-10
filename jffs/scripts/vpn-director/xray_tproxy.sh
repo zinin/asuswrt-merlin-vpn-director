@@ -30,11 +30,9 @@ set -euo pipefail
 ###################################################################################################
 # 0a. Load utils and configuration
 ###################################################################################################
-. /jffs/scripts/utils/common.sh
-. /jffs/scripts/utils/firewall.sh
-
-SCRIPT_DIR="$(get_script_dir)"
-. "$SCRIPT_DIR/config.sh"
+. /jffs/scripts/vpn-director/utils/common.sh
+. /jffs/scripts/vpn-director/utils/firewall.sh
+. /jffs/scripts/vpn-director/configs/config-xray.sh
 
 acquire_lock
 

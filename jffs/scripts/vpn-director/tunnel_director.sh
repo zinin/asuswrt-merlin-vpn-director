@@ -52,12 +52,10 @@ set -euo pipefail
 ###################################################################################################
 # 0a. Load utils and shared variables
 ###################################################################################################
-. /jffs/scripts/utils/common.sh
-. /jffs/scripts/utils/firewall.sh
-
-DIR="$(get_script_dir)"
-. "$DIR/config.sh"
-. "$DIR/fw_shared.sh"
+. /jffs/scripts/vpn-director/utils/common.sh
+. /jffs/scripts/vpn-director/utils/firewall.sh
+. /jffs/scripts/vpn-director/utils/shared.sh
+. /jffs/scripts/vpn-director/configs/config-tunnel-director.sh
 
 acquire_lock  # avoid concurrent runs
 

@@ -1,5 +1,5 @@
 ---
-paths: "jffs/scripts/firewall/**"
+paths: "jffs/scripts/vpn-director/**"
 ---
 
 # IPSet Builder
@@ -81,7 +81,7 @@ Config options in `config.sh`:
 | `build_ipset()` | Download, create, swap, dump |
 | `restore_dump()` | Atomic restore from cache |
 | `parse_country_codes()` | Extract CCs from rules |
-| `derive_set_name()` | Handle long names (from `fw_shared.sh`) |
+| `derive_set_name()` | Handle long names (from `shared.sh`) |
 
 ## Build Steps
 
