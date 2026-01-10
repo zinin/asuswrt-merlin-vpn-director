@@ -67,6 +67,42 @@ confirm() {
 }
 
 ###############################################################################
+# VLESS URI Parser
+###############################################################################
+
+# Parse a single VLESS URI and extract components
+# Format: vless://uuid@server:port?params#name
+# Output: server|port|uuid|name
+parse_vless_uri() {
+    uri="$1"
+
+    # Remove vless:// prefix
+    rest="${uri#vless://}"
+
+    # Extract name (after #, URL-decoded)
+    name="${rest##*#}"
+    name=$(printf '%s' "$name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
+    # Remove emoji and other 3-4 byte UTF-8 chars, keep ASCII and Cyrillic (2-byte)
+    name=$(printf '%s' "$name" | awk '{
+        gsub(/[\360-\364][\200-\277][\200-\277][\200-\277]/, "")
+        gsub(/[\340-\357][\200-\277][\200-\277][\200-\277]/, "")
+        print
+    }' | sed 's/^[[:space:]]*//')
+    rest="${rest%%#*}"
+
+    # Extract UUID (before @)
+    uuid="${rest%%@*}"
+    rest="${rest#*@}"
+
+    # Extract server:port (before ?)
+    server_port="${rest%%\?*}"
+    server="${server_port%%:*}"
+    port="${server_port##*:}"
+
+    printf '%s|%s|%s|%s\n' "$server" "$port" "$uuid" "$name"
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
