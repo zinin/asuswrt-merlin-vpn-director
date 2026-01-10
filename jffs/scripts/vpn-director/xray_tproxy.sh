@@ -32,7 +32,7 @@ set -euo pipefail
 ###################################################################################################
 . /jffs/scripts/vpn-director/utils/common.sh
 . /jffs/scripts/vpn-director/utils/firewall.sh
-. /jffs/scripts/vpn-director/configs/config-xray.sh
+. /jffs/scripts/vpn-director/utils/config.sh
 
 acquire_lock
 
@@ -137,11 +137,10 @@ setup_clients_ipset() {
     # Flush and repopulate
     ipset flush "$XRAY_CLIENTS_IPSET"
 
-    strip_comments "$XRAY_CLIENTS" | while IFS= read -r ip; do
+    for ip in $XRAY_CLIENTS; do
         [ -n "$ip" ] || continue
         ipset add "$XRAY_CLIENTS_IPSET" "$ip" 2>/dev/null || {
             log -l warn "Failed to add $ip to $XRAY_CLIENTS_IPSET"
-            warnings=1
         }
     done
 
@@ -162,11 +161,10 @@ setup_servers_ipset() {
     # Flush and repopulate
     ipset flush "$XRAY_SERVERS_IPSET"
 
-    strip_comments "$XRAY_SERVERS" | while IFS= read -r ip; do
+    for ip in $XRAY_SERVERS; do
         [ -n "$ip" ] || continue
         ipset add "$XRAY_SERVERS_IPSET" "$ip" 2>/dev/null || {
             log -l warn "Failed to add $ip to $XRAY_SERVERS_IPSET"
-            warnings=1
         }
     done
 
