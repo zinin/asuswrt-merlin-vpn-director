@@ -52,16 +52,17 @@ print_info() {
 }
 
 # Read user input with prompt
+# Uses /dev/tty to work when script is piped (curl ... | sh)
 read_input() {
     printf "%s: " "$1"
-    read -r REPLY
+    read -r REPLY </dev/tty
     printf '%s' "$REPLY"
 }
 
 # Read yes/no confirmation
 confirm() {
     printf "%s [y/n]: " "$1"
-    read -r REPLY
+    read -r REPLY </dev/tty
     case "$REPLY" in
         [Yy]*) return 0 ;;
         *) return 1 ;;
@@ -256,7 +257,7 @@ step_select_xray_server() {
 
     while true; do
         printf "Select server [1-%d]: " "$total"
-        read -r choice
+        read -r choice </dev/tty
 
         if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "$total" ] 2>/dev/null; then
             break
@@ -289,7 +290,7 @@ step_configure_clients() {
 
     while true; do
         printf "Client IP (or 'done'): "
-        read -r client_ip
+        read -r client_ip </dev/tty
 
         if [ "$client_ip" = "done" ]; then
             break
@@ -309,7 +310,7 @@ step_configure_clients() {
         printf "  1) Xray (VLESS proxy)\n"
         printf "  2) Tunnel Director (OpenVPN)\n"
         printf "Choice [1-2]: "
-        read -r route_choice
+        read -r route_choice </dev/tty
 
         case "$route_choice" in
             1)
@@ -319,7 +320,7 @@ step_configure_clients() {
                 ;;
             2)
                 printf "OpenVPN client number [1-5]: "
-                read -r ovpn_num
+                read -r ovpn_num </dev/tty
                 case "$ovpn_num" in
                     [1-5])
                         TUN_DIR_RULES_LIST="${TUN_DIR_RULES_LIST}ovpnc${ovpn_num}:${client_ip}/32::any:ru
