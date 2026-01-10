@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Paths
-JFFS_DIR="/jffs/scripts"
+JFFS_DIR="/jffs/scripts/vpn-director"
 XRAY_CONFIG_DIR="/opt/etc/xray"
 SERVERS_TMP="/tmp/vpn_director_servers.tmp"
 
@@ -420,8 +420,8 @@ step_generate_configs() {
     # Generate xray/config.json from template
     print_info "Generating Xray config..."
 
-    if [ ! -f "$JFFS_DIR/xray/config.sh.template" ]; then
-        print_error "Template not found: $JFFS_DIR/xray/config.sh.template"
+    if [ ! -f "$JFFS_DIR/configs/config-xray.sh.template" ]; then
+        print_error "Template not found: $JFFS_DIR/configs/config-xray.sh.template"
         print_info "Run install.sh first to download required files"
         exit 1
     fi
@@ -433,31 +433,31 @@ step_generate_configs() {
         > "$XRAY_CONFIG_DIR/config.json"
     print_success "Generated $XRAY_CONFIG_DIR/config.json"
 
-    # Generate xray/config.sh from template
-    print_info "Generating xray/config.sh..."
+    # Generate configs/config-xray.sh from template
+    print_info "Generating configs/config-xray.sh..."
 
     # Prepare multiline values for sed (escape newlines)
     xray_clients_escaped=$(printf '%s' "$XRAY_CLIENTS_LIST" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
     xray_servers_escaped=$(printf '%s' "$XRAY_SERVERS_IPS" | tr ' ' '\n' | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
 
     sed "s|{{XRAY_CLIENTS}}|$xray_clients_escaped|g" \
-        "$JFFS_DIR/xray/config.sh.template" | \
+        "$JFFS_DIR/configs/config-xray.sh.template" | \
         sed "s|{{XRAY_SERVERS}}|$xray_servers_escaped|g" | \
         sed "s|{{XRAY_EXCLUDE_SETS}}|$XRAY_EXCLUDE_SETS_LIST|g" \
-        > "$JFFS_DIR/xray/config.sh"
-    chmod +x "$JFFS_DIR/xray/config.sh"
-    print_success "Generated $JFFS_DIR/xray/config.sh"
+        > "$JFFS_DIR/configs/config-xray.sh"
+    chmod +x "$JFFS_DIR/configs/config-xray.sh"
+    print_success "Generated $JFFS_DIR/configs/config-xray.sh"
 
-    # Generate firewall/config.sh from template
-    print_info "Generating firewall/config.sh..."
+    # Generate configs/config-tunnel-director.sh from template
+    print_info "Generating configs/config-tunnel-director.sh..."
 
     tun_dir_escaped=$(printf '%s' "$TUN_DIR_RULES_LIST" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
 
     sed "s|{{TUN_DIR_RULES}}|$tun_dir_escaped|g" \
-        "$JFFS_DIR/firewall/config.sh.template" \
-        > "$JFFS_DIR/firewall/config.sh"
-    chmod +x "$JFFS_DIR/firewall/config.sh"
-    print_success "Generated $JFFS_DIR/firewall/config.sh"
+        "$JFFS_DIR/configs/config-tunnel-director.sh.template" \
+        > "$JFFS_DIR/configs/config-tunnel-director.sh"
+    chmod +x "$JFFS_DIR/configs/config-tunnel-director.sh"
+    print_success "Generated $JFFS_DIR/configs/config-tunnel-director.sh"
 }
 
 ###############################################################################
@@ -482,8 +482,8 @@ step_apply_rules() {
 
     # Build ipsets (including extra countries for Xray exclusions)
     print_info "Building ipsets (this may take a while)..."
-    if [ -x "$JFFS_DIR/firewall/ipset_builder.sh" ]; then
-        "$JFFS_DIR/firewall/ipset_builder.sh" -c "$XRAY_EXCLUDE_SETS_LIST" || {
+    if [ -x "$JFFS_DIR/ipset_builder.sh" ]; then
+        "$JFFS_DIR/ipset_builder.sh" -c "$XRAY_EXCLUDE_SETS_LIST" || {
             print_warning "ipset_builder.sh failed, some features may not work"
         }
     fi
@@ -491,8 +491,8 @@ step_apply_rules() {
     # Apply Tunnel Director rules
     if [ -n "$TUN_DIR_RULES_LIST" ]; then
         print_info "Applying Tunnel Director rules..."
-        if [ -x "$JFFS_DIR/firewall/tunnel_director.sh" ]; then
-            "$JFFS_DIR/firewall/tunnel_director.sh" || {
+        if [ -x "$JFFS_DIR/tunnel_director.sh" ]; then
+            "$JFFS_DIR/tunnel_director.sh" || {
                 print_warning "tunnel_director.sh failed"
             }
         fi
@@ -501,8 +501,8 @@ step_apply_rules() {
     # Apply Xray TPROXY rules
     if [ -n "$XRAY_CLIENTS_LIST" ]; then
         print_info "Applying Xray TPROXY rules..."
-        if [ -x "$JFFS_DIR/xray/xray_tproxy.sh" ]; then
-            "$JFFS_DIR/xray/xray_tproxy.sh" || {
+        if [ -x "$JFFS_DIR/xray_tproxy.sh" ]; then
+            "$JFFS_DIR/xray_tproxy.sh" || {
                 print_warning "xray_tproxy.sh failed"
             }
         fi
@@ -529,7 +529,7 @@ main() {
     step_apply_rules                 # Step 8
 
     print_header "Configuration Complete"
-    printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
+    printf "Check status with: /jffs/scripts/vpn-director/xray_tproxy.sh status\n"
 }
 
 main "$@"
