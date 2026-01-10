@@ -201,6 +201,43 @@ step_parse_vless_servers() {
 }
 
 ###############################################################################
+# Step 3: Select Xray server
+###############################################################################
+
+step_select_xray_server() {
+    print_header "Step 3: Select Xray Server"
+
+    printf "Available servers:\n\n"
+
+    i=1
+    while IFS='|' read -r server port uuid name ip; do
+        printf "  %2d) %s\n      %s -> %s\n\n" "$i" "$name" "$server" "$ip"
+        i=$((i + 1))
+    done < "$SERVERS_TMP"
+
+    total=$((i - 1))
+
+    while true; do
+        printf "Select server [1-%d]: " "$total"
+        read -r choice
+
+        if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "$total" ] 2>/dev/null; then
+            break
+        fi
+        print_error "Invalid choice. Enter a number between 1 and $total"
+    done
+
+    # Get selected server data
+    selected_line=$(sed -n "${choice}p" "$SERVERS_TMP")
+    SELECTED_SERVER_ADDRESS=$(printf '%s' "$selected_line" | cut -d'|' -f1)
+    SELECTED_SERVER_PORT=$(printf '%s' "$selected_line" | cut -d'|' -f2)
+    SELECTED_SERVER_UUID=$(printf '%s' "$selected_line" | cut -d'|' -f3)
+    selected_name=$(printf '%s' "$selected_line" | cut -d'|' -f4)
+
+    print_success "Selected: $selected_name ($SELECTED_SERVER_ADDRESS)"
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -210,6 +247,7 @@ main() {
 
     step_get_vless_file              # Step 1
     step_parse_vless_servers         # Step 2
+    step_select_xray_server          # Step 3
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
