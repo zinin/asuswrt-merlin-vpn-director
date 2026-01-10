@@ -63,6 +63,12 @@ DIR="$(get_script_dir)"
 . "$DIR/config.sh"
 . "$DIR/fw_shared.sh"
 
+# Load Xray config for XRAY_EXCLUDE_SETS (optional)
+XRAY_CONFIG="/jffs/scripts/xray/config.sh"
+if [ -f "$XRAY_CONFIG" ]; then
+    . "$XRAY_CONFIG"
+fi
+
 acquire_lock  # avoid concurrent runs
 
 ###################################################################################################
