@@ -297,6 +297,76 @@ step_configure_xray_exclusions() {
 }
 
 ###############################################################################
+# Step 5: Configure clients
+###############################################################################
+
+step_configure_clients() {
+    print_header "Step 5: Configure Clients"
+
+    printf "Add LAN clients for routing.\n"
+    printf "Enter 'done' when finished.\n\n"
+
+    XRAY_CLIENTS_LIST=""
+    TUN_DIR_RULES_LIST=""
+
+    while true; do
+        printf "Client IP (or 'done'): "
+        read -r client_ip
+
+        if [ "$client_ip" = "done" ]; then
+            break
+        fi
+
+        # Validate IP format (basic check for private ranges)
+        case "$client_ip" in
+            192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
+                ;;
+            *)
+                print_error "Invalid LAN IP: $client_ip"
+                continue
+                ;;
+        esac
+
+        printf "\nWhere to route traffic for %s?\n" "$client_ip"
+        printf "  1) Xray (VLESS proxy)\n"
+        printf "  2) Tunnel Director (OpenVPN)\n"
+        printf "Choice [1-2]: "
+        read -r route_choice
+
+        case "$route_choice" in
+            1)
+                XRAY_CLIENTS_LIST="${XRAY_CLIENTS_LIST}${client_ip}
+"
+                print_success "$client_ip -> Xray"
+                ;;
+            2)
+                printf "OpenVPN client number [1-5]: "
+                read -r ovpn_num
+                case "$ovpn_num" in
+                    [1-5])
+                        TUN_DIR_RULES_LIST="${TUN_DIR_RULES_LIST}ovpnc${ovpn_num}:${client_ip}/32::any:ru
+"
+                        print_success "$client_ip -> ovpnc$ovpn_num"
+                        ;;
+                    *)
+                        print_error "Invalid OpenVPN client number"
+                        ;;
+                esac
+                ;;
+            *)
+                print_error "Invalid choice"
+                ;;
+        esac
+
+        printf "\n"
+    done
+
+    if [ -z "$XRAY_CLIENTS_LIST" ] && [ -z "$TUN_DIR_RULES_LIST" ]; then
+        print_warning "No clients configured"
+    fi
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -308,6 +378,7 @@ main() {
     step_parse_vless_servers         # Step 2
     step_select_xray_server          # Step 3
     step_configure_xray_exclusions   # Step 4
+    step_configure_clients           # Step 5
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
