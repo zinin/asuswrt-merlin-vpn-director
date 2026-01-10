@@ -53,7 +53,7 @@ read_input() {
 
 # Parse a single VLESS URI and extract components
 # Format: vless://uuid@server:port?params#name
-# Output: JSON object
+# Output: pipe-separated fields
 parse_vless_uri() {
     uri="$1"
 
@@ -63,12 +63,8 @@ parse_vless_uri() {
     # Extract name (after #, URL-decoded)
     name="${rest##*#}"
     name=$(printf '%s' "$name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
-    # Remove emoji and other 3-4 byte UTF-8 chars
-    name=$(printf '%s' "$name" | awk '{
-        gsub(/[\360-\364][\200-\277][\200-\277][\200-\277]/, "")
-        gsub(/[\340-\357][\200-\277][\200-\277][\200-\277]/, "")
-        print
-    }' | sed 's/^[[:space:]]*//')
+    # Keep only: Russian, English letters, digits, spaces, comma, dash
+    name=$(printf '%s' "$name" | sed 's/[^a-zA-Zа-яА-ЯёЁ0-9 ,-]//g; s/^[[:space:]]*//; s/[[:space:]]*$//')
     rest="${rest%%#*}"
 
     # Extract UUID (before @)
@@ -166,48 +162,88 @@ step_parse_and_save_servers() {
 
     DATA_DIR=$(get_data_dir)
     SERVERS_FILE="$DATA_DIR/servers.json"
+    LOG_FILE="/tmp/import_vless_debug.log"
 
     # Ensure data directory exists
     mkdir -p "$DATA_DIR"
 
-    # Parse servers and build JSON
-    servers_json="["
-    first=1
-    resolved=0
-    failed=0
+    # Clear debug log
+    : > "$LOG_FILE"
+    print_info "Debug log: $LOG_FILE"
 
+    # Parse servers and build JSON
     printf '%s\n' "$VLESS_SERVERS" | grep '^vless://' | while IFS= read -r uri; do
+        # Log raw URI (truncated for readability)
+        printf "[DEBUG] URI: %.80s...\n" "$uri" >> "$LOG_FILE"
+
         parsed=$(parse_vless_uri "$uri")
         server=$(printf '%s' "$parsed" | cut -d'|' -f1)
         port=$(printf '%s' "$parsed" | cut -d'|' -f2)
         uuid=$(printf '%s' "$parsed" | cut -d'|' -f3)
         name=$(printf '%s' "$parsed" | cut -d'|' -f4)
 
+        # Log parsed values
+        printf "[DEBUG] Parsed: server=%s port=%s uuid=%s name=%s\n" \
+            "$server" "$port" "$uuid" "$name" >> "$LOG_FILE"
+
+        # Validate required fields
+        if [ -z "$server" ] || [ -z "$port" ] || [ -z "$uuid" ]; then
+            printf "[DEBUG] SKIP: missing required field\n" >> "$LOG_FILE"
+            print_warning "Skipping invalid URI (missing server/port/uuid)"
+            continue
+        fi
+
+        # Validate port is numeric
+        if ! printf '%s' "$port" | grep -qE '^[0-9]+$'; then
+            printf "[DEBUG] SKIP: invalid port '%s'\n" "$port" >> "$LOG_FILE"
+            print_warning "Skipping $server: invalid port '$port'"
+            continue
+        fi
+
         # Resolve IP using nslookup
         ip=$(nslookup "$server" 2>/dev/null | awk '/^Address/ && !/^Address:.*#/ { print $2; exit }')
 
         if [ -z "$ip" ]; then
+            printf "[DEBUG] SKIP: cannot resolve %s\n" "$server" >> "$LOG_FILE"
             print_warning "Cannot resolve $server, skipping"
             continue
         fi
 
+        printf "[DEBUG] Resolved: %s -> %s\n" "$server" "$ip" >> "$LOG_FILE"
         printf "  %s (%s) -> %s\n" "$name" "$server" "$ip"
 
-        # Output JSON line
-        printf '%s|%s|%s|%s|%s\n' "$server" "$port" "$uuid" "$name" "$ip"
+        # Output JSON line (use jq to properly escape strings)
+        printf '%s\n%s\n%s\n%s\n%s\n' "$server" "$port" "$uuid" "$name" "$ip"
     done | {
-        # Build JSON from piped data
+        # Build JSON from piped data using jq for proper escaping
+        printf '[\n'
         first=1
-        printf '['
-        while IFS='|' read -r server port uuid name ip; do
+        while IFS= read -r server && IFS= read -r port && IFS= read -r uuid && IFS= read -r name && IFS= read -r ip; do
             [ -z "$server" ] && continue
-            [ "$first" -eq 0 ] && printf ','
+            [ "$first" -eq 0 ] && printf ',\n'
             first=0
-            printf '\n  {"address":"%s","port":%s,"uuid":"%s","name":"%s","ip":"%s"}' \
-                "$server" "$port" "$uuid" "$name" "$ip"
+            # Use jq to create properly escaped JSON object
+            jq -n \
+                --arg addr "$server" \
+                --arg port "$port" \
+                --arg uuid "$uuid" \
+                --arg name "$name" \
+                --arg ip "$ip" \
+                '{address: $addr, port: ($port | tonumber), uuid: $uuid, name: $name, ip: $ip}' | tr -d '\n'
         done
         printf '\n]\n'
     } > "$SERVERS_FILE"
+
+    # Log final JSON for debugging
+    printf "[DEBUG] Final JSON:\n" >> "$LOG_FILE"
+    cat "$SERVERS_FILE" >> "$LOG_FILE"
+
+    # Validate JSON
+    if ! jq empty "$SERVERS_FILE" 2>/dev/null; then
+        print_error "Generated invalid JSON. Check $LOG_FILE for details"
+        cat "$SERVERS_FILE"
+        exit 1
+    fi
 
     SERVER_COUNT=$(jq length "$SERVERS_FILE")
 
