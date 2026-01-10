@@ -157,6 +157,50 @@ step_get_vless_file() {
 }
 
 ###############################################################################
+# Step 2: Parse VLESS servers
+###############################################################################
+
+step_parse_vless_servers() {
+    print_header "Step 2: Parsing Servers"
+
+    # Clear temp file for parsed servers
+    : > "$SERVERS_TMP"
+
+    printf '%s\n' "$VLESS_SERVERS" | grep '^vless://' | while IFS= read -r uri; do
+        parsed=$(parse_vless_uri "$uri")
+        server=$(printf '%s' "$parsed" | cut -d'|' -f1)
+        port=$(printf '%s' "$parsed" | cut -d'|' -f2)
+        uuid=$(printf '%s' "$parsed" | cut -d'|' -f3)
+        name=$(printf '%s' "$parsed" | cut -d'|' -f4)
+
+        # Resolve IP using nslookup
+        ip=$(nslookup "$server" 2>/dev/null | awk '/^Address/ && !/^Address:.*#/ { print $2; exit }')
+
+        if [ -z "$ip" ]; then
+            print_warning "Cannot resolve $server, skipping"
+            continue
+        fi
+
+        printf "  %s (%s) -> %s\n" "$name" "$server" "$ip"
+
+        # Append to temp file: server|port|uuid|name|ip
+        printf '%s|%s|%s|%s|%s\n' "$server" "$port" "$uuid" "$name" "$ip" >> "$SERVERS_TMP"
+    done
+
+    SERVER_COUNT=$(wc -l < "$SERVERS_TMP" | tr -d ' ')
+
+    if [ "$SERVER_COUNT" -eq 0 ]; then
+        print_error "No servers could be resolved"
+        exit 1
+    fi
+
+    # Collect all IPs for XRAY_SERVERS ipset
+    XRAY_SERVERS_IPS=$(cut -d'|' -f5 "$SERVERS_TMP" | sort -u | tr '\n' ' ')
+
+    print_success "Parsed $SERVER_COUNT servers"
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -165,6 +209,7 @@ main() {
     printf "This wizard will configure Xray TPROXY and Tunnel Director.\n\n"
 
     step_get_vless_file              # Step 1
+    step_parse_vless_servers         # Step 2
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
