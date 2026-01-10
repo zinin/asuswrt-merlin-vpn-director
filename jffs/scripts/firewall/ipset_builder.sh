@@ -23,6 +23,7 @@
 # Requirements / Notes:
 #   * All configuration lives in config.sh. Review, edit, then run "ipt"
 #     (helper alias) to apply changes without rebooting.
+#   * Also reads /jffs/scripts/xray/config.sh for XRAY_EXCLUDE_SETS.
 ###################################################################################################
 
 # -------------------------------------------------------------------------------------------------
@@ -62,6 +63,12 @@ done
 DIR="$(get_script_dir)"
 . "$DIR/config.sh"
 . "$DIR/fw_shared.sh"
+
+# Load Xray config for XRAY_EXCLUDE_SETS (optional)
+XRAY_CONFIG="/jffs/scripts/xray/config.sh"
+if [ -f "$XRAY_CONFIG" ]; then
+    . "$XRAY_CONFIG"
+fi
 
 acquire_lock  # avoid concurrent runs
 
@@ -374,7 +381,7 @@ parse_country_codes() {
 }
 
 build_country_ipsets() {
-    local tun_cc extra_cc all_cc missing_cc="" cc set_name dump url
+    local tun_cc extra_cc xray_cc all_cc missing_cc="" cc set_name dump url
 
     tun_cc="$(parse_country_codes "$TUN_DIR_RULES")"
 
@@ -384,8 +391,14 @@ build_country_ipsets() {
         extra_cc="$(printf '%s' "$extra_countries" | tr ',' ' ')"
     fi
 
+    # Add countries from XRAY_EXCLUDE_SETS (space or comma separated)
+    xray_cc=""
+    if [ -n "${XRAY_EXCLUDE_SETS:-}" ]; then
+        xray_cc="$(printf '%s' "$XRAY_EXCLUDE_SETS" | tr ',' ' ')"
+    fi
+
     # Merge and deduplicate
-    all_cc="$(printf '%s %s' "$tun_cc" "$extra_cc" | xargs -n1 2>/dev/null | sort -u | xargs)"
+    all_cc="$(printf '%s %s %s' "$tun_cc" "$extra_cc" "$xray_cc" | xargs -n1 2>/dev/null | sort -u | xargs)"
 
     if [ -z "$all_cc" ]; then
         log "Step 1: no country references; skipping"

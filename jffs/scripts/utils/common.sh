@@ -325,6 +325,22 @@ get_script_name() {
 #   * Messages are written to both syslog (via logger) and stderr.
 ###################################################################################################
 _log_tag="$(get_script_name -n)"
+LOG_FILE="/tmp/vpn_director.log"
+MAX_LOG_SIZE=102400  # 100KB
+
+# -------------------------------------------------------------------------------------------------
+# log_to_file - append timestamped message to log file with rotation
+# -------------------------------------------------------------------------------------------------
+log_to_file() {
+    local msg="$(date '+%Y-%m-%d %H:%M:%S') [$_log_tag] $*"
+
+    # Rotate if file exceeds limit
+    if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt "$MAX_LOG_SIZE" ]; then
+        mv "$LOG_FILE" "${LOG_FILE}.old"
+    fi
+
+    printf '%s\n' "$msg" >> "$LOG_FILE"
+}
 
 log() {
     local level="info"    # default priority
@@ -349,6 +365,7 @@ log() {
     esac
 
     logger -s -t "$_log_tag" -p "user.$level" "${prefix}$*"
+    log_to_file "${prefix}$*"
 }
 
 ###################################################################################################
