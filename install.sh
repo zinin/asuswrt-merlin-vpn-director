@@ -25,6 +25,7 @@ XRAY_SERVERS_IPS=""
 SELECTED_SERVER_ADDRESS=""
 SELECTED_SERVER_PORT=""
 SELECTED_SERVER_UUID=""
+XRAY_EXCLUDE_SETS_LIST="ru"
 SERVERS_TMP="/tmp/vpn_director_servers.tmp"
 
 ###############################################################################
@@ -103,13 +104,14 @@ main() {
 
     check_environment
 
-    step_get_vless_file
-    step_parse_vless_servers
-    step_select_xray_server
-    step_configure_clients
-    step_show_summary
-    step_install_files
-    step_apply_rules
+    step_get_vless_file              # Step 1
+    step_parse_vless_servers         # Step 2
+    step_select_xray_server          # Step 3
+    step_configure_xray_exclusions   # Step 4
+    step_configure_clients           # Step 5
+    step_show_summary                # Step 6
+    step_install_files               # Step 7
+    step_apply_rules                 # Step 8
 
     print_header "Installation Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
@@ -276,11 +278,31 @@ step_select_xray_server() {
 }
 
 ###############################################################################
-# Step 4: Configure clients
+# Step 4: Configure Xray exclusions
+###############################################################################
+
+step_configure_xray_exclusions() {
+    print_header "Step 4: Xray Exclusions"
+
+    printf "Traffic to these countries will NOT go through Xray proxy.\n"
+    printf "Common choice: your local country to avoid unnecessary proxying.\n\n"
+
+    input=$(read_input "Exclude countries (comma-separated) [ru]")
+
+    if [ -n "$input" ]; then
+        # Normalize: lowercase, no spaces
+        XRAY_EXCLUDE_SETS_LIST=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    fi
+
+    print_success "Excluding: $XRAY_EXCLUDE_SETS_LIST"
+}
+
+###############################################################################
+# Step 5: Configure clients
 ###############################################################################
 
 step_configure_clients() {
-    print_header "Step 4: Configure Clients"
+    print_header "Step 5: Configure Clients"
 
     printf "Add LAN clients for routing.\n"
     printf "Enter 'done' when finished.\n\n"
@@ -346,16 +368,18 @@ step_configure_clients() {
 }
 
 ###############################################################################
-# Step 5: Show summary
+# Step 6: Show summary
 ###############################################################################
 
 step_show_summary() {
-    print_header "Step 5: Installation Summary"
+    print_header "Step 6: Installation Summary"
 
     printf "Xray Server:\n"
     printf "  Address: %s\n" "$SELECTED_SERVER_ADDRESS"
     printf "  Port: %s\n" "$SELECTED_SERVER_PORT"
     printf "\n"
+
+    printf "Xray Exclusions: %s\n\n" "$XRAY_EXCLUDE_SETS_LIST"
 
     printf "Xray Clients:\n"
     if [ -n "$XRAY_CLIENTS_LIST" ]; then
@@ -388,11 +412,11 @@ step_show_summary() {
 }
 
 ###############################################################################
-# Step 6: Install files
+# Step 7: Install files
 ###############################################################################
 
 step_install_files() {
-    print_header "Step 6: Installing Files"
+    print_header "Step 7: Installing Files"
 
     # Create directories
     mkdir -p "$JFFS_DIR/firewall"
@@ -440,7 +464,8 @@ step_install_files() {
 
     curl -fsSL "$REPO_URL/jffs/scripts/xray/config.sh.template" | \
         sed "s|{{XRAY_CLIENTS}}|$xray_clients_escaped|g" | \
-        sed "s|{{XRAY_SERVERS}}|$xray_servers_escaped|g" \
+        sed "s|{{XRAY_SERVERS}}|$xray_servers_escaped|g" | \
+        sed "s|{{XRAY_EXCLUDE_SETS}}|$XRAY_EXCLUDE_SETS_LIST|g" \
         > "$JFFS_DIR/xray/config.sh"
     print_success "Generated $JFFS_DIR/xray/config.sh"
 
@@ -456,11 +481,11 @@ step_install_files() {
 }
 
 ###############################################################################
-# Step 7: Apply rules
+# Step 8: Apply rules
 ###############################################################################
 
 step_apply_rules() {
-    print_header "Step 7: Applying Rules"
+    print_header "Step 8: Applying Rules"
 
     # Load TPROXY module
     print_info "Loading TPROXY kernel module..."
@@ -475,10 +500,10 @@ step_apply_rules() {
         print_warning "Xray init script not found, skipping restart"
     fi
 
-    # Build ipsets
+    # Build ipsets (including extra countries for Xray exclusions)
     print_info "Building ipsets (this may take a while)..."
     if [ -x "$JFFS_DIR/firewall/ipset_builder.sh" ]; then
-        "$JFFS_DIR/firewall/ipset_builder.sh" || {
+        "$JFFS_DIR/firewall/ipset_builder.sh" -c "$XRAY_EXCLUDE_SETS_LIST" || {
             print_warning "ipset_builder.sh failed, some features may not work"
         }
     fi
