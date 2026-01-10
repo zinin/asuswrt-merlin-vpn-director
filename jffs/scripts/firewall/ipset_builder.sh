@@ -41,12 +41,14 @@ set -euo pipefail
 update=0
 start_tun_dir=0
 start_xray_tproxy=0
+extra_countries=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -u)  update=1;            shift ;;
         -t)  start_tun_dir=1;     shift ;;
         -x)  start_xray_tproxy=1; shift ;;
+        -c)  extra_countries="$2"; shift 2 ;;
         *)                        break ;;
     esac
 done
@@ -372,12 +374,21 @@ parse_country_codes() {
 }
 
 build_country_ipsets() {
-    local tun_cc missing_cc="" cc set_name dump url
+    local tun_cc extra_cc all_cc missing_cc="" cc set_name dump url
 
     tun_cc="$(parse_country_codes "$TUN_DIR_RULES")"
 
-    if [ -z "$tun_cc" ]; then
-        log "Step 1: no country references in rules; skipping"
+    # Add extra countries from -c parameter (comma-separated to space-separated)
+    extra_cc=""
+    if [ -n "$extra_countries" ]; then
+        extra_cc="$(printf '%s' "$extra_countries" | tr ',' ' ')"
+    fi
+
+    # Merge and deduplicate
+    all_cc="$(printf '%s %s' "$tun_cc" "$extra_cc" | xargs -n1 2>/dev/null | sort -u | xargs)"
+
+    if [ -z "$all_cc" ]; then
+        log "Step 1: no country references; skipping"
         return 0
     fi
 
@@ -385,10 +396,10 @@ build_country_ipsets() {
 
     # Try restoring dumps first
     if [ "$update" -eq 1 ]; then
-        missing_cc="$tun_cc"
+        missing_cc="$all_cc"
     else
         log "Attempting to restore country ipsets from dumps..."
-        for cc in $tun_cc; do
+        for cc in $all_cc; do
             set_name="$cc"
             dump="${COUNTRY_DUMP_DIR}/${set_name}-ipdeny.dump"
             restore_dump "$set_name" "$dump" || missing_cc="$missing_cc $cc"
