@@ -54,10 +54,10 @@ print_info() {
 
 # Read user input with prompt
 # Uses /dev/tty to work when script is piped (curl ... | sh)
+# Result is stored in INPUT_RESULT variable (avoids subshell issues)
 read_input() {
     printf "%s: " "$1" >/dev/tty
-    read -r REPLY </dev/tty
-    printf '%s' "$REPLY"
+    read -r INPUT_RESULT </dev/tty
 }
 
 # Read yes/no confirmation
@@ -127,7 +127,8 @@ step_get_vless_file() {
     printf "Enter path to VLESS file or URL:\n"
     printf "(File should contain base64-encoded VLESS URIs)\n\n"
 
-    VLESS_INPUT=$(read_input "Path or URL")
+    read_input "Path or URL"
+    VLESS_INPUT="$INPUT_RESULT"
 
     if [ -z "$VLESS_INPUT" ]; then
         print_error "No input provided"
@@ -293,7 +294,8 @@ step_configure_xray_exclusions() {
     printf "Traffic to these countries will NOT go through Xray proxy.\n"
     printf "Common choice: your local country to avoid unnecessary proxying.\n\n"
 
-    input=$(read_input "Exclude countries (comma-separated) [ru]")
+    read_input "Exclude countries (comma-separated) [ru]"
+    input="$INPUT_RESULT"
 
     if [ -n "$input" ]; then
         # Normalize: lowercase, no spaces
