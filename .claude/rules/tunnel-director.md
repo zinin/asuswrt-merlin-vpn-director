@@ -1,5 +1,5 @@
 ---
-paths: "jffs/scripts/firewall/**"
+paths: "jffs/scripts/vpn-director/**"
 ---
 
 # Tunnel Director
