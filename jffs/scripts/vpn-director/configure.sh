@@ -417,14 +417,14 @@ step_show_summary() {
 step_generate_configs() {
     print_header "Step 7: Generating Configs"
 
-    # Generate xray/config.json from template
-    print_info "Generating Xray config..."
-
-    if [ ! -f "$JFFS_DIR/configs/config-xray.sh.template" ]; then
-        print_error "Template not found: $JFFS_DIR/configs/config-xray.sh.template"
+    if [ ! -f "$JFFS_DIR/vpn-director.json.template" ]; then
+        print_error "Template not found: $JFFS_DIR/vpn-director.json.template"
         print_info "Run install.sh first to download required files"
         exit 1
     fi
+
+    # Generate xray/config.json from template
+    print_info "Generating Xray config..."
 
     sed "s|{{XRAY_SERVER_ADDRESS}}|$SELECTED_SERVER_ADDRESS|g" \
         /opt/etc/xray/config.json.template 2>/dev/null | \
@@ -433,31 +433,44 @@ step_generate_configs() {
         > "$XRAY_CONFIG_DIR/config.json"
     print_success "Generated $XRAY_CONFIG_DIR/config.json"
 
-    # Generate configs/config-xray.sh from template
-    print_info "Generating configs/config-xray.sh..."
+    # Generate vpn-director.json
+    print_info "Generating vpn-director.json..."
 
-    # Prepare multiline values for sed (escape newlines)
-    xray_clients_escaped=$(printf '%s' "$XRAY_CLIENTS_LIST" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
-    xray_servers_escaped=$(printf '%s' "$XRAY_SERVERS_IPS" | tr ' ' '\n' | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
+    # Build JSON arrays
+    xray_clients_json="[]"
+    if [ -n "$XRAY_CLIENTS_LIST" ]; then
+        xray_clients_json=$(printf '%s' "$XRAY_CLIENTS_LIST" | grep -v '^$' | jq -R . | jq -s .)
+    fi
 
-    sed "s|{{XRAY_CLIENTS}}|$xray_clients_escaped|g" \
-        "$JFFS_DIR/configs/config-xray.sh.template" | \
-        sed "s|{{XRAY_SERVERS}}|$xray_servers_escaped|g" | \
-        sed "s|{{XRAY_EXCLUDE_SETS}}|$XRAY_EXCLUDE_SETS_LIST|g" \
-        > "$JFFS_DIR/configs/config-xray.sh"
-    chmod +x "$JFFS_DIR/configs/config-xray.sh"
-    print_success "Generated $JFFS_DIR/configs/config-xray.sh"
+    xray_servers_json="[]"
+    if [ -n "$XRAY_SERVERS_IPS" ]; then
+        xray_servers_json=$(printf '%s\n' $XRAY_SERVERS_IPS | jq -R . | jq -s .)
+    fi
 
-    # Generate configs/config-tunnel-director.sh from template
-    print_info "Generating configs/config-tunnel-director.sh..."
+    xray_exclude_json='["ru"]'
+    if [ -n "$XRAY_EXCLUDE_SETS_LIST" ]; then
+        xray_exclude_json=$(printf '%s\n' ${XRAY_EXCLUDE_SETS_LIST//,/ } | jq -R . | jq -s .)
+    fi
 
-    tun_dir_escaped=$(printf '%s' "$TUN_DIR_RULES_LIST" | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//')
+    tun_dir_rules_json="[]"
+    if [ -n "$TUN_DIR_RULES_LIST" ]; then
+        tun_dir_rules_json=$(printf '%s' "$TUN_DIR_RULES_LIST" | grep -v '^$' | jq -R . | jq -s .)
+    fi
 
-    sed "s|{{TUN_DIR_RULES}}|$tun_dir_escaped|g" \
-        "$JFFS_DIR/configs/config-tunnel-director.sh.template" \
-        > "$JFFS_DIR/configs/config-tunnel-director.sh"
-    chmod +x "$JFFS_DIR/configs/config-tunnel-director.sh"
-    print_success "Generated $JFFS_DIR/configs/config-tunnel-director.sh"
+    # Read template and update with jq
+    jq \
+        --argjson clients "$xray_clients_json" \
+        --argjson servers "$xray_servers_json" \
+        --argjson exclude "$xray_exclude_json" \
+        --argjson rules "$tun_dir_rules_json" \
+        '.xray.clients = $clients |
+         .xray.servers = $servers |
+         .xray.exclude_sets = $exclude |
+         .tunnel_director.rules = $rules' \
+        "$JFFS_DIR/vpn-director.json.template" \
+        > "$JFFS_DIR/vpn-director.json"
+
+    print_success "Generated $JFFS_DIR/vpn-director.json"
 }
 
 ###############################################################################
