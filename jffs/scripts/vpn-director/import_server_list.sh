@@ -61,10 +61,11 @@ parse_vless_uri() {
     rest="${uri#vless://}"
 
     # Extract name (after #, URL-decoded)
-    name="${rest##*#}"
-    name=$(printf '%s' "$name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
-    # Keep only: Russian, English letters, digits, spaces, comma, dash
-    name=$(printf '%s' "$name" | sed 's/[^a-zA-Zа-яА-ЯёЁ0-9 ,-]//g; s/^[[:space:]]*//; s/[[:space:]]*$//')
+    raw_name="${rest##*#}"
+    raw_name=$(printf '%s' "$raw_name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
+    # Remove non-ASCII bytes (emoji, etc), keep only printable ASCII
+    # Then trim leading/trailing spaces and commas
+    name=$(printf '%s' "$raw_name" | tr -cd '\11\12\15\40-\176' | sed 's/^[[:space:],]*//; s/[[:space:],]*$//')
     rest="${rest%%#*}"
 
     # Extract UUID (before @)
@@ -75,6 +76,12 @@ parse_vless_uri() {
     server_port="${rest%%\?*}"
     server="${server_port%%:*}"
     port="${server_port##*:}"
+
+    # Fallback: if name is empty or just punctuation, use server hostname
+    clean_name=$(printf '%s' "$name" | sed 's/[^a-zA-Z0-9]//g')
+    if [ -z "$clean_name" ]; then
+        name="$server"
+    fi
 
     printf '%s|%s|%s|%s\n' "$server" "$port" "$uuid" "$name"
 }
@@ -200,8 +207,8 @@ step_parse_and_save_servers() {
             continue
         fi
 
-        # Resolve IP using nslookup
-        ip=$(nslookup "$server" 2>/dev/null | awk '/^Address/ && !/^Address:.*#/ { print $2; exit }')
+        # Resolve IP using nslookup (IPv4 only - no colons)
+        ip=$(nslookup "$server" 2>/dev/null | awk '/^Address/ && !/^Address:.*#/ && $2 !~ /:/ { print $2; exit }')
 
         if [ -z "$ip" ]; then
             printf "[DEBUG] SKIP: cannot resolve %s\n" "$server" >> "$LOG_FILE"
