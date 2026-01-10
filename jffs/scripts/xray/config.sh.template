@@ -57,7 +57,7 @@ XRAY_SERVERS='
 #   2. Fall back to standard set (e.g., "ru")
 #   3. FAIL-SAFE: Exit without applying rules if ipset doesn't exist
 ###################################################################################################
-XRAY_EXCLUDE_SETS='ru'
+XRAY_EXCLUDE_SETS='{{XRAY_EXCLUDE_SETS}}'
 
 ###################################################################################################
 # 5. Routing table and mark configuration
