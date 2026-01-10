@@ -54,14 +54,14 @@ print_info() {
 # Read user input with prompt
 # Uses /dev/tty to work when script is piped (curl ... | sh)
 read_input() {
-    printf "%s: " "$1"
+    printf "%s: " "$1" >/dev/tty
     read -r REPLY </dev/tty
     printf '%s' "$REPLY"
 }
 
 # Read yes/no confirmation
 confirm() {
-    printf "%s [y/n]: " "$1"
+    printf "%s [y/n]: " "$1" >/dev/tty
     read -r REPLY </dev/tty
     case "$REPLY" in
         [Yy]*) return 0 ;;
