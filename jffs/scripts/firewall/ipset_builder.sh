@@ -23,6 +23,7 @@
 # Requirements / Notes:
 #   * All configuration lives in config.sh. Review, edit, then run "ipt"
 #     (helper alias) to apply changes without rebooting.
+#   * Also reads /jffs/scripts/xray/config.sh for XRAY_EXCLUDE_SETS.
 ###################################################################################################
 
 # -------------------------------------------------------------------------------------------------
