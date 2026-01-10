@@ -214,7 +214,7 @@ save_hashes() {
     local tun_dir_rules_file
     tun_dir_rules_file=$(tmp_file)
 
-    printf '%s\n' $TUN_DIR_RULES > "$tun_dir_rules_file"
+    printf '%s\n' $TUN_DIR_RULES | awk 'NF' > "$tun_dir_rules_file"
     printf '%s\n' "$(compute_hash "$tun_dir_rules_file")" > "$TUN_DIR_IPSETS_HASH"
 }
 
@@ -373,7 +373,7 @@ parse_country_codes() {
 build_country_ipsets() {
     local tun_cc extra_cc xray_cc all_cc missing_cc="" cc set_name dump url
 
-    tun_cc="$(printf '%s\n' $TUN_DIR_RULES | parse_country_codes)"
+    tun_cc="$(printf '%s\n' $TUN_DIR_RULES | awk 'NF' | parse_country_codes)"
 
     # Add extra countries from -c parameter (comma-separated to space-separated)
     extra_cc=""
