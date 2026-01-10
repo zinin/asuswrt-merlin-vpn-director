@@ -1,1 +1,1 @@
-alias ipt="/jffs/scripts/firewall/ipset_builder.sh -t"
+alias ipt="/jffs/scripts/vpn-director/ipset_builder.sh -t"
