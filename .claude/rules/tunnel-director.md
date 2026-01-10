@@ -54,15 +54,22 @@ Each chain:
 3. Set fwmark (`slot << shift`)
 4. ip rule routes by fwmark to table
 
+## Configuration
+
+In `vpn-director.json`:
+
+| JSON Path | Default | Purpose |
+|-----------|---------|---------|
+| `tunnel_director.rules` | `[]` | Routing rules (JSON array) |
+| `tunnel_director.ipset_dump_dir` | `/jffs/ipset_builder` | Persistent dump storage |
+| `advanced.tunnel_director.chain_prefix` | `TUN_DIR_` | Chain name prefix |
+| `advanced.tunnel_director.pref_base` | `16384` | ip rule priority base |
+| `advanced.tunnel_director.mark_mask` | `0x00ff0000` | Mask for TD bits |
+| `advanced.tunnel_director.mark_shift` | `16` | Bit position |
+
 ## Fwmark Layout
 
 Default: bits 16-23 (8 bits = 255 rules max)
-
-| Config | Default | Purpose |
-|--------|---------|---------|
-| `TUN_DIR_MARK_MASK` | `0x00ff0000` | Mask for TD bits |
-| `TUN_DIR_MARK_SHIFT` | `16` | Bit position |
-| `TUN_DIR_PREF_BASE` | `16384` | ip rule priority base |
 
 ## State Tracking
 

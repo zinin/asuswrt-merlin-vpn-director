@@ -30,7 +30,7 @@ ipt  # Runs: ipset_builder.sh -t
 |------|---------|
 | `jffs/scripts/vpn-director/` | Main scripts: ipset_builder, tunnel_director, xray_tproxy, configure |
 | `jffs/scripts/vpn-director/utils/` | Shared utilities: common.sh, firewall.sh, shared.sh, send-email.sh |
-| `jffs/scripts/vpn-director/configs/` | Config templates (*.sh.template) |
+| `jffs/scripts/vpn-director/vpn-director.json.template` | Unified config template |
 | `jffs/configs/profile.add` | Shell alias for `ipt` command |
 | `config/xray-config.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
@@ -48,11 +48,10 @@ ipt  # Runs: ipset_builder.sh -t
 
 | Path | Purpose |
 |------|---------|
-| `/jffs/scripts/vpn-director/configs/config-tunnel-director.sh` | Tunnel Director rules & IPSet Builder settings |
-| `/jffs/scripts/vpn-director/configs/config-xray.sh` | Xray TPROXY clients & servers |
+| `/jffs/scripts/vpn-director/vpn-director.json` | Unified config (Xray + Tunnel Director) |
 | `/opt/etc/xray/config.json` | Xray server configuration |
 
-**User dump storage**: `IPS_BDR_DIR` in config-tunnel-director.sh (default: `/jffs/ipset_builder`)
+**User dump storage**: `tunnel_director.ipset_dump_dir` in vpn-director.json (default: `/jffs/ipset_builder`)
 
 ## Shell Conventions
 

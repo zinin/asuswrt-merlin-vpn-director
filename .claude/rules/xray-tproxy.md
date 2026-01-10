@@ -25,21 +25,21 @@ xray_tproxy.sh status   # Show current status
 
 ## Configuration
 
-In `configs/config-xray.sh`:
+In `vpn-director.json`:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `XRAY_TPROXY_PORT` | `12345` | Xray dokodemo-door port |
-| `XRAY_CLIENTS` | - | LAN IPs/CIDRs to proxy (newline-separated) |
-| `XRAY_SERVERS` | - | Xray server IPs to exclude (avoid loops) |
-| `XRAY_EXCLUDE_SETS` | - | Country codes/ipsets to skip (space-separated) |
-| `XRAY_ROUTE_TABLE` | `100` | ip route table number |
-| `XRAY_RULE_PREF` | `200` | ip rule priority |
-| `XRAY_FWMARK` | `0x100` | Routing fwmark (bit 8) |
-| `XRAY_FWMARK_MASK` | `0x100` | Fwmark mask |
-| `XRAY_CHAIN` | `XRAY_TPROXY` | mangle chain name |
-| `XRAY_CLIENTS_IPSET` | `XRAY_CLIENTS` | Source clients ipset |
-| `XRAY_SERVERS_IPSET` | `XRAY_SERVERS` | Server exclusion ipset |
+| JSON Path | Default | Purpose |
+|-----------|---------|---------|
+| `xray.clients` | `[]` | LAN IPs/CIDRs to proxy (JSON array) |
+| `xray.servers` | `[]` | Xray server IPs to exclude (avoid loops) |
+| `xray.exclude_sets` | `["ru"]` | Country codes/ipsets to skip |
+| `advanced.xray.tproxy_port` | `12345` | Xray dokodemo-door port |
+| `advanced.xray.route_table` | `100` | ip route table number |
+| `advanced.xray.rule_pref` | `200` | ip rule priority |
+| `advanced.xray.fwmark` | `0x100` | Routing fwmark (bit 8) |
+| `advanced.xray.fwmark_mask` | `0x100` | Fwmark mask |
+| `advanced.xray.chain` | `XRAY_TPROXY` | mangle chain name |
+| `advanced.xray.clients_ipset` | `XRAY_CLIENTS` | Source clients ipset |
+| `advanced.xray.servers_ipset` | `XRAY_SERVERS` | Server exclusion ipset |
 
 ## IPSets Created
 

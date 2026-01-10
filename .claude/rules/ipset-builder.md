@@ -68,9 +68,9 @@ derive_set_name "very_long_set_name..."
 
 ## Boot Delay
 
-Config options in `config.sh`:
-- `BOOT_WAIT_DELAY`: seconds to wait if uptime < threshold
-- `MIN_BOOT_TIME`: minimum uptime before running
+Config options in `vpn-director.json` (`advanced.boot`):
+- `wait_delay`: seconds to wait if uptime < threshold
+- `min_time`: minimum uptime before running
 
 ## Key Functions
 
