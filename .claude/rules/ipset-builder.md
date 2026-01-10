@@ -38,7 +38,7 @@ ipset_builder.sh -c ru,ua  # Add extra countries
 
 ## Dump/Restore
 
-Cached dumps in `/tmp/ipset_builder/dumps/countries/`:
+Cached dumps stored in `$IPS_BDR_DIR/dumps/countries/` (user-configurable, default: `/jffs/ipset_builder`):
 ```
 ru-ipdeny.dump
 us-ipdeny.dump
@@ -62,9 +62,9 @@ derive_set_name "very_long_set_name..."
 
 | Path | Purpose |
 |------|---------|
-| `/tmp/ipset_builder/` | Base directory |
-| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Rules hash after build |
-| `/tmp/ipset_builder/dumps/` | Cached dumps |
+| `/tmp/ipset_builder/` | Runtime state directory (`IPS_BUILDER_DIR` in shared.sh) |
+| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Rules hash after build (for tunnel_director sync) |
+| `$IPS_BDR_DIR/dumps/countries/` | Persistent dump storage (user config) |
 
 ## Boot Delay
 
@@ -76,12 +76,16 @@ Config options in `config.sh`:
 
 | Function | Purpose |
 |----------|---------|
-| `download_file()` | Curl wrapper with logging |
+| `download_file()` | Curl wrapper with logging and HTTP status check |
 | `ipset_exists()` | Check if ipset is loaded |
+| `get_ipset_count()` | Get number of entries in ipset |
 | `build_ipset()` | Download, create, swap, dump |
 | `restore_dump()` | Atomic restore from cache |
-| `parse_country_codes()` | Extract CCs from rules |
+| `save_hashes()` | Save rules hash for tunnel_director sync |
+| `parse_country_codes()` | Extract CCs from rules (field 4 & 5) |
+| `parse_combo_from_rules()` | Extract comma-separated combos |
 | `derive_set_name()` | Handle long names (from `shared.sh`) |
+| `_calc_ipset_size()` | Calculate hashsize from entry count |
 
 ## Build Steps
 
