@@ -1,5 +1,5 @@
 ---
-paths: "jffs/scripts/xray/**"
+paths: "jffs/scripts/vpn-director/**"
 ---
 
 # Xray TPROXY
@@ -25,7 +25,7 @@ xray_tproxy.sh status   # Show current status
 
 ## Configuration
 
-In `config.sh`:
+In `configs/config-xray.sh`:
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
