@@ -80,15 +80,25 @@ check_environment() {
         exit 1
     fi
 
+    # Check required commands
     # Use 'which' instead of 'command -v' - busybox ash doesn't support 'command'
-    if ! which curl >/dev/null 2>&1; then
-        print_error "curl is required but not installed"
-        print_info "Install with: opkg install curl"
+    missing=""
+    for cmd in curl base64 sha256sum nslookup; do
+        if ! which "$cmd" >/dev/null 2>&1; then
+            missing="$missing $cmd"
+        fi
+    done
+
+    if [ -n "$missing" ]; then
+        print_error "Missing required commands:$missing"
+        print_info "Install with: opkg install curl coreutils-base64 coreutils-sha256sum"
         exit 1
     fi
 
-    if ! which nslookup >/dev/null 2>&1; then
-        print_error "nslookup is required but not installed"
+    # Check xray
+    if ! which xray >/dev/null 2>&1 && [ ! -x /opt/bin/xray ]; then
+        print_error "xray is required but not installed"
+        print_info "Install with: opkg install xray-core"
         exit 1
     fi
 }

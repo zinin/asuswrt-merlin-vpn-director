@@ -19,8 +19,15 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 
 - Asuswrt-Merlin firmware
 - Entware installed
-- Xray installed (`opkg install xray`)
+- Required packages:
+  ```bash
+  opkg install curl coreutils-base64 coreutils-sha256sum xray-core
+  ```
 - OpenVPN client configured in router UI (for Tunnel Director)
+
+### Optional
+
+- `opkg install openssl-util` — for email notifications
 
 ## Manual Configuration
 
