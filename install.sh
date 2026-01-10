@@ -78,13 +78,14 @@ check_environment() {
         exit 1
     fi
 
-    if ! command -v curl >/dev/null 2>&1; then
+    # Use 'which' instead of 'command -v' - busybox ash doesn't support 'command'
+    if ! which curl >/dev/null 2>&1; then
         print_error "curl is required but not installed"
         print_info "Install with: opkg install curl"
         exit 1
     fi
 
-    if ! command -v nslookup >/dev/null 2>&1; then
+    if ! which nslookup >/dev/null 2>&1; then
         print_error "nslookup is required but not installed"
         exit 1
     fi
