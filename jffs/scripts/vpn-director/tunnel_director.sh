@@ -55,7 +55,7 @@ set -euo pipefail
 . /jffs/scripts/vpn-director/utils/common.sh
 . /jffs/scripts/vpn-director/utils/firewall.sh
 . /jffs/scripts/vpn-director/utils/shared.sh
-. /jffs/scripts/vpn-director/configs/config-tunnel-director.sh
+. /jffs/scripts/vpn-director/utils/config.sh
 
 acquire_lock  # avoid concurrent runs
 
@@ -177,8 +177,8 @@ get_prerouting_base_pos() {
 # Create temporary file to hold normalized rule definitions
 tun_dir_rules="$(tmp_file)"
 
-# Strip comments and whitespace from rules -> normalized version
-strip_comments "$TUN_DIR_RULES" | sed -E 's/[[:blank:]]+//g' > "$tun_dir_rules"
+# Write rules (one per line) -> normalized version
+printf '%s\n' $TUN_DIR_RULES > "$tun_dir_rules"
 
 # Hash of an empty ruleset (used for baseline checks)
 empty_rules_hash="$(printf '' | compute_hash)"

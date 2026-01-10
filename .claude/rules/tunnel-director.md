@@ -54,28 +54,35 @@ Each chain:
 3. Set fwmark (`slot << shift`)
 4. ip rule routes by fwmark to table
 
+## Configuration
+
+In `vpn-director.json`:
+
+| JSON Path | Default | Purpose |
+|-----------|---------|---------|
+| `tunnel_director.rules` | `[]` | Routing rules (JSON array) |
+| `tunnel_director.ipset_dump_dir` | `/jffs/ipset_builder` | Persistent dump storage |
+| `advanced.tunnel_director.chain_prefix` | `TUN_DIR_` | Chain name prefix |
+| `advanced.tunnel_director.pref_base` | `16384` | ip rule priority base |
+| `advanced.tunnel_director.mark_mask` | `0x00ff0000` | Mask for TD bits |
+| `advanced.tunnel_director.mark_shift` | `16` | Bit position |
+
 ## Fwmark Layout
 
 Default: bits 16-23 (8 bits = 255 rules max)
 
-| Config | Default | Purpose |
-|--------|---------|---------|
-| `TUN_DIR_MARK_MASK` | `0x00ff0000` | Mask for TD bits |
-| `TUN_DIR_MARK_SHIFT` | `16` | Bit position |
-| `TUN_DIR_PREF_BASE` | `300` | ip rule priority base |
-
 ## State Tracking
-
-Files in `/tmp/tunnel_director/`:
 
 | File | Purpose |
 |------|---------|
-| `tun_dir_rules.sha256` | Hash of normalized rules |
+| `/tmp/tunnel_director/tun_dir_rules.sha256` | Hash of last applied rules |
+| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Hash from ipset_builder (for sync) |
 
 **Rebuild triggers**:
 - Rules hash changed
-- Chain/rule count drift detected
-- ip rule pref mismatch
+- Chain count != config rows
+- PREROUTING jump count != config rows
+- ip rule pref count mismatch
 
 ## Dependencies
 
@@ -87,9 +94,14 @@ Files in `/tmp/tunnel_director/`:
 
 | Function | Purpose |
 |----------|---------|
-| `table_allowed()` | Validate routing table name |
-| `resolve_set_name()` | Lookup ipset by key |
-| `get_prerouting_base_pos()` | Find insert position after system rules |
+| `table_allowed()` | Validate routing table (wgcN, ovpncN, main) |
+| `resolve_set_name()` | Lookup ipset by key (uses `derive_set_name`) |
+| `get_prerouting_base_pos()` | Find insert position after system iface-mark rules |
+
+**Variables**:
+- `valid_tables` - space-separated list of allowed routing tables
+- `_mark_field_max` - max rules that fit in fwmark field (default: 255)
+- `mark_mask_hex` - hex string of `TUN_DIR_MARK_MASK`
 
 ## Utilities Used
 

@@ -60,13 +60,7 @@ done
 . /jffs/scripts/vpn-director/utils/common.sh
 . /jffs/scripts/vpn-director/utils/firewall.sh
 . /jffs/scripts/vpn-director/utils/shared.sh
-. /jffs/scripts/vpn-director/configs/config-tunnel-director.sh
-
-# Load Xray config for XRAY_EXCLUDE_SETS (optional)
-XRAY_CONFIG="/jffs/scripts/vpn-director/configs/config-xray.sh"
-if [ -f "$XRAY_CONFIG" ]; then
-    . "$XRAY_CONFIG"
-fi
+. /jffs/scripts/vpn-director/utils/config.sh
 
 acquire_lock  # avoid concurrent runs
 
@@ -217,11 +211,11 @@ restore_dump() {
 }
 
 save_hashes() {
-    local tun_dir_rules
-    tun_dir_rules=$(tmp_file)
+    local tun_dir_rules_file
+    tun_dir_rules_file=$(tmp_file)
 
-    strip_comments "$TUN_DIR_RULES" | sed -E 's/[[:blank:]]+//g' > "$tun_dir_rules"
-    printf '%s\n' "$(compute_hash "$tun_dir_rules")" > "$TUN_DIR_IPSETS_HASH"
+    printf '%s\n' $TUN_DIR_RULES > "$tun_dir_rules_file"
+    printf '%s\n' "$(compute_hash "$tun_dir_rules_file")" > "$TUN_DIR_IPSETS_HASH"
 }
 
 build_ipset() {
@@ -335,10 +329,8 @@ um us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw
 
 # Parse country codes from TUN_DIR_RULES
 # Accepts "cc" tokens from field 4 (set) and field 5 (set_excl)
+# Reads rules from stdin
 parse_country_codes() {
-    local rules="$1"
-
-    strip_comments "$rules" |
     awk -v valid="$ALL_COUNTRY_CODES" '
         function add_code(tok, base) {
             gsub(/[[:space:]]+/, "", tok)
@@ -381,7 +373,7 @@ parse_country_codes() {
 build_country_ipsets() {
     local tun_cc extra_cc xray_cc all_cc missing_cc="" cc set_name dump url
 
-    tun_cc="$(parse_country_codes "$TUN_DIR_RULES")"
+    tun_cc="$(printf '%s\n' $TUN_DIR_RULES | parse_country_codes)"
 
     # Add extra countries from -c parameter (comma-separated to space-separated)
     extra_cc=""
@@ -389,11 +381,8 @@ build_country_ipsets() {
         extra_cc="$(printf '%s' "$extra_countries" | tr ',' ' ')"
     fi
 
-    # Add countries from XRAY_EXCLUDE_SETS (space or comma separated)
-    xray_cc=""
-    if [ -n "${XRAY_EXCLUDE_SETS:-}" ]; then
-        xray_cc="$(printf '%s' "$XRAY_EXCLUDE_SETS" | tr ',' ' ')"
-    fi
+    # Add countries from XRAY_EXCLUDE_SETS (already space-separated from config.sh)
+    xray_cc="${XRAY_EXCLUDE_SETS:-}"
 
     # Merge and deduplicate
     all_cc="$(printf '%s %s %s' "$tun_cc" "$extra_cc" "$xray_cc" | xargs -n1 2>/dev/null | sort -u | xargs)"
@@ -443,10 +432,8 @@ build_country_ipsets
 
 # Parse combo ipsets from TUN_DIR_RULES
 # Emits only fields that contain a comma (e.g., "us,ca,uk")
+# Reads rules from stdin
 parse_combo_from_rules() {
-    local rules_text="$1"
-
-    strip_comments "$rules_text" |
     awk '
         function emit_combo(field, f, n, a, i, t, out) {
             f = field
@@ -497,7 +484,7 @@ _all_combo_present_for() {
 build_combo_ipsets() {
     local combo_ipsets line set_name key member added
 
-    combo_ipsets="$(parse_combo_from_rules "$TUN_DIR_RULES" | awk 'NF')"
+    combo_ipsets="$(printf '%s\n' $TUN_DIR_RULES | parse_combo_from_rules | awk 'NF')"
 
     if [ -z "$combo_ipsets" ]; then
         log "Step 2: no combo ipsets required; skipping"

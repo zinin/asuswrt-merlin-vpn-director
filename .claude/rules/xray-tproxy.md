@@ -25,16 +25,21 @@ xray_tproxy.sh status   # Show current status
 
 ## Configuration
 
-In `configs/config-xray.sh`:
+In `vpn-director.json`:
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `XRAY_TPROXY_PORT` | Xray dokodemo-door port | `12345` |
-| `XRAY_CLIENTS` | LAN IPs to proxy | `192.168.50.10` |
-| `XRAY_SERVERS` | Xray server IPs (excluded) | `1.2.3.4` |
-| `XRAY_EXCLUDE_SETS` | Country/custom ipsets to skip | `ru` |
-| `XRAY_FWMARK` | Routing fwmark | `0x1` |
-| `XRAY_ROUTE_TABLE` | ip route table | `100` |
+| JSON Path | Default | Purpose |
+|-----------|---------|---------|
+| `xray.clients` | `[]` | LAN IPs/CIDRs to proxy (JSON array) |
+| `xray.servers` | `[]` | Xray server IPs to exclude (avoid loops) |
+| `xray.exclude_sets` | `["ru"]` | Country codes/ipsets to skip |
+| `advanced.xray.tproxy_port` | `12345` | Xray dokodemo-door port |
+| `advanced.xray.route_table` | `100` | ip route table number |
+| `advanced.xray.rule_pref` | `200` | ip rule priority |
+| `advanced.xray.fwmark` | `0x100` | Routing fwmark (bit 8) |
+| `advanced.xray.fwmark_mask` | `0x100` | Fwmark mask |
+| `advanced.xray.chain` | `XRAY_TPROXY` | mangle chain name |
+| `advanced.xray.clients_ipset` | `XRAY_CLIENTS` | Source clients ipset |
+| `advanced.xray.servers_ipset` | `XRAY_SERVERS` | Server exclusion ipset |
 
 ## IPSets Created
 
@@ -65,12 +70,14 @@ PREROUTING (pos 1)
 ## Routing Setup
 
 ```bash
-# Route table
+# Route table (for TPROXY to work)
 ip route add local default dev lo table $XRAY_ROUTE_TABLE
 
-# ip rule
+# ip rule (fwmark-based lookup)
 ip rule add pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XRAY_ROUTE_TABLE
 ```
+
+**Fwmark bit allocation**: `0x100` (bit 8) is free from firmware VPN marking (bit 0) and Tunnel Director (bits 16-23).
 
 ## Requirements
 
@@ -95,10 +102,13 @@ resolve_exclude_set "ru"  # Returns: ru_ext if exists, else ru
 
 | Function | Purpose |
 |----------|---------|
-| `check_tproxy_module()` | Verify/load xt_TPROXY |
-| `check_required_ipsets()` | Fail-safe ipset check |
-| `setup_routing()` | Create route + ip rule |
-| `setup_clients_ipset()` | Populate client ipset |
-| `setup_servers_ipset()` | Populate server ipset |
-| `setup_iptables()` | Build mangle chain |
-| `show_status()` | Debug output |
+| `check_tproxy_module()` | Verify/load xt_TPROXY kernel module |
+| `check_required_ipsets()` | Fail-safe: exit if exclusion ipsets missing |
+| `resolve_exclude_set()` | Try `{set}_ext` first, fall back to `{set}` |
+| `setup_routing()` | Create route table + ip rule |
+| `teardown_routing()` | Remove route table + ip rule |
+| `setup_clients_ipset()` | Create and populate client ipset |
+| `setup_servers_ipset()` | Create and populate server ipset |
+| `setup_iptables()` | Build XRAY_TPROXY chain with exclusions |
+| `teardown_iptables()` | Remove chain and ipsets |
+| `show_status()` | Debug output for troubleshooting |
