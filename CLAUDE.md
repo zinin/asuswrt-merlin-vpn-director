@@ -9,16 +9,16 @@ Traffic routing system for Asus routers: Xray TPROXY, Tunnel Director, IPSet Bui
 curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh | sh
 
 # Xray TPROXY
-/jffs/scripts/xray/xray_tproxy.sh status|start|stop|restart
+/jffs/scripts/vpn-director/xray_tproxy.sh status|start|stop|restart
 
 # IPSet Builder
-/jffs/scripts/firewall/ipset_builder.sh       # Restore from cache
-/jffs/scripts/firewall/ipset_builder.sh -u    # Force rebuild
-/jffs/scripts/firewall/ipset_builder.sh -t    # Rebuild + Tunnel Director
-/jffs/scripts/firewall/ipset_builder.sh -x    # Rebuild + Xray TPROXY
+/jffs/scripts/vpn-director/ipset_builder.sh       # Restore from cache
+/jffs/scripts/vpn-director/ipset_builder.sh -u    # Force rebuild
+/jffs/scripts/vpn-director/ipset_builder.sh -t    # Rebuild + Tunnel Director
+/jffs/scripts/vpn-director/ipset_builder.sh -x    # Rebuild + Xray TPROXY
 
 # Tunnel Director
-/jffs/scripts/firewall/tunnel_director.sh
+/jffs/scripts/vpn-director/tunnel_director.sh
 
 # Shell alias
 ipt  # Runs: ipset_builder.sh -t
@@ -28,9 +28,9 @@ ipt  # Runs: ipset_builder.sh -t
 
 | Path | Purpose |
 |------|---------|
-| `jffs/scripts/firewall/` | IPSet Builder, Tunnel Director, config templates |
-| `jffs/scripts/xray/` | Xray TPROXY management |
-| `jffs/scripts/utils/` | Shared utilities: logging, locking, firewall helpers |
+| `jffs/scripts/vpn-director/` | Main scripts: ipset_builder, tunnel_director, xray_tproxy, configure |
+| `jffs/scripts/vpn-director/utils/` | Shared utilities: common.sh, firewall.sh, shared.sh, send-email.sh |
+| `jffs/scripts/vpn-director/configs/` | Config templates |
 | `jffs/configs/` | profile.add (shell alias) |
 | `config/` | Xray server config template |
 | `install.sh` | Interactive installer |
@@ -47,9 +47,9 @@ ipt  # Runs: ipset_builder.sh -t
 ## Config Files (after install)
 
 ```
-/jffs/scripts/firewall/config.sh  # Tunnel Director & IPSet
-/jffs/scripts/xray/config.sh      # Xray TPROXY
-/opt/etc/xray/config.json         # Xray server
+/jffs/scripts/vpn-director/configs/config-tunnel-director.sh  # Tunnel Director & IPSet
+/jffs/scripts/vpn-director/configs/config-xray.sh             # Xray TPROXY
+/opt/etc/xray/config.json                                      # Xray server
 ```
 
 ## Shell Conventions
