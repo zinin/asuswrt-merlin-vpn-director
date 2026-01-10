@@ -238,6 +238,65 @@ step_select_xray_server() {
 }
 
 ###############################################################################
+# Step 4: Configure Xray exclusions
+###############################################################################
+
+step_configure_xray_exclusions() {
+    print_header "Step 4: Xray Exclusions"
+
+    printf "Traffic to these countries will NOT go through Xray proxy.\n"
+    printf "Common choice: your local country to avoid unnecessary proxying.\n\n"
+
+    # List of common countries
+    printf "Available countries:\n\n"
+    printf "  1) ru - Russia          6) fr - France\n"
+    printf "  2) ua - Ukraine         7) nl - Netherlands\n"
+    printf "  3) by - Belarus         8) pl - Poland\n"
+    printf "  4) kz - Kazakhstan      9) tr - Turkey\n"
+    printf "  5) de - Germany        10) il - Israel\n"
+    printf "\n"
+
+    printf "Enter country numbers separated by space (e.g., 1 5 7)\n"
+    printf "or 0 for none [default: 1]: "
+    read -r choice
+
+    # Default to ru (1) if empty
+    if [ -z "$choice" ]; then
+        choice="1"
+    fi
+
+    # Convert numbers to country codes
+    XRAY_EXCLUDE_SETS_LIST=""
+    for num in $choice; do
+        case "$num" in
+            0) XRAY_EXCLUDE_SETS_LIST=""; break ;;
+            1) code="ru" ;;
+            2) code="ua" ;;
+            3) code="by" ;;
+            4) code="kz" ;;
+            5) code="de" ;;
+            6) code="fr" ;;
+            7) code="nl" ;;
+            8) code="pl" ;;
+            9) code="tr" ;;
+            10) code="il" ;;
+            *) print_warning "Unknown option: $num"; continue ;;
+        esac
+        if [ -z "$XRAY_EXCLUDE_SETS_LIST" ]; then
+            XRAY_EXCLUDE_SETS_LIST="$code"
+        else
+            XRAY_EXCLUDE_SETS_LIST="$XRAY_EXCLUDE_SETS_LIST,$code"
+        fi
+    done
+
+    if [ -n "$XRAY_EXCLUDE_SETS_LIST" ]; then
+        print_success "Excluding: $XRAY_EXCLUDE_SETS_LIST"
+    else
+        print_info "No countries excluded"
+    fi
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -248,6 +307,7 @@ main() {
     step_get_vless_file              # Step 1
     step_parse_vless_servers         # Step 2
     step_select_xray_server          # Step 3
+    step_configure_xray_exclusions   # Step 4
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
