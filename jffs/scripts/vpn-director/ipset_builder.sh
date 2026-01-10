@@ -69,8 +69,7 @@ acquire_lock  # avoid concurrent runs
 ###################################################################################################
 
 # Paths for dumps
-DUMP_DIR="$IPS_BDR_DIR/dumps"
-COUNTRY_DUMP_DIR="$DUMP_DIR/countries"
+COUNTRY_DUMP_DIR="$IPS_BDR_DIR/ipsets"
 
 # IPdeny downloads
 IPDENY_COUNTRY_BASE_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
