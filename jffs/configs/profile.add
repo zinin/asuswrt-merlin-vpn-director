@@ -1,0 +1,1 @@
+alias ipt="/jffs/scripts/firewall/ipset_builder.sh -t"

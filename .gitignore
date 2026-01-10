@@ -1,0 +1,15 @@
+# Personal data
+*.credentials
+*.secret
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+*.bak

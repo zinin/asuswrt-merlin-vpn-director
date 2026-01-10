@@ -1,0 +1,100 @@
+#!/usr/bin/env ash
+
+###################################################################################################
+# config.sh - configuration for xray_tproxy.sh
+###################################################################################################
+
+# shellcheck disable=SC2034
+
+###################################################################################################
+# 1. Xray TPROXY port
+# -------------------------------------------------------------------------------------------------
+# Port where Xray listens for TPROXY connections (dokodemo-door inbound).
+# Must match the port in /opt/etc/xray/config.json tproxy inbound.
+###################################################################################################
+XRAY_TPROXY_PORT=12345
+
+###################################################################################################
+# 2. Client IP addresses to route through Xray
+# -------------------------------------------------------------------------------------------------
+# One IP per line. These addresses will be added to XRAY_CLIENTS ipset.
+# Only traffic FROM these IPs will be redirected through Xray.
+#
+# IMPORTANT: Do not add IPs that are already managed by Tunnel Director.
+# One client should use either Xray OR Tunnel Director, not both.
+#
+# Supports:
+#   - Single IPs: 192.168.1.10
+#   - CIDR notation: 192.168.1.0/24
+###################################################################################################
+XRAY_CLIENTS='
+{{XRAY_CLIENTS}}
+'
+
+###################################################################################################
+# 3. Xray server IPs (to exclude from proxying and avoid loops)
+# -------------------------------------------------------------------------------------------------
+# Add all your Xray/VLESS server IPs here. Traffic to these IPs will NOT be
+# redirected through TPROXY to avoid infinite loops.
+#
+# You can find the IP by running: nslookup <your-server-domain>
+###################################################################################################
+XRAY_SERVERS='
+{{XRAY_SERVERS}}
+'
+
+###################################################################################################
+# 4. Excluded destination ipsets (country codes or custom ipset names)
+# -------------------------------------------------------------------------------------------------
+# Traffic to these destinations will NOT be routed through Xray.
+# Typically used for local country to avoid unnecessary proxying.
+#
+# Format: space-separated ipset names or country codes
+# Country codes use ipsets from ipset_builder.sh (e.g., "ru" for Russia)
+#
+# The script will:
+#   1. Try extended set first (e.g., "ru_ext") if available
+#   2. Fall back to standard set (e.g., "ru")
+#   3. FAIL-SAFE: Exit without applying rules if ipset doesn't exist
+###################################################################################################
+XRAY_EXCLUDE_SETS='ru'
+
+###################################################################################################
+# 5. Routing table and mark configuration
+# -------------------------------------------------------------------------------------------------
+# XRAY_ROUTE_TABLE - routing table number for TPROXY (1-252)
+# XRAY_RULE_PREF   - ip rule priority (lower = higher priority)
+# XRAY_FWMARK      - firewall mark for TPROXY packets (hex)
+# XRAY_FWMARK_MASK - mask for the firewall mark (hex)
+#
+# NOTE: fwmark 0x100/0x100 uses bit 8, which is free from:
+#   - Firmware VPN marking (bit 0)
+#   - Tunnel Director (bits 16-23)
+###################################################################################################
+XRAY_ROUTE_TABLE=100
+XRAY_RULE_PREF=200
+XRAY_FWMARK=0x100
+XRAY_FWMARK_MASK=0x100
+
+###################################################################################################
+# 6. Chain and ipset names
+###################################################################################################
+XRAY_CHAIN='XRAY_TPROXY'
+XRAY_CLIENTS_IPSET='XRAY_CLIENTS'
+XRAY_SERVERS_IPSET='XRAY_SERVERS'
+
+###################################################################################################
+# 7. Make configuration read-only
+###################################################################################################
+readonly \
+    XRAY_TPROXY_PORT \
+    XRAY_CLIENTS \
+    XRAY_SERVERS \
+    XRAY_EXCLUDE_SETS \
+    XRAY_ROUTE_TABLE \
+    XRAY_RULE_PREF \
+    XRAY_FWMARK \
+    XRAY_FWMARK_MASK \
+    XRAY_CHAIN \
+    XRAY_CLIENTS_IPSET \
+    XRAY_SERVERS_IPSET

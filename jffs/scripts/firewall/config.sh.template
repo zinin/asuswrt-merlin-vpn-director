@@ -1,0 +1,76 @@
+#!/usr/bin/env ash
+
+###################################################################################################
+# config.sh - configuration for ipset_builder.sh and tunnel_director.sh
+# -------------------------------------------------------------------------------------------------
+# APPLYING CHANGES:
+#   * Changes to this file do not take effect until reloaded.
+#   * Run "ipt" (helper alias) to reload without reboot.
+###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# Disable unneeded shellcheck warnings
+# -------------------------------------------------------------------------------------------------
+# shellcheck disable=SC2034
+
+###################################################################################################
+# 1. Dump path for IPSet Builder
+# -------------------------------------------------------------------------------------------------
+# Dump files (saved ipset snapshots) are stored under $IPS_BDR_DIR/dumps.
+###################################################################################################
+IPS_BDR_DIR='/jffs/ipset_builder'
+
+###################################################################################################
+# 2. Tunnel Director rules (ipset-based; IPv4-only)
+# -------------------------------------------------------------------------------------------------
+# One rule per line (blank lines are ignored; # comments are allowed).
+#
+# Format:
+#   table:src[%iface][:src_excl[,src_excl...]]:set[,set...][:set_excl[,set_excl...]]
+#     * table    -> routing table name: wgcN, ovpncN, or main
+#     * src      -> LAN source subnet (CIDR), e.g., 192.168.50.0/24
+#     * iface    -> optional; LAN interface (defaults to br0)
+#     * src_excl -> optional; subnets to exclude from source
+#     * set      -> comma-separated country codes or "any"
+#     * set_excl -> optional; country codes to exclude from destination
+#
+# Examples:
+#   wgc1:192.168.50.0/24::us,ca           # Route to US/CA via wgc1
+#   wgc1:192.168.50.0/24:192.168.50.10/32:us  # Same, but exclude one device
+#   wgc1:192.168.52.10/32%br52::any:ru    # Route all except RU via wgc1
+###################################################################################################
+TUN_DIR_RULES='
+{{TUN_DIR_RULES}}
+'
+
+###################################################################################################
+# 3. Timing logic
+# -------------------------------------------------------------------------------------------------
+# * MIN_BOOT_TIME   - minimum uptime (seconds) considered "just after boot"
+# * BOOT_WAIT_DELAY - pause duration (seconds) before proceeding after boot
+###################################################################################################
+MIN_BOOT_TIME=120
+BOOT_WAIT_DELAY=60
+
+###################################################################################################
+# 4. Firewall chain & routing constants
+# -------------------------------------------------------------------------------------------------
+# * TUN_DIR_CHAIN_PREFIX - prefix for Tunnel Director chains (TUN_DIR_0, TUN_DIR_1, ...)
+# * TUN_DIR_PREF_BASE    - base preference for ip rules (16384, 16385, ...)
+# * TUN_DIR_MARK_MASK    - fwmark bitmask for Tunnel Director (bits 16-23)
+# * TUN_DIR_MARK_SHIFT   - left shift for encoding slot into mark
+###################################################################################################
+TUN_DIR_CHAIN_PREFIX='TUN_DIR_'
+TUN_DIR_PREF_BASE=16384
+TUN_DIR_MARK_MASK=0x00ff0000
+TUN_DIR_MARK_SHIFT=16
+
+###################################################################################################
+# 5. Make all configuration constants read-only
+###################################################################################################
+readonly \
+    IPS_BDR_DIR \
+    TUN_DIR_RULES \
+    MIN_BOOT_TIME BOOT_WAIT_DELAY \
+    TUN_DIR_CHAIN_PREFIX TUN_DIR_PREF_BASE \
+    TUN_DIR_MARK_MASK TUN_DIR_MARK_SHIFT
