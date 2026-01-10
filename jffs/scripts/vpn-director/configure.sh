@@ -16,7 +16,6 @@ NC='\033[0m' # No Color
 # Paths
 JFFS_DIR="/jffs/scripts/vpn-director"
 XRAY_CONFIG_DIR="/opt/etc/xray"
-SERVERS_TMP="/tmp/vpn_director_servers.tmp"
 
 # Temporary storage for parsed data
 XRAY_CLIENTS_LIST=""
@@ -65,6 +64,40 @@ confirm() {
 }
 
 ###############################################################################
+# Get data directory and validate servers
+###############################################################################
+
+get_data_dir() {
+    local config_file="$JFFS_DIR/vpn-director.json"
+
+    if [ ! -f "$config_file" ]; then
+        config_file="$JFFS_DIR/vpn-director.json.template"
+    fi
+
+    jq -r '.tunnel_director.data_dir // "/jffs/scripts/vpn-director/data"' "$config_file"
+}
+
+check_servers_file() {
+    DATA_DIR=$(get_data_dir)
+    SERVERS_FILE="$DATA_DIR/servers.json"
+
+    if [ ! -f "$SERVERS_FILE" ]; then
+        print_error "Server list not found: $SERVERS_FILE"
+        print_info "Run import_server_list.sh first"
+        exit 1
+    fi
+
+    SERVER_COUNT=$(jq length "$SERVERS_FILE")
+    if [ "$SERVER_COUNT" -eq 0 ]; then
+        print_error "Server list is empty"
+        print_info "Run import_server_list.sh again"
+        exit 1
+    fi
+
+    print_success "Found $SERVER_COUNT servers in $SERVERS_FILE"
+}
+
+###############################################################################
 # Step 1: Select Xray server
 ###############################################################################
 
@@ -73,13 +106,15 @@ step_select_xray_server() {
 
     printf "Available servers:\n\n"
 
+    # Read servers from JSON and display
     i=1
-    while IFS='|' read -r server port uuid name ip; do
-        printf "  %2d) %s\n      %s -> %s\n\n" "$i" "$name" "$server" "$ip"
+    jq -r '.[] | "\(.name)|\(.address)|\(.ip)|\(.port)|\(.uuid)"' "$SERVERS_FILE" | \
+    while IFS='|' read -r name address ip port uuid; do
+        printf "  %2d) %s\n      %s -> %s\n\n" "$i" "$name" "$address" "$ip"
         i=$((i + 1))
-    done < "$SERVERS_TMP"
+    done
 
-    total=$((i - 1))
+    total=$(jq length "$SERVERS_FILE")
 
     while true; do
         printf "Select server [1-%d]: " "$total"
@@ -91,22 +126,22 @@ step_select_xray_server() {
         print_error "Invalid choice. Enter a number between 1 and $total"
     done
 
-    # Get selected server data
-    selected_line=$(sed -n "${choice}p" "$SERVERS_TMP")
-    SELECTED_SERVER_ADDRESS=$(printf '%s' "$selected_line" | cut -d'|' -f1)
-    SELECTED_SERVER_PORT=$(printf '%s' "$selected_line" | cut -d'|' -f2)
-    SELECTED_SERVER_UUID=$(printf '%s' "$selected_line" | cut -d'|' -f3)
-    selected_name=$(printf '%s' "$selected_line" | cut -d'|' -f4)
+    # Get selected server data (jq uses 0-based index)
+    idx=$((choice - 1))
+    SELECTED_SERVER_ADDRESS=$(jq -r ".[$idx].address" "$SERVERS_FILE")
+    SELECTED_SERVER_PORT=$(jq -r ".[$idx].port" "$SERVERS_FILE")
+    SELECTED_SERVER_UUID=$(jq -r ".[$idx].uuid" "$SERVERS_FILE")
+    selected_name=$(jq -r ".[$idx].name" "$SERVERS_FILE")
 
     print_success "Selected: $selected_name ($SELECTED_SERVER_ADDRESS)"
 }
 
 ###############################################################################
-# Step 4: Configure Xray exclusions
+# Step 2: Configure Xray exclusions
 ###############################################################################
 
 step_configure_xray_exclusions() {
-    print_header "Step 4: Xray Exclusions"
+    print_header "Step 2: Xray Exclusions"
 
     printf "Traffic to these countries will NOT go through Xray proxy.\n"
     printf "Common choice: your local country to avoid unnecessary proxying.\n\n"
@@ -161,11 +196,11 @@ step_configure_xray_exclusions() {
 }
 
 ###############################################################################
-# Step 5: Configure clients
+# Step 3: Configure clients
 ###############################################################################
 
 step_configure_clients() {
-    print_header "Step 5: Configure Clients"
+    print_header "Step 3: Configure Clients"
 
     printf "Add LAN clients for routing.\n"
     printf "Enter 'done' when finished.\n\n"
@@ -231,11 +266,11 @@ step_configure_clients() {
 }
 
 ###############################################################################
-# Step 6: Show summary
+# Step 4: Show summary
 ###############################################################################
 
 step_show_summary() {
-    print_header "Step 6: Configuration Summary"
+    print_header "Step 4: Configuration Summary"
 
     printf "Xray Server:\n"
     printf "  Address: %s\n" "$SELECTED_SERVER_ADDRESS"
@@ -264,10 +299,6 @@ step_show_summary() {
     fi
     printf "\n"
 
-    server_ip_count=$(printf '%s\n' "$XRAY_SERVERS_IPS" | wc -w | tr -d ' ')
-    printf "XRAY_SERVERS ipset: %s IP addresses\n" "$server_ip_count"
-    printf "\n"
-
     if ! confirm "Proceed with configuration?"; then
         print_info "Configuration cancelled"
         exit 0
@@ -275,11 +306,11 @@ step_show_summary() {
 }
 
 ###############################################################################
-# Step 7: Generate config files
+# Step 5: Generate config files
 ###############################################################################
 
 step_generate_configs() {
-    print_header "Step 7: Generating Configs"
+    print_header "Step 5: Generating Configs"
 
     if [ ! -f "$JFFS_DIR/vpn-director.json.template" ]; then
         print_error "Template not found: $JFFS_DIR/vpn-director.json.template"
@@ -306,11 +337,6 @@ step_generate_configs() {
         xray_clients_json=$(printf '%s' "$XRAY_CLIENTS_LIST" | grep -v '^$' | jq -R . | jq -s .)
     fi
 
-    xray_servers_json="[]"
-    if [ -n "$XRAY_SERVERS_IPS" ]; then
-        xray_servers_json=$(printf '%s\n' $XRAY_SERVERS_IPS | jq -R . | jq -s .)
-    fi
-
     xray_exclude_json='["ru"]'
     if [ -n "$XRAY_EXCLUDE_SETS_LIST" ]; then
         xray_exclude_json=$(printf '%s\n' ${XRAY_EXCLUDE_SETS_LIST//,/ } | jq -R . | jq -s .)
@@ -321,14 +347,12 @@ step_generate_configs() {
         tun_dir_rules_json=$(printf '%s' "$TUN_DIR_RULES_LIST" | grep -v '^$' | jq -R . | jq -s .)
     fi
 
-    # Read template and update with jq
+    # Read template and update with jq (xray.servers already set by import_server_list.sh)
     jq \
         --argjson clients "$xray_clients_json" \
-        --argjson servers "$xray_servers_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson rules "$tun_dir_rules_json" \
         '.xray.clients = $clients |
-         .xray.servers = $servers |
          .xray.exclude_sets = $exclude |
          .tunnel_director.rules = $rules' \
         "$JFFS_DIR/vpn-director.json.template" \
@@ -338,11 +362,11 @@ step_generate_configs() {
 }
 
 ###############################################################################
-# Step 8: Apply rules
+# Step 6: Apply rules
 ###############################################################################
 
 step_apply_rules() {
-    print_header "Step 8: Applying Rules"
+    print_header "Step 6: Applying Rules"
 
     # Load TPROXY module
     print_info "Loading TPROXY kernel module..."
@@ -397,14 +421,13 @@ main() {
     print_header "VPN Director Configuration"
     printf "This wizard will configure Xray TPROXY and Tunnel Director.\n\n"
 
-    step_get_vless_file              # Step 1
-    step_parse_vless_servers         # Step 2
-    step_select_xray_server          # Step 3
-    step_configure_xray_exclusions   # Step 4
-    step_configure_clients           # Step 5
-    step_show_summary                # Step 6
-    step_generate_configs            # Step 7
-    step_apply_rules                 # Step 8
+    check_servers_file                # Validate servers.json exists
+    step_select_xray_server           # Step 1
+    step_configure_xray_exclusions    # Step 2
+    step_configure_clients            # Step 3
+    step_show_summary                 # Step 4
+    step_generate_configs             # Step 5
+    step_apply_rules                  # Step 6
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/vpn-director/xray_tproxy.sh status\n"
