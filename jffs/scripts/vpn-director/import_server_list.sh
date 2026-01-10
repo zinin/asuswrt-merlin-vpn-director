@@ -6,12 +6,10 @@ set -e
 # Run after install.sh to download and parse server list
 ###############################################################################
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=utils/common.sh
+. "$SCRIPT_DIR/utils/common.sh"
 
 # Paths
 JFFS_DIR="/jffs/scripts/vpn-director"
@@ -22,28 +20,8 @@ VPD_TEMPLATE="$JFFS_DIR/vpn-director.json.template"
 # Helper functions
 ###############################################################################
 
-print_header() {
-    printf "\n${BLUE}=== %s ===${NC}\n\n" "$1"
-}
-
-print_success() {
-    printf "${GREEN}[OK]${NC} %s\n" "$1"
-}
-
-print_error() {
-    printf "${RED}[ERROR]${NC} %s\n" "$1"
-}
-
-print_warning() {
-    printf "${YELLOW}[WARN]${NC} %s\n" "$1"
-}
-
-print_info() {
-    printf "${BLUE}[INFO]${NC} %s\n" "$1"
-}
-
 read_input() {
-    printf "%s: " "$1"
+    printf "%s: " "$1" >&2
     read -r INPUT_RESULT
 }
 
@@ -99,7 +77,7 @@ get_data_dir() {
     fi
 
     if [ ! -f "$config_file" ]; then
-        print_error "Config not found: $VPD_CONFIG or $VPD_TEMPLATE"
+        log -l err "Config not found: $VPD_CONFIG or $VPD_TEMPLATE"
         exit 1
     fi
 
@@ -111,7 +89,7 @@ get_data_dir() {
 ###############################################################################
 
 step_get_vless_file() {
-    print_header "Step 1: VLESS Server List"
+    log -l notice "Step 1: VLESS Server List"
 
     printf "Enter path to VLESS file or URL:\n"
     printf "(File should contain base64-encoded VLESS URIs)\n\n"
@@ -120,22 +98,22 @@ step_get_vless_file() {
     VLESS_INPUT="$INPUT_RESULT"
 
     if [ -z "$VLESS_INPUT" ]; then
-        print_error "No input provided"
+        log -l err "No input provided"
         exit 1
     fi
 
     # Check if it's a URL or file path
     case "$VLESS_INPUT" in
         http://*|https://*)
-            print_info "Downloading from URL..."
+            log "Downloading from URL..."
             VLESS_CONTENT=$(curl -fsSL "$VLESS_INPUT") || {
-                print_error "Failed to download from $VLESS_INPUT"
+                log -l err "Failed to download from $VLESS_INPUT"
                 exit 1
             }
             ;;
         *)
             if [ ! -f "$VLESS_INPUT" ]; then
-                print_error "File not found: $VLESS_INPUT"
+                log -l err "File not found: $VLESS_INPUT"
                 exit 1
             fi
             VLESS_CONTENT=$(cat "$VLESS_INPUT")
@@ -144,7 +122,7 @@ step_get_vless_file() {
 
     # Decode base64
     VLESS_DECODED=$(printf '%s' "$VLESS_CONTENT" | base64 -d 2>/dev/null) || {
-        print_error "Failed to decode base64 content"
+        log -l err "Failed to decode base64 content"
         exit 1
     }
 
@@ -152,11 +130,11 @@ step_get_vless_file() {
     SERVER_COUNT=$(printf '%s\n' "$VLESS_DECODED" | grep -c '^vless://' || true)
 
     if [ "$SERVER_COUNT" -eq 0 ]; then
-        print_error "No VLESS servers found in file"
+        log -l err "No VLESS servers found in file"
         exit 1
     fi
 
-    print_success "Found $SERVER_COUNT VLESS servers"
+    log "Found $SERVER_COUNT VLESS servers"
     VLESS_SERVERS="$VLESS_DECODED"
 }
 
@@ -165,7 +143,7 @@ step_get_vless_file() {
 ###############################################################################
 
 step_parse_and_save_servers() {
-    print_header "Step 2: Parsing Servers"
+    log -l notice "Step 2: Parsing Servers"
 
     DATA_DIR=$(get_data_dir)
     SERVERS_FILE="$DATA_DIR/servers.json"
@@ -176,7 +154,7 @@ step_parse_and_save_servers() {
 
     # Clear debug log
     : > "$LOG_FILE"
-    print_info "Debug log: $LOG_FILE"
+    log "Debug log: $LOG_FILE"
 
     # Parse servers and build JSON
     printf '%s\n' "$VLESS_SERVERS" | grep '^vless://' | while IFS= read -r uri; do
@@ -196,28 +174,28 @@ step_parse_and_save_servers() {
         # Validate required fields
         if [ -z "$server" ] || [ -z "$port" ] || [ -z "$uuid" ]; then
             printf "[DEBUG] SKIP: missing required field\n" >> "$LOG_FILE"
-            print_warning "Skipping invalid URI (missing server/port/uuid)"
+            log -l warn "Skipping invalid URI (missing server/port/uuid)"
             continue
         fi
 
         # Validate port is numeric
         if ! printf '%s' "$port" | grep -qE '^[0-9]+$'; then
             printf "[DEBUG] SKIP: invalid port '%s'\n" "$port" >> "$LOG_FILE"
-            print_warning "Skipping $server: invalid port '$port'"
+            log -l warn "Skipping $server: invalid port '$port'"
             continue
         fi
 
-        # Resolve IP using nslookup (IPv4 only - no colons)
-        ip=$(nslookup "$server" 2>/dev/null | awk '/^Address/ && !/^Address:.*#/ && $2 !~ /:/ { print $2; exit }')
+        # Resolve IP using common.sh resolve_ip (tries IPv4 first, then IPv6)
+        ip=$(resolve_ip -q "$server" 2>/dev/null) || ip=$(resolve_ip -6 -g -q "$server" 2>/dev/null) || ip=""
 
         if [ -z "$ip" ]; then
             printf "[DEBUG] SKIP: cannot resolve %s\n" "$server" >> "$LOG_FILE"
-            print_warning "Cannot resolve $server, skipping"
+            log -l warn "Cannot resolve $server, skipping"
             continue
         fi
 
         printf "[DEBUG] Resolved: %s -> %s\n" "$server" "$ip" >> "$LOG_FILE"
-        printf "  %s (%s) -> %s\n" "$name" "$server" "$ip"
+        printf "  %s (%s) -> %s\n" "$name" "$server" "$ip" >&2
 
         # Output JSON line (use jq to properly escape strings)
         printf '%s\n%s\n%s\n%s\n%s\n' "$server" "$port" "$uuid" "$name" "$ip"
@@ -247,7 +225,7 @@ step_parse_and_save_servers() {
 
     # Validate JSON
     if ! jq empty "$SERVERS_FILE" 2>/dev/null; then
-        print_error "Generated invalid JSON. Check $LOG_FILE for details"
+        log -l err "Generated invalid JSON. Check $LOG_FILE for details"
         cat "$SERVERS_FILE"
         exit 1
     fi
@@ -255,12 +233,12 @@ step_parse_and_save_servers() {
     SERVER_COUNT=$(jq length "$SERVERS_FILE")
 
     if [ "$SERVER_COUNT" -eq 0 ]; then
-        print_error "No servers could be resolved"
+        log -l err "No servers could be resolved"
         rm -f "$SERVERS_FILE"
         exit 1
     fi
 
-    print_success "Saved $SERVER_COUNT servers to $SERVERS_FILE"
+    log "Saved $SERVER_COUNT servers to $SERVERS_FILE"
 }
 
 ###############################################################################
@@ -268,7 +246,7 @@ step_parse_and_save_servers() {
 ###############################################################################
 
 step_update_config() {
-    print_header "Step 3: Updating Configuration"
+    log -l notice "Step 3: Updating Configuration"
 
     DATA_DIR=$(get_data_dir)
     SERVERS_FILE="$DATA_DIR/servers.json"
@@ -282,11 +260,11 @@ step_update_config() {
     # Create config from template if doesn't exist
     if [ ! -f "$VPD_CONFIG" ]; then
         if [ ! -f "$VPD_TEMPLATE" ]; then
-            print_error "Template not found: $VPD_TEMPLATE"
+            log -l err "Template not found: $VPD_TEMPLATE"
             exit 1
         fi
         cp "$VPD_TEMPLATE" "$VPD_CONFIG"
-        print_info "Created $VPD_CONFIG from template"
+        log "Created $VPD_CONFIG from template"
     fi
 
     # Update xray.servers in config
@@ -296,7 +274,7 @@ step_update_config() {
         mv "${VPD_CONFIG}.tmp" "$VPD_CONFIG"
 
     ip_count=$(printf '%s\n' $server_ips | wc -l | tr -d ' ')
-    print_success "Updated xray.servers with $ip_count IP addresses"
+    log "Updated xray.servers with $ip_count IP addresses"
 }
 
 ###############################################################################
@@ -304,14 +282,14 @@ step_update_config() {
 ###############################################################################
 
 main() {
-    print_header "Import VLESS Server List"
+    log -l notice "Import VLESS Server List"
     printf "This will download and parse VLESS servers.\n\n"
 
     step_get_vless_file
     step_parse_and_save_servers
     step_update_config
 
-    print_header "Import Complete"
+    log -l notice "Import Complete"
     printf "Server list saved. Run configure.sh to continue setup.\n"
 }
 
