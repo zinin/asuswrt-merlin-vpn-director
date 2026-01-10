@@ -486,8 +486,9 @@ step_apply_rules() {
 
     # Restart Xray
     print_info "Restarting Xray..."
-    if [ -x /opt/etc/init.d/S24xray ]; then
-        /opt/etc/init.d/S24xray restart
+    XRAY_INIT=$(ls /opt/etc/init.d/S*xray 2>/dev/null | head -1)
+    if [ -n "$XRAY_INIT" ] && [ -x "$XRAY_INIT" ]; then
+        "$XRAY_INIT" restart
         print_success "Xray restarted"
     else
         print_warning "Xray init script not found, skipping restart"
