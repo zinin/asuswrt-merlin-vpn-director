@@ -294,15 +294,55 @@ step_configure_xray_exclusions() {
     printf "Traffic to these countries will NOT go through Xray proxy.\n"
     printf "Common choice: your local country to avoid unnecessary proxying.\n\n"
 
-    read_input "Exclude countries (comma-separated) [ru]"
-    input="$INPUT_RESULT"
+    # List of common countries
+    printf "Available countries:\n\n"
+    printf "  1) ru - Russia          6) fr - France\n"
+    printf "  2) ua - Ukraine         7) nl - Netherlands\n"
+    printf "  3) by - Belarus         8) pl - Poland\n"
+    printf "  4) kz - Kazakhstan      9) tr - Turkey\n"
+    printf "  5) de - Germany        10) il - Israel\n"
+    printf "\n"
 
-    if [ -n "$input" ]; then
-        # Normalize: lowercase, no spaces
-        XRAY_EXCLUDE_SETS_LIST=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    COUNTRY_CODES="ru ua by kz de fr nl pl tr il"
+
+    printf "Enter country numbers separated by space (e.g., 1 5 7)\n"
+    printf "or 0 for none [default: 1]: "
+    read -r choice </dev/tty
+
+    # Default to ru (1) if empty
+    if [ -z "$choice" ]; then
+        choice="1"
     fi
 
-    print_success "Excluding: $XRAY_EXCLUDE_SETS_LIST"
+    # Convert numbers to country codes
+    XRAY_EXCLUDE_SETS_LIST=""
+    for num in $choice; do
+        case "$num" in
+            0) XRAY_EXCLUDE_SETS_LIST=""; break ;;
+            1) code="ru" ;;
+            2) code="ua" ;;
+            3) code="by" ;;
+            4) code="kz" ;;
+            5) code="de" ;;
+            6) code="fr" ;;
+            7) code="nl" ;;
+            8) code="pl" ;;
+            9) code="tr" ;;
+            10) code="il" ;;
+            *) print_warning "Unknown option: $num"; continue ;;
+        esac
+        if [ -z "$XRAY_EXCLUDE_SETS_LIST" ]; then
+            XRAY_EXCLUDE_SETS_LIST="$code"
+        else
+            XRAY_EXCLUDE_SETS_LIST="$XRAY_EXCLUDE_SETS_LIST,$code"
+        fi
+    done
+
+    if [ -n "$XRAY_EXCLUDE_SETS_LIST" ]; then
+        print_success "Excluding: $XRAY_EXCLUDE_SETS_LIST"
+    else
+        print_info "No countries excluded"
+    fi
 }
 
 ###############################################################################
