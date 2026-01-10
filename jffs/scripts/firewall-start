@@ -4,15 +4,5 @@
 # firewall-start - Asuswrt-Merlin hook invoked when the firewall stack reloads
 ###################################################################################################
 
-# If the firewall restarted while the secondary WAN was active,
-# reapply the LAN hosts WAN-block rule
-#/jffs/scripts/misc/wan_failover.sh "$1" "fw_started"
-
-# Apply SDN IPv6 firewall rules
-#/jffs/scripts/sdn/sdn_v6_firewall.sh "$1"
-
-# Apply WAN Firewall rules
-#/jffs/scripts/firewall/wan_firewall.sh
-
 # Apply Tunnel Director rules
 /jffs/scripts/vpn-director/tunnel_director.sh
