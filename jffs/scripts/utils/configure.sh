@@ -461,6 +461,57 @@ step_generate_configs() {
 }
 
 ###############################################################################
+# Step 8: Apply rules
+###############################################################################
+
+step_apply_rules() {
+    print_header "Step 8: Applying Rules"
+
+    # Load TPROXY module
+    print_info "Loading TPROXY kernel module..."
+    modprobe xt_TPROXY 2>/dev/null || true
+
+    # Restart Xray
+    print_info "Restarting Xray..."
+    if [ -x /opt/etc/init.d/S24xray ]; then
+        /opt/etc/init.d/S24xray restart
+        print_success "Xray restarted"
+    else
+        print_warning "Xray init script not found, skipping restart"
+    fi
+
+    # Build ipsets (including extra countries for Xray exclusions)
+    print_info "Building ipsets (this may take a while)..."
+    if [ -x "$JFFS_DIR/firewall/ipset_builder.sh" ]; then
+        "$JFFS_DIR/firewall/ipset_builder.sh" -c "$XRAY_EXCLUDE_SETS_LIST" || {
+            print_warning "ipset_builder.sh failed, some features may not work"
+        }
+    fi
+
+    # Apply Tunnel Director rules
+    if [ -n "$TUN_DIR_RULES_LIST" ]; then
+        print_info "Applying Tunnel Director rules..."
+        if [ -x "$JFFS_DIR/firewall/tunnel_director.sh" ]; then
+            "$JFFS_DIR/firewall/tunnel_director.sh" || {
+                print_warning "tunnel_director.sh failed"
+            }
+        fi
+    fi
+
+    # Apply Xray TPROXY rules
+    if [ -n "$XRAY_CLIENTS_LIST" ]; then
+        print_info "Applying Xray TPROXY rules..."
+        if [ -x "$JFFS_DIR/xray/xray_tproxy.sh" ]; then
+            "$JFFS_DIR/xray/xray_tproxy.sh" || {
+                print_warning "xray_tproxy.sh failed"
+            }
+        fi
+    fi
+
+    print_success "Rules applied"
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -475,6 +526,7 @@ main() {
     step_configure_clients           # Step 5
     step_show_summary                # Step 6
     step_generate_configs            # Step 7
+    step_apply_rules                 # Step 8
 
     print_header "Configuration Complete"
     printf "Check status with: /jffs/scripts/xray/xray_tproxy.sh status\n"
