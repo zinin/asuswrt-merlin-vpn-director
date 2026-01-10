@@ -1,7 +1,7 @@
 {
   "tunnel_director": {
     "rules": [],
-    "ipset_dump_dir": "/jffs/ipset_builder"
+    "data_dir": "/jffs/scripts/vpn-director/data"
   },
   "xray": {
     "clients": [],

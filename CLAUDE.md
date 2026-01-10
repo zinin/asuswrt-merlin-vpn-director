@@ -20,6 +20,9 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 # Tunnel Director
 /jffs/scripts/vpn-director/tunnel_director.sh
 
+# Import servers
+/jffs/scripts/vpn-director/import_server_list.sh
+
 # Shell alias
 ipt  # Runs: ipset_builder.sh -t
 ```
@@ -51,7 +54,7 @@ ipt  # Runs: ipset_builder.sh -t
 | `/jffs/scripts/vpn-director/vpn-director.json` | Unified config (Xray + Tunnel Director) |
 | `/opt/etc/xray/config.json` | Xray server configuration |
 
-**User dump storage**: `tunnel_director.ipset_dump_dir` in vpn-director.json (default: `/jffs/ipset_builder`)
+**Data storage**: `tunnel_director.data_dir` in vpn-director.json (default: `/jffs/scripts/vpn-director/data`) — servers.json, ipset dumps
 
 ## Shell Conventions
 
