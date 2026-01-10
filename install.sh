@@ -471,6 +471,7 @@ step_install_files() {
     mkdir -p "$JFFS_DIR/xray"
     mkdir -p "$JFFS_DIR/utils"
     mkdir -p "$XRAY_CONFIG_DIR"
+    mkdir -p "/jffs/configs"
 
     # Download scripts from repo
     print_info "Downloading scripts..."
@@ -483,7 +484,8 @@ step_install_files() {
         "jffs/scripts/utils/common.sh" \
         "jffs/scripts/utils/firewall.sh" \
         "jffs/scripts/firewall-start" \
-        "jffs/scripts/services-start"
+        "jffs/scripts/services-start" \
+        "jffs/configs/profile.add"
     do
         target="/$script"
         curl -fsSL "$REPO_URL/$script" -o "$target" || {
@@ -516,6 +518,7 @@ step_install_files() {
         sed "s|{{XRAY_EXCLUDE_SETS}}|$XRAY_EXCLUDE_SETS_LIST|g" \
         > "$JFFS_DIR/xray/config.sh"
     print_success "Generated $JFFS_DIR/xray/config.sh"
+    chmod +x "$JFFS_DIR/xray/config.sh"
 
     # Generate firewall/config.sh from template
     print_info "Generating firewall/config.sh..."
@@ -526,6 +529,7 @@ step_install_files() {
         sed "s|{{TUN_DIR_RULES}}|$tun_dir_escaped|g" \
         > "$JFFS_DIR/firewall/config.sh"
     print_success "Generated $JFFS_DIR/firewall/config.sh"
+    chmod +x "$JFFS_DIR/firewall/config.sh"
 }
 
 ###############################################################################
