@@ -70,9 +70,8 @@ check_environment() {
 create_directories() {
     print_info "Creating directories..."
 
-    mkdir -p "$JFFS_DIR/firewall"
-    mkdir -p "$JFFS_DIR/xray"
-    mkdir -p "$JFFS_DIR/utils"
+    mkdir -p "$JFFS_DIR/vpn-director/configs"
+    mkdir -p "$JFFS_DIR/vpn-director/utils"
     mkdir -p "$XRAY_CONFIG_DIR"
     mkdir -p "/jffs/configs"
 
@@ -87,15 +86,16 @@ download_scripts() {
     print_info "Downloading scripts..."
 
     for script in \
-        "jffs/scripts/firewall/ipset_builder.sh" \
-        "jffs/scripts/firewall/tunnel_director.sh" \
-        "jffs/scripts/firewall/fw_shared.sh" \
-        "jffs/scripts/firewall/config.sh.template" \
-        "jffs/scripts/xray/xray_tproxy.sh" \
-        "jffs/scripts/xray/config.sh.template" \
-        "jffs/scripts/utils/common.sh" \
-        "jffs/scripts/utils/firewall.sh" \
-        "jffs/scripts/utils/configure.sh" \
+        "jffs/scripts/vpn-director/ipset_builder.sh" \
+        "jffs/scripts/vpn-director/tunnel_director.sh" \
+        "jffs/scripts/vpn-director/xray_tproxy.sh" \
+        "jffs/scripts/vpn-director/configure.sh" \
+        "jffs/scripts/vpn-director/configs/config-tunnel-director.sh.template" \
+        "jffs/scripts/vpn-director/configs/config-xray.sh.template" \
+        "jffs/scripts/vpn-director/utils/common.sh" \
+        "jffs/scripts/vpn-director/utils/firewall.sh" \
+        "jffs/scripts/vpn-director/utils/shared.sh" \
+        "jffs/scripts/vpn-director/utils/send-email.sh" \
         "jffs/scripts/firewall-start" \
         "jffs/scripts/services-start" \
         "jffs/configs/profile.add"
@@ -125,10 +125,10 @@ print_next_steps() {
     print_header "Installation Complete"
 
     printf "Next step: Run the configuration wizard:\n\n"
-    printf "  ${GREEN}/jffs/scripts/utils/configure.sh${NC}\n\n"
+    printf "  ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
     printf "Or edit configs manually:\n"
-    printf "  /jffs/scripts/xray/config.sh\n"
-    printf "  /jffs/scripts/firewall/config.sh\n"
+    printf "  /jffs/scripts/vpn-director/configs/config-xray.sh\n"
+    printf "  /jffs/scripts/vpn-director/configs/config-tunnel-director.sh\n"
     printf "  /opt/etc/xray/config.json\n"
 }
 
