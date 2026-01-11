@@ -287,7 +287,7 @@ main() {
     step_update_config
 
     log -l TRACE "Import Complete"
-    printf "Server list saved. Run configure.sh to continue setup.\n"
+    printf "Server list saved. Run /jffs/scripts/vpn-director/configure.sh to continue setup.\n"
 }
 
 main "$@"
