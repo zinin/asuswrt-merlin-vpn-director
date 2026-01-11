@@ -46,7 +46,6 @@ acquire_lock
 # 0b. Variables
 ###################################################################################################
 ACTION="${1:-start}"
-changes=0
 warnings=0
 
 ###################################################################################################
@@ -114,13 +113,11 @@ setup_routing() {
     if [[ $rt_exists -eq 0 ]]; then
         ip route add local default dev lo table "$XRAY_ROUTE_TABLE"
         log "Added route: local default dev lo table $XRAY_ROUTE_TABLE"
-        changes=1
     fi
 
     if [[ $rule_exists -eq 0 ]]; then
         ip rule add pref "$XRAY_RULE_PREF" fwmark "$XRAY_FWMARK/$XRAY_FWMARK_MASK" table "$XRAY_ROUTE_TABLE"
         log "Added ip rule: pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XRAY_ROUTE_TABLE"
-        changes=1
     fi
 }
 
@@ -141,7 +138,6 @@ setup_clients_ipset() {
     if ! ipset list "$XRAY_CLIENTS_IPSET" >/dev/null 2>&1; then
         ipset create "$XRAY_CLIENTS_IPSET" hash:net
         log "Created ipset: $XRAY_CLIENTS_IPSET"
-        changes=1
     fi
 
     # Flush and repopulate
@@ -167,7 +163,6 @@ setup_servers_ipset() {
     if ! ipset list "$XRAY_SERVERS_IPSET" >/dev/null 2>&1; then
         ipset create "$XRAY_SERVERS_IPSET" hash:net
         log "Created ipset: $XRAY_SERVERS_IPSET"
-        changes=1
     fi
 
     # Flush and repopulate
@@ -252,7 +247,6 @@ setup_iptables() {
     sync_fw_rule -q mangle PREROUTING "-j $XRAY_CHAIN\$" \
         "-i br0 -j $XRAY_CHAIN" 1
 
-    changes=1
     log "Applied TPROXY iptables rules"
 }
 
@@ -302,7 +296,7 @@ show_status() {
     echo ""
 
     echo "--- Xray Process ---"
-    ps | grep -E '[x]ray' || echo "Xray not running"
+    pgrep -la xray || echo "Xray not running"
 }
 
 ###################################################################################################

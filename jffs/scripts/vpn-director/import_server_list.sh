@@ -258,6 +258,7 @@ step_update_config() {
     server_ips=$(jq -r '.[].ip' "$SERVERS_FILE" | sort -u)
 
     # Build JSON array of IPs
+    # shellcheck disable=SC2086  # intentional word splitting for newline-separated IPs
     xray_servers_json=$(printf '%s\n' $server_ips | jq -R . | jq -s .)
 
     # Create config from template if doesn't exist
@@ -276,6 +277,7 @@ step_update_config() {
         "$VPD_CONFIG" > "${VPD_CONFIG}.tmp" && \
         mv "${VPD_CONFIG}.tmp" "$VPD_CONFIG"
 
+    # shellcheck disable=SC2086  # intentional word splitting
     ip_count=$(printf '%s\n' $server_ips | wc -l | tr -d ' ')
     log "Updated xray.servers with $ip_count IP addresses"
 }

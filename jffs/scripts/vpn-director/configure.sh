@@ -49,6 +49,7 @@ print_info() {
     printf "${BLUE}[INFO]${NC} %s\n" "$1"
 }
 
+# shellcheck disable=SC2034  # INPUT_RESULT used by callers
 read_input() {
     printf "%s: " "$1"
     read -r INPUT_RESULT
@@ -108,8 +109,8 @@ step_select_xray_server() {
 
     # Read servers from JSON and display
     i=1
-    jq -r '.[] | "\(.name)|\(.address)|\(.ip)|\(.port)|\(.uuid)"' "$SERVERS_FILE" | \
-    while IFS='|' read -r name address ip port uuid; do
+    jq -r '.[] | "\(.name)|\(.address)|\(.ip)"' "$SERVERS_FILE" | \
+    while IFS='|' read -r name address ip; do
         printf "  %2d) %s\n      %s -> %s\n\n" "$i" "$name" "$address" "$ip"
         i=$((i + 1))
     done
@@ -339,6 +340,7 @@ step_generate_configs() {
 
     xray_exclude_json='["ru"]'
     if [ -n "$XRAY_EXCLUDE_SETS_LIST" ]; then
+        # shellcheck disable=SC2086  # intentional word splitting
         xray_exclude_json=$(printf '%s\n' ${XRAY_EXCLUDE_SETS_LIST//,/ } | jq -R . | jq -s .)
     fi
 
@@ -374,7 +376,7 @@ step_apply_rules() {
 
     # Restart Xray
     print_info "Restarting Xray..."
-    XRAY_INIT=$(ls /opt/etc/init.d/S*xray 2>/dev/null | head -1)
+    XRAY_INIT=$(find /opt/etc/init.d -maxdepth 1 -name 'S*xray' 2>/dev/null | head -1)
     if [ -n "$XRAY_INIT" ] && [ -x "$XRAY_INIT" ]; then
         "$XRAY_INIT" restart
         print_success "Xray restarted"
