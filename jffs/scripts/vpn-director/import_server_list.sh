@@ -147,14 +147,9 @@ step_parse_and_save_servers() {
 
     DATA_DIR=$(get_data_dir)
     SERVERS_FILE="$DATA_DIR/servers.json"
-    LOG_FILE="/tmp/import_vless_debug.log"
 
     # Ensure data directory exists
     mkdir -p "$DATA_DIR"
-
-    # Clear debug log
-    : > "$LOG_FILE"
-    log "Debug log: $LOG_FILE"
 
     # Parse servers and build JSON
     printf '%s\n' "$VLESS_SERVERS" | grep '^vless://' | while IFS= read -r uri; do
@@ -219,13 +214,9 @@ step_parse_and_save_servers() {
         printf '\n]\n'
     } > "$SERVERS_FILE"
 
-    # Log final JSON for debugging
-    printf "[DEBUG] Final JSON:\n" >> "$LOG_FILE"
-    cat "$SERVERS_FILE" >> "$LOG_FILE"
-
     # Validate JSON
     if ! jq empty "$SERVERS_FILE" 2>/dev/null; then
-        log -l err "Generated invalid JSON. Check $LOG_FILE for details"
+        log -l err "Generated invalid JSON"
         cat "$SERVERS_FILE"
         exit 1
     fi
