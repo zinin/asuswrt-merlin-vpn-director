@@ -1,0 +1,5 @@
+127.0.0.1       localhost
+192.168.1.100   mypc mypc.local
+192.168.1.1     router router.local
+10.0.0.5        server.internal
+fd00::1         ipv6-host

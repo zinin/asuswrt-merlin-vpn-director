@@ -1,0 +1,10 @@
+#!/bin/bash
+case "$*" in
+    "get ipv6_service") echo "native" ;;
+    "get wan0_primary") echo "1" ;;
+    "get wan0_ifname")  echo "eth0" ;;
+    "get wan1_primary") echo "0" ;;
+    "get wan1_ifname")  echo "eth1" ;;
+    "get model")        echo "RT-AX88U" ;;
+    *) echo "" ;;
+esac

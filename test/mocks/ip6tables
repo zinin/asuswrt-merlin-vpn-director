@@ -1,0 +1,14 @@
+#!/bin/bash
+# Same as iptables mock
+echo "ip6tables $*" >> /tmp/bats_ip6tables_calls.log
+case "$1" in
+    -t)
+        case "$3" in
+            -S) echo "-P PREROUTING ACCEPT" ;;
+            -C) exit 1 ;;
+            -N|-A|-I|-D|-F|-X) exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+    *) exit 0 ;;
+esac

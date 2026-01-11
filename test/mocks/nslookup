@@ -1,0 +1,22 @@
+#!/bin/bash
+host="$1"
+case "$host" in
+    "example.com")
+        echo "Server: 8.8.8.8"
+        echo "Address: 8.8.8.8#53"
+        echo ""
+        echo "Name: example.com"
+        echo "Address: 93.184.216.34"
+        ;;
+    "ipv6.example.com")
+        echo "Server: 8.8.8.8"
+        echo "Address: 8.8.8.8#53"
+        echo ""
+        echo "Name: ipv6.example.com"
+        echo "Address: 2606:2800:220:1:248:1893:25c8:1946"
+        ;;
+    *)
+        echo "** server can't find $host: NXDOMAIN"
+        exit 1
+        ;;
+esac
