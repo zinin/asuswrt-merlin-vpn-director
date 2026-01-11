@@ -1,4 +1,4 @@
-#!/usr/bin/env ash
+#!/usr/bin/env bash
 
 ###################################################################################################
 # tunnel_director.sh - outbound ipset-based policy routing for Asuswrt-Merlin
@@ -49,18 +49,99 @@
 # -------------------------------------------------------------------------------------------------
 set -euo pipefail
 
+# Debug mode: set DEBUG=1 to enable tracing
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
+
 ###################################################################################################
-# 0a. Load utils and shared variables
+# 0a. Define helper functions (pure functions for testing)
+# -------------------------------------------------------------------------------------------------
+# table_allowed          - checks whether a given routing table is valid (wgcN, ovpncN, or main)
+#
+# resolve_set_name       - resolves a CSV of ipset keys (countries/custom/combos) into a set name:
+#                            * combo names are derived with derive_set_name
+#                            * returns empty string if no matching ipset is found
+#
+# get_prerouting_base_pos
+#                        - returns the 1-based insert position in mangle/PREROUTING immediately
+#                          after the last system iface-mark rule.
+#                          These rules look like:
+#                            -A PREROUTING -i tun11 -j MARK --set-xmark 0x1/0x1
+#                            -A PREROUTING -i wgc1  -j MARK --set-xmark 0x1/0x1
+#                          Tunnel Director uses this to anchor its own jumps after the firmware's
+#                          interface-marking, so we don't override system bits and ensure a stable
+#                          insertion point even if the system changes other rules.
 ###################################################################################################
+table_allowed() {
+    # $1 = table (e.g., wgc1)
+    [[ " $valid_tables " == *" $1 "* ]]
+}
+
+resolve_set_name() {
+    # $1 = comma-separated keys (countries/custom/combos)
+    local keys_csv="$1" set_name
+
+    set_name="$(derive_set_name "${keys_csv//,/_}")"
+
+    # Check if ipset exists
+    if ipset list "$set_name" >/dev/null 2>&1; then
+        printf '%s\n' "$set_name"
+        return 0
+    fi
+
+    # ipset not found
+    return 0
+}
+
+# Return the 1-based insert position after the last system
+# iface-mark rule in mangle/PREROUTING.
+#
+# Matches lines like:
+#   -A PREROUTING -i tun11 -j MARK --set-xmark 0x1/0x1
+#   -A PREROUTING -i wgc1  -j MARK --set-xmark 0x1/0x1
+get_prerouting_base_pos() {
+    iptables -t mangle -S PREROUTING 2>/dev/null |
+    awk '
+        $1 == "-A" {
+          i++
+          if ( ($0 ~ /-i wgc[0-9]+/ || $0 ~ /-i tun[0-9]+/) &&
+               $0 ~ /-j MARK/ && $0 ~ /--set-/ ) {
+            last = i
+          }
+        }
+        END { print (last ? last + 1 : 1) }
+    '
+}
+
+###################################################################################################
+# Allow sourcing for testing
+###################################################################################################
+if [[ ${1:-} == "--source-only" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
+
+###################################################################################################
+# 0b. Load utils and shared variables
+###################################################################################################
+# shellcheck source=utils/common.sh
 . /jffs/scripts/vpn-director/utils/common.sh
+# shellcheck source=utils/firewall.sh
 . /jffs/scripts/vpn-director/utils/firewall.sh
+# shellcheck source=utils/shared.sh
 . /jffs/scripts/vpn-director/utils/shared.sh
+# shellcheck source=utils/config.sh
 . /jffs/scripts/vpn-director/utils/config.sh
 
+###################################################################################################
+# 0c. Script execution starts here - acquire lock and initialize variables
+###################################################################################################
 acquire_lock  # avoid concurrent runs
 
 ###################################################################################################
-# 0b. Define variables
+# 0d. Define variables
 # -------------------------------------------------------------------------------------------------
 # build_tun_dir_rules  - flag: 1 if Tunnel Director rules should be rebuilt
 # changes              - flag: 1 if any changes were applied in this run
@@ -108,69 +189,6 @@ valid_tables="$(printf '%s\n' "$valid_tables_list" | xargs)"
 valid_tables_csv="$(printf '%s\n' "$valid_tables_list" | tr '\n' ',' | sed 's/,$//')"
 
 ###################################################################################################
-# 0c. Define helper functions
-# -------------------------------------------------------------------------------------------------
-# table_allowed          - checks whether a given routing table is valid (wgcN, ovpncN, or main)
-#
-# resolve_set_name       - resolves a CSV of ipset keys (countries/custom/combos) into a set name:
-#                            * combo names are derived with derive_set_name
-#                            * returns empty string if no matching ipset is found
-#
-# get_prerouting_base_pos
-#                        - returns the 1-based insert position in mangle/PREROUTING immediately
-#                          after the last system iface-mark rule.
-#                          These rules look like:
-#                            -A PREROUTING -i tun11 -j MARK --set-xmark 0x1/0x1
-#                            -A PREROUTING -i wgc1  -j MARK --set-xmark 0x1/0x1
-#                          Tunnel Director uses this to anchor its own jumps after the firmware's
-#                          interface-marking, so we don't override system bits and ensure a stable
-#                          insertion point even if the system changes other rules.
-###################################################################################################
-table_allowed() {
-    # $1 = table (e.g., wgc1)
-    case " $valid_tables " in
-        *" $1 "*)  return 0 ;;
-        *)         return 1 ;;
-    esac
-}
-
-resolve_set_name() {
-    # $1 = comma-separated keys (countries/custom/combos)
-    local keys_csv="$1" set_name
-
-    set_name="$(derive_set_name "${keys_csv//,/_}")"
-
-    # Check if ipset exists
-    if ipset list "$set_name" >/dev/null 2>&1; then
-        printf '%s\n' "$set_name"
-        return 0
-    fi
-
-    # ipset not found
-    return 0
-}
-
-# Return the 1-based insert position after the last system
-# iface-mark rule in mangle/PREROUTING.
-#
-# Matches lines like:
-#   -A PREROUTING -i tun11 -j MARK --set-xmark 0x1/0x1
-#   -A PREROUTING -i wgc1  -j MARK --set-xmark 0x1/0x1
-get_prerouting_base_pos() {
-    iptables -t mangle -S PREROUTING 2>/dev/null |
-    awk '
-        $1 == "-A" {
-          i++
-          if ( ($0 ~ /-i wgc[0-9]+/ || $0 ~ /-i tun[0-9]+/) &&
-               $0 ~ /-j MARK/ && $0 ~ /--set-/ ) {
-            last = i
-          }
-        }
-        END { print (last ? last + 1 : 1) }
-    '
-}
-
-###################################################################################################
 # 1. Calculate hashes and set build flag
 ###################################################################################################
 
@@ -188,7 +206,7 @@ new_tun_dir_hash="$(compute_hash "$tun_dir_rules")"
 old_tun_dir_hash="$(cat "$TUN_DIR_HASH" 2>/dev/null || printf '%s' "$empty_rules_hash")"
 
 # Compare hashes first
-if [ "$new_tun_dir_hash" != "$old_tun_dir_hash" ]; then
+if [[ $new_tun_dir_hash != "$old_tun_dir_hash" ]]; then
     build_tun_dir_rules=1
 else
     # If hashes match, verify counts also match to detect drift
@@ -247,9 +265,9 @@ else
     )"
 
     # If any count differs from the number of config rows, force rebuild
-    if [ "$cfg_rows" -ne "$ch_rows" ] \
-        || [ "$cfg_rows" -ne "$pr_rows" ] \
-        || [ "$cfg_rows" -ne "$ip_rows" ];
+    if [[ $cfg_rows -ne $ch_rows ]] \
+        || [[ $cfg_rows -ne $pr_rows ]] \
+        || [[ $cfg_rows -ne $ip_rows ]];
     then
         build_tun_dir_rules=1
     fi
@@ -260,9 +278,9 @@ fi
 ###################################################################################################
 tun_dir_ipsets_hash="$(cat "$TUN_DIR_IPSETS_HASH" 2>/dev/null || printf '%s' "$empty_rules_hash")"
 
-if [ -s "$tun_dir_rules" ] \
-    && [ "$build_tun_dir_rules" -eq 1 ] \
-    && [ "$tun_dir_ipsets_hash" != "$new_tun_dir_hash" ];
+if [[ -s $tun_dir_rules ]] \
+    && [[ $build_tun_dir_rules -eq 1 ]] \
+    && [[ $tun_dir_ipsets_hash != "$new_tun_dir_hash" ]];
 then
     log "ipsets are not ready for current rules; exiting..."
     exit 0
@@ -271,7 +289,7 @@ fi
 ###################################################################################################
 # 3. Build from scratch on any change
 ###################################################################################################
-if [ "$build_tun_dir_rules" -eq 1 ] && [ "$old_tun_dir_hash" != "$empty_rules_hash" ]; then
+if [[ $build_tun_dir_rules -eq 1 ]] && [[ $old_tun_dir_hash != "$empty_rules_hash" ]]; then
     log "Configuration has changed; deleting existing rules..."
 
     # Find all TUN_DIR_* chains in mangle
@@ -285,7 +303,7 @@ if [ "$build_tun_dir_rules" -eq 1 ] && [ "$old_tun_dir_hash" != "$empty_rules_ha
     # Remove PREROUTING jumps, delete chains, drop matching ip rules
     # expected ip rule pref = TUN_DIR_PREF_BASE + <idx>
     while IFS= read -r ch; do
-        [ -n "$ch" ] || continue
+        [[ -n $ch ]] || continue
         idx_num="${ch#"$TUN_DIR_CHAIN_PREFIX"}"
         pref=$((TUN_DIR_PREF_BASE + idx_num))
 
@@ -300,9 +318,9 @@ EOF
     changes=1
 fi
 
-if ! [ -s "$tun_dir_rules" ]; then
+if [[ ! -s $tun_dir_rules ]]; then
     log "No rules are defined"
-elif [ "$build_tun_dir_rules" -eq 0 ]; then
+elif [[ $build_tun_dir_rules -eq 0 ]]; then
     log "Rules are applied and up-to-date"
 else
     # Apply all rules in order
@@ -320,7 +338,7 @@ else
         fi
 
         # Require non-empty 'src'
-        if [ -z "$src" ]; then
+        if [[ -z $src ]]; then
             log -l WARN "Missing 'src' for table=$table; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
@@ -335,11 +353,11 @@ else
         esac
 
         # Validate interface exists
-        if [ -z "$src_iif" ]; then
+        if [[ -z $src_iif ]]; then
             log -l WARN "Empty interface after '%' in 'src'; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
-        if [ ! -d "/sys/class/net/$src_iif" ]; then
+        if [[ ! -d /sys/class/net/$src_iif ]]; then
             log -l WARN "Interface '$src_iif' not found; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
@@ -352,7 +370,7 @@ else
         fi
 
         # 'set' must be provided (non-empty)
-        if [ -z "$set" ]; then
+        if [[ -z $set ]]; then
             log -l WARN "Missing 'set' for table=$table; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
@@ -361,10 +379,10 @@ else
         #   * Support meta ipset "any" -> match ALL destinations (no ipset lookup)
         #   * Otherwise resolve the ipset name
         match=""
-        if [ "$set" != "any" ]; then
+        if [[ $set != "any" ]]; then
             # Resolve destination ipset
             dest_set="$(resolve_set_name "$set")"
-            if [ -z "$dest_set" ]; then
+            if [[ -z $dest_set ]]; then
                 log -l WARN "No ipset found for set='$set';" \
                     "skipping rule with idx=$idx"
                 warnings=1; idx=$((idx + 1)); continue
@@ -373,10 +391,10 @@ else
         fi
 
         # Optional destination exclusion ipset
-        if [ -n "$set_excl" ]; then
+        if [[ -n $set_excl ]]; then
             orig_excl="$set_excl"
             dest_set_excl="$(resolve_set_name "$orig_excl")"
-            if [ -z "$dest_set_excl" ]; then
+            if [[ -z $dest_set_excl ]]; then
                 log -l WARN "No exclusion ipset found for set_excl='$orig_excl';" \
                     "skipping rule with idx=$idx"
                 warnings=1; idx=$((idx + 1)); continue
@@ -391,7 +409,7 @@ else
         slot=$((idx + 1))
 
         # Ensure it fits into our reserved field
-        if [ "$slot" -gt "$_mark_field_max" ]; then
+        if [[ $slot -gt $_mark_field_max ]]; then
             log -l WARN "Too many rules for fwmark field (mask=$mark_mask_hex," \
                 "shift=$_mark_shift_val): idx=$idx > max=$_mark_field_max; skipping rule"
             warnings=1; idx=$((idx + 1)); continue
@@ -409,11 +427,11 @@ else
         create_fw_chain -q -f mangle "$chain"
 
         # Source exclusions: RETURN early (preserve order); validate each is private
-        if [ -n "$src_excl" ]; then
-            IFS_SAVE=$IFS
-            IFS=','; set -- $src_excl; IFS=$IFS_SAVE
-            for ex; do
-                [ -n "$ex" ] || continue
+        if [[ -n $src_excl ]]; then
+            declare -a excl_array
+            IFS=',' read -ra excl_array <<< "$src_excl"
+            for ex in "${excl_array[@]}"; do
+                [[ -n $ex ]] || continue
                 ex_ip="${ex%%/*}"
                 if ! is_lan_ip "$ex_ip"; then
                     log -l WARN "src_excl='$ex' is not a private RFC1918 subnet;" \
@@ -455,10 +473,10 @@ printf '%s\n' "$new_tun_dir_hash" > "$TUN_DIR_HASH"
 ###################################################################################################
 # 4. Finalize
 ###################################################################################################
-if [ "$changes" -eq 0 ]; then
+if [[ $changes -eq 0 ]]; then
     # Exit silently if no changes were applied
     exit 0
-elif [ "$warnings" -eq 0 ]; then
+elif [[ $warnings -eq 0 ]]; then
     log "All changes have been applied successfully"
 else
     log -l WARN "Completed with warnings; please check logs for details"
