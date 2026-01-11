@@ -153,8 +153,7 @@ step_parse_and_save_servers() {
 
     # Parse servers and build JSON
     printf '%s\n' "$VLESS_SERVERS" | grep '^vless://' | while IFS= read -r uri; do
-        # Log raw URI (truncated for readability)
-        printf "[DEBUG] URI: %.80s...\n" "$uri" >> "$LOG_FILE"
+        log -l debug "URI: ${uri%%#*}"
 
         parsed=$(parse_vless_uri "$uri")
         server=$(printf '%s' "$parsed" | cut -d'|' -f1)
@@ -162,13 +161,11 @@ step_parse_and_save_servers() {
         uuid=$(printf '%s' "$parsed" | cut -d'|' -f3)
         name=$(printf '%s' "$parsed" | cut -d'|' -f4)
 
-        # Log parsed values
-        printf "[DEBUG] Parsed: server=%s port=%s uuid=%s name=%s\n" \
-            "$server" "$port" "$uuid" "$name" >> "$LOG_FILE"
+        log -l debug "Parsed: server=$server port=$port uuid=$uuid name=$name"
 
         # Validate required fields
         if [ -z "$server" ] || [ -z "$port" ] || [ -z "$uuid" ]; then
-            printf "[DEBUG] SKIP: missing required field\n" >> "$LOG_FILE"
+            log -l debug "SKIP: missing required field"
             log -l warn "Skipping invalid URI (missing server/port/uuid)"
             continue
         fi
