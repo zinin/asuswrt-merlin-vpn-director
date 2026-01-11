@@ -21,8 +21,8 @@
 #       Returns the script's filename. With -n, strips the extension.
 #
 #   log [-l <level>] <message...>
-#       Lightweight syslog wrapper. Logs to both syslog (user facility) and stderr.
-#       Supports priority levels with optional -l flag.
+#       Unified logger with ISO 8601 timestamp. Outputs to syslog, stderr, and log file.
+#       Levels: TRACE, DEBUG, INFO (default), WARN, ERROR
 #
 #   acquire_lock [<name>]
 #       Acquires an exclusive non-blocking lock via /var/lock/<name>.lock; exits early if another
@@ -329,43 +329,50 @@ LOG_FILE="/tmp/vpn_director.log"
 MAX_LOG_SIZE=102400  # 100KB
 
 # -------------------------------------------------------------------------------------------------
-# log_to_file - append timestamped message to log file with rotation
+# log - unified logger with ISO 8601 timestamp
 # -------------------------------------------------------------------------------------------------
-log_to_file() {
-    local msg="$(date '+%Y-%m-%d %H:%M:%S') [$_log_tag] $*"
+# Usage:
+#   log "message"              # INFO by default
+#   log -l LEVEL "message"     # LEVEL = TRACE|DEBUG|INFO|WARN|ERROR
+#
+# Output:
+#   stderr: 2026-01-11T12:35:16 INFO  [module] - message
+#   file:   2026-01-11T12:35:16 INFO  [module] - message
+#   syslog: INFO  [module] - message (timestamp added by syslog)
+# -------------------------------------------------------------------------------------------------
+log() {
+    local level="INFO"
 
-    # Rotate if file exceeds limit
+    # Parse -l LEVEL
+    if [ "$1" = "-l" ] && [ -n "$2" ]; then
+        level="$2"
+        shift 2
+    fi
+
+    # Validate and format level (5 chars)
+    local level_fmt syslog_pri
+    case "$level" in
+        TRACE) level_fmt="TRACE"; syslog_pri="notice" ;;
+        DEBUG) level_fmt="DEBUG"; syslog_pri="debug" ;;
+        INFO)  level_fmt="INFO "; syslog_pri="info" ;;
+        WARN)  level_fmt="WARN "; syslog_pri="warning" ;;
+        ERROR) level_fmt="ERROR"; syslog_pri="err" ;;
+        *)     level_fmt="INFO "; syslog_pri="info" ;;
+    esac
+
+    local timestamp=$(date '+%Y-%m-%dT%H:%M:%S')
+    local msg_syslog="$level_fmt [$_log_tag] - $*"
+    local msg_full="$timestamp $msg_syslog"
+
+    # Rotate log file if needed
     if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt "$MAX_LOG_SIZE" ]; then
         mv "$LOG_FILE" "${LOG_FILE}.old"
     fi
 
-    printf '%s\n' "$msg" >> "$LOG_FILE"
-}
-
-log() {
-    local level="info"    # default priority
-
-    # Optional "-l <level>"
-    if [ "$1" = "-l" ] && [ -n "$2" ]; then
-        level=$2
-        shift 2
-    fi
-
-    # Prefix table for non-default levels
-    local prefix=""
-    case "$level" in
-        debug)   prefix="DEBUG: " ;;
-        notice)  prefix="NOTICE: " ;;
-        warn)    prefix="WARNING: " ;;
-        err)     prefix="ERROR: " ;;
-        crit)    prefix="CRITICAL: " ;;
-        alert)   prefix="ALERT: " ;;
-        emerg)   prefix="EMERGENCY: " ;;
-        # info (default) gets no prefix
-    esac
-
-    logger -s -t "$_log_tag" -p "user.$level" "${prefix}$*"
-    log_to_file "${prefix}$*"
+    # Output to three destinations
+    printf '%s\n' "$msg_full" >&2
+    printf '%s\n' "$msg_full" >> "$LOG_FILE"
+    logger -t "$_log_tag" -p "user.$syslog_pri" "$msg_syslog"
 }
 
 ###################################################################################################
