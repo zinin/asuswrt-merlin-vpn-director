@@ -45,3 +45,10 @@ load_config() {
     export VPD_CONFIG_FILE="$BATS_TEST_DIRNAME/fixtures/vpn-director.json"
     source "$UTILS_DIR/config.sh"
 }
+
+# Helper to source import_server_list.sh without running main
+load_import_server_list() {
+    load_common
+    export IMPORT_TEST_MODE=1
+    source "$SCRIPTS_DIR/import_server_list.sh"
+}
