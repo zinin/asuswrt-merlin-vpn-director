@@ -1,5 +1,11 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Debug mode: set DEBUG=1 to enable tracing
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
 
 ###############################################################################
 # import_server_list.sh - Import VLESS servers from base64-encoded file/URL
@@ -66,7 +72,7 @@ parse_vless_uri() {
     port="${server_port##*:}"
 
     # Fallback: if name is empty after filtering, use server hostname
-    if [ -z "$name" ]; then
+    if [[ -z "$name" ]]; then
         name="$server"
     fi
 
@@ -81,11 +87,11 @@ get_data_dir() {
     local config_file="$VPD_CONFIG"
 
     # Fall back to template if config doesn't exist
-    if [ ! -f "$config_file" ]; then
+    if [[ ! -f "$config_file" ]]; then
         config_file="$VPD_TEMPLATE"
     fi
 
-    if [ ! -f "$config_file" ]; then
+    if [[ ! -f "$config_file" ]]; then
         log -l ERROR "Config not found: $VPD_CONFIG or $VPD_TEMPLATE"
         exit 1
     fi
@@ -106,7 +112,7 @@ step_get_vless_file() {
     read_input "Path or URL"
     VLESS_INPUT="$INPUT_RESULT"
 
-    if [ -z "$VLESS_INPUT" ]; then
+    if [[ -z "$VLESS_INPUT" ]]; then
         log -l ERROR "No input provided"
         exit 1
     fi
@@ -121,7 +127,7 @@ step_get_vless_file() {
             }
             ;;
         *)
-            if [ ! -f "$VLESS_INPUT" ]; then
+            if [[ ! -f "$VLESS_INPUT" ]]; then
                 log -l ERROR "File not found: $VLESS_INPUT"
                 exit 1
             fi
@@ -138,7 +144,7 @@ step_get_vless_file() {
     # Count servers
     SERVER_COUNT=$(printf '%s\n' "$VLESS_DECODED" | grep -c '^vless://' || true)
 
-    if [ "$SERVER_COUNT" -eq 0 ]; then
+    if [[ "$SERVER_COUNT" -eq 0 ]]; then
         log -l ERROR "No VLESS servers found in file"
         exit 1
     fi
@@ -173,7 +179,7 @@ step_parse_and_save_servers() {
         log -l DEBUG "Parsed: server=$server port=$port uuid=$uuid name=$name"
 
         # Validate required fields
-        if [ -z "$server" ] || [ -z "$port" ] || [ -z "$uuid" ]; then
+        if [[ -z "$server" ]] || [[ -z "$port" ]] || [[ -z "$uuid" ]]; then
             log -l DEBUG "SKIP: missing required field"
             log -l WARN "Skipping invalid URI (missing server/port/uuid)"
             continue
@@ -189,7 +195,7 @@ step_parse_and_save_servers() {
         # Resolve IP using common.sh resolve_ip (tries IPv4 first, then IPv6)
         ip=$(resolve_ip -q "$server" 2>/dev/null) || ip=$(resolve_ip -6 -g -q "$server" 2>/dev/null) || ip=""
 
-        if [ -z "$ip" ]; then
+        if [[ -z "$ip" ]]; then
             log -l DEBUG "SKIP: cannot resolve $server"
             log -l WARN "Cannot resolve $server, skipping"
             continue
@@ -205,8 +211,8 @@ step_parse_and_save_servers() {
         printf '[\n'
         first=1
         while IFS= read -r server && IFS= read -r port && IFS= read -r uuid && IFS= read -r name && IFS= read -r ip; do
-            [ -z "$server" ] && continue
-            [ "$first" -eq 0 ] && printf ',\n'
+            [[ -z "$server" ]] && continue
+            [[ "$first" -eq 0 ]] && printf ',\n'
             first=0
             # Use jq to create properly escaped JSON object
             jq -n \
@@ -229,7 +235,7 @@ step_parse_and_save_servers() {
 
     SERVER_COUNT=$(jq length "$SERVERS_FILE")
 
-    if [ "$SERVER_COUNT" -eq 0 ]; then
+    if [[ "$SERVER_COUNT" -eq 0 ]]; then
         log -l ERROR "No servers could be resolved"
         rm -f "$SERVERS_FILE"
         exit 1
@@ -255,8 +261,8 @@ step_update_config() {
     xray_servers_json=$(printf '%s\n' $server_ips | jq -R . | jq -s .)
 
     # Create config from template if doesn't exist
-    if [ ! -f "$VPD_CONFIG" ]; then
-        if [ ! -f "$VPD_TEMPLATE" ]; then
+    if [[ ! -f "$VPD_CONFIG" ]]; then
+        if [[ ! -f "$VPD_TEMPLATE" ]]; then
             log -l ERROR "Template not found: $VPD_TEMPLATE"
             exit 1
         fi
