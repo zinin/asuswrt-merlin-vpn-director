@@ -245,44 +245,6 @@ step_parse_and_save_servers() {
 }
 
 ###############################################################################
-# Step 3: Update vpn-director.json
-###############################################################################
-
-step_update_config() {
-    log -l TRACE "Step 3: Updating Configuration"
-
-    DATA_DIR=$(get_data_dir)
-    SERVERS_FILE="$DATA_DIR/servers.json"
-
-    # Extract all IPs from servers.json
-    server_ips=$(jq -r '.[].ip' "$SERVERS_FILE" | sort -u)
-
-    # Build JSON array of IPs
-    # shellcheck disable=SC2086  # intentional word splitting for newline-separated IPs
-    xray_servers_json=$(printf '%s\n' $server_ips | jq -R . | jq -s .)
-
-    # Create config from template if doesn't exist
-    if [[ ! -f "$VPD_CONFIG" ]]; then
-        if [[ ! -f "$VPD_TEMPLATE" ]]; then
-            log -l ERROR "Template not found: $VPD_TEMPLATE"
-            exit 1
-        fi
-        cp "$VPD_TEMPLATE" "$VPD_CONFIG"
-        log "Created $VPD_CONFIG from template"
-    fi
-
-    # Update xray.servers in config
-    jq --argjson servers "$xray_servers_json" \
-        '.xray.servers = $servers' \
-        "$VPD_CONFIG" > "${VPD_CONFIG}.tmp" && \
-        mv "${VPD_CONFIG}.tmp" "$VPD_CONFIG"
-
-    # shellcheck disable=SC2086  # intentional word splitting
-    ip_count=$(printf '%s\n' $server_ips | wc -l | tr -d ' ')
-    log "Updated xray.servers with $ip_count IP addresses"
-}
-
-###############################################################################
 # Main
 ###############################################################################
 
@@ -292,7 +254,6 @@ main() {
 
     step_get_vless_file
     step_parse_and_save_servers
-    step_update_config
 
     log -l TRACE "Import Complete"
     printf "Server list saved. Run /jffs/scripts/vpn-director/configure.sh to continue setup.\n"
