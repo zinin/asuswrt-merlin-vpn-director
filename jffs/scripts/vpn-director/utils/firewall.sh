@@ -291,14 +291,14 @@ fw_chain_exists() {
         case "$1" in
             -6) cmd="ip6tables" ;;
             --) shift; break ;;
-            -*) log -l err "fw_chain_exists: unknown option: $1"; return 1 ;;
+            -*) log -l ERROR "fw_chain_exists: unknown option: $1"; return 1 ;;
             *)
                 if [ -z "$table" ]; then
                     table="$1"
                 elif [ -z "$chain" ]; then
                     chain="$1"
                 else
-                    log -l err "fw_chain_exists: usage: fw_chain_exists [-6] <table> <chain>"
+                    log -l ERROR "fw_chain_exists: usage: fw_chain_exists [-6] <table> <chain>"
                     return 1
                 fi
                 ;;
@@ -307,7 +307,7 @@ fw_chain_exists() {
     done
 
     if [ -z "$table" ] || [ -z "$chain" ]; then
-        log -l err "fw_chain_exists: usage: fw_chain_exists [-6] <table> <chain>"
+        log -l ERROR "fw_chain_exists: usage: fw_chain_exists [-6] <table> <chain>"
         return 1
     fi
 
@@ -346,7 +346,7 @@ create_fw_chain() {
             -q) quiet=1; shift ;;
             -f) flush=1; shift ;;
             --) shift; break ;;
-            -*) log -l err "create_fw_chain: unknown option: $1"; return 1 ;;
+            -*) log -l ERROR "create_fw_chain: unknown option: $1"; return 1 ;;
             *)  break ;;
         esac
     done
@@ -359,7 +359,7 @@ create_fw_chain() {
     chain="${2-}"
 
     if [ -z "$table" ] || [ -z "$chain" ]; then
-        log -l err "create_fw_chain: usage:" \
+        log -l ERROR "create_fw_chain: usage:" \
             "create_fw_chain [-6] [-q] [-f] <table> <chain>"
         return 1
     fi
@@ -373,7 +373,7 @@ create_fw_chain() {
                 _qlog "Flushed existing chain ($fam_label): table=$table chain=$chain"
                 return 0
             else
-                log -l err "Failed to flush chain ($fam_label): table=$table chain=$chain"
+                log -l ERROR "Failed to flush chain ($fam_label): table=$table chain=$chain"
                 return 1
             fi
         fi
@@ -387,7 +387,7 @@ create_fw_chain() {
         _qlog "Created new chain ($fam_label): table=$table chain=$chain"
         return 0
     else
-        log -l err "Failed to create chain ($fam_label): table=$table chain=$chain"
+        log -l ERROR "Failed to create chain ($fam_label): table=$table chain=$chain"
         return 1
     fi
 }
@@ -419,7 +419,7 @@ delete_fw_chain() {
             -6) cmd="ip6tables"; fam_label="IPv6"; shift ;;
             -q) quiet=1; shift ;;
             --) shift; break ;;
-            -*) log -l err "delete_fw_chain: unknown option: $1"; return 1 ;;
+            -*) log -l ERROR "delete_fw_chain: unknown option: $1"; return 1 ;;
             *)  break ;;
         esac
     done
@@ -430,7 +430,7 @@ delete_fw_chain() {
     local table="${1-}" chain="${2-}"
 
     if [ -z "$table" ] || [ -z "$chain" ]; then
-        log -l err "delete_fw_chain: usage: delete_fw_chain [-6] [-q] <table> <chain>"
+        log -l ERROR "delete_fw_chain: usage: delete_fw_chain [-6] [-q] <table> <chain>"
         return 1
     fi
 
@@ -446,7 +446,7 @@ delete_fw_chain() {
 
     # Delete
     if ! "$cmd" -t "$table" -X "$chain" 2>/dev/null; then
-        log -l err "Failed to delete chain ($fam_label): $table -> $chain"
+        log -l ERROR "Failed to delete chain ($fam_label): $table -> $chain"
         return 1
     fi
 
@@ -478,7 +478,7 @@ find_fw_rules() {
         case "$1" in
             -6) cmd="ip6tables"; shift ;;
             --) shift; break ;;
-            -*) log -l err "find_fw_rules: unknown option: $1"; return 1 ;;
+            -*) log -l ERROR "find_fw_rules: unknown option: $1"; return 1 ;;
             *)  break ;;
         esac
     done
@@ -487,7 +487,7 @@ find_fw_rules() {
     pattern="${2-}"
 
     if [ -z "$base" ] || [ -z "$pattern" ]; then
-        log -l err "find_fw_rules: usage:" \
+        log -l ERROR "find_fw_rules: usage:" \
             "find_fw_rules \"<table> <chain>\" \"<pattern>\""
         return 1
     fi
@@ -497,7 +497,7 @@ find_fw_rules() {
 
     # Require both parts
     if [ -z "$table" ] || [ -z "$chain" ] || [ "$table" = "$chain" ]; then
-        log -l err "find_fw_rules: base must be \"<table> <chain>\", got: '$base'"
+        log -l ERROR "find_fw_rules: base must be \"<table> <chain>\", got: '$base'"
         return 1
     fi
 
@@ -537,7 +537,7 @@ purge_fw_rules() {
             -q)       quiet=1; shift ;;
             --count)  print_count=1; shift ;;
             --)       shift; break ;;
-            -*)       log -l err "purge_fw_rules: unknown option: $1"; return 1 ;;
+            -*)       log -l ERROR "purge_fw_rules: unknown option: $1"; return 1 ;;
             *)        break ;;
         esac
     done
@@ -549,7 +549,7 @@ purge_fw_rules() {
     local cnt=0
 
     if [ -z "$base" ] || [ -z "$pattern" ]; then
-        log -l err "purge_fw_rules: usage:" \
+        log -l ERROR "purge_fw_rules: usage:" \
             "purge_fw_rules [-6] [-q] [--count] \"<table> <chain>\" \"<pattern>\""
         return 1
     fi
@@ -585,7 +585,7 @@ purge_fw_rules() {
             _qlog "Deleted rule ($fam_label):" \
                 "table=$table chain=$chain $(_spec_to_log "$rest")"
         else
-            log -l err "Failed to remove firewall rule ($fam_label): $table $rule"
+            log -l ERROR "Failed to remove firewall rule ($fam_label): $table $rule"
         fi
     done <<EOF
 $rules
@@ -633,7 +633,7 @@ ensure_fw_rule() {
 
     local table="${1-}" chain="${2-}"
     if [ -z "$table" ] || [ -z "$chain" ]; then
-        log -l err "ensure_fw_rule: usage: ensure_fw_rule [-6] [-q] [--count]" \
+        log -l ERROR "ensure_fw_rule: usage: ensure_fw_rule [-6] [-q] [--count]" \
             "<table> <chain> [-I [pos] | -D] <rule...>"
         return 1
     fi
@@ -665,7 +665,7 @@ ensure_fw_rule() {
                 [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
                 return 0
             else
-                log -l err "Failed to delete rule ($fam_label):" \
+                log -l ERROR "Failed to delete rule ($fam_label):" \
                     "table=$table chain=$chain $(_spec_to_log "$@")"
                 return 1
             fi
@@ -690,7 +690,7 @@ ensure_fw_rule() {
             _qlog "Inserted rule at ins_pos=#$pos ($fam_label):" \
                 "table=$table chain=$chain $(_spec_to_log "$@")"
         else
-            log -l err "Failed to insert rule at ins_pos=#$pos ($fam_label):" \
+            log -l ERROR "Failed to insert rule at ins_pos=#$pos ($fam_label):" \
                 "table=$table chain=$chain $(_spec_to_log "$@")"
             return 1
         fi
@@ -700,7 +700,7 @@ ensure_fw_rule() {
             _qlog "Appended rule ($fam_label):" \
                 "table=$table chain=$chain $(_spec_to_log "$@")"
         else
-            log -l err "Failed to append rule ($fam_label):" \
+            log -l ERROR "Failed to append rule ($fam_label):" \
                 "table=$table chain=$chain $(_spec_to_log "$@")"
             return 1
         fi
@@ -753,7 +753,7 @@ sync_fw_rule() {
     local cnt=0 n=0
 
     if [ -z "$table" ] || [ -z "$chain" ] || [ -z "$pattern" ] || [ -z "$desired" ]; then
-        log -l err "sync_fw_rule: usage: sync_fw_rule [-6] [-q] [--count] <table> <chain>" \
+        log -l ERROR "sync_fw_rule: usage: sync_fw_rule [-6] [-q] [--count] <table> <chain>" \
             "\"<pattern>\" \"<desired args>\" [insert_pos]"
         return 1
     fi
@@ -851,7 +851,7 @@ block_wan_for_host() {
     # WAN interface
     wan_if="$(nvram get wan${wan_id}_ifname)"
     if [ -z "$wan_if" ]; then
-        log -l err "wan${wan_id} interface name is empty; cannot block WAN for host"
+        log -l ERROR "wan${wan_id} interface name is empty; cannot block WAN for host"
         return 1
     fi
 
@@ -886,7 +886,7 @@ EOF
 
     # If nothing was blocked at all, fail gracefully
     if [ "$any_blocked" -eq 0 ]; then
-        log -l err "No IPv4 LAN or global IPv6 found for '$host'; nothing to block"
+        log -l ERROR "No IPv4 LAN or global IPv6 found for '$host'; nothing to block"
         return 1
     fi
 
@@ -926,7 +926,7 @@ allow_wan_for_host() {
     # WAN interface
     wan_if="$(nvram get wan${wan_id}_ifname)"
     if [ -z "$wan_if" ]; then
-        log -l err "wan${wan_id} interface name is empty; cannot unblock WAN for host"
+        log -l ERROR "wan${wan_id} interface name is empty; cannot unblock WAN for host"
         return 1
     fi
 
@@ -957,7 +957,7 @@ EOF
 
     # If nothing was processed at all, fail gracefully
     if [ "$any_processed" -eq 0 ]; then
-        log -l err "No IPv4 LAN or global IPv6 found for '$host'; nothing to allow"
+        log -l ERROR "No IPv4 LAN or global IPv6 found for '$host'; nothing to allow"
         return 1
     fi
 
