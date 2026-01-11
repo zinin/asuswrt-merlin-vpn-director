@@ -35,7 +35,7 @@ derive_set_name() {
 
     hash="$(printf '%s' "$set_lc" | compute_hash | cut -c1-24)"
 
-    log -l notice "Assigned alias='$hash' for set='$set_lc'" \
+    log -l TRACE "Assigned alias='$hash' for set='$set_lc'" \
         "because set name exceeds $max chars"
 
     printf '%s\n' "$hash"
