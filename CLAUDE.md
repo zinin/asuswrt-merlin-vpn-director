@@ -6,7 +6,7 @@ Traffic routing system for Asus routers: Xray TPROXY, Tunnel Director, IPSet Bui
 
 ```bash
 # Install
-curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh | bash
 
 # Xray TPROXY
 /jffs/scripts/vpn-director/xray_tproxy.sh status|start|stop|restart
@@ -58,7 +58,9 @@ ipt  # Runs: ipset_builder.sh -t
 
 ## Shell Conventions
 
-- Shebang: `#!/usr/bin/env ash` with `set -euo pipefail`
+- Shebang: `#!/usr/bin/env bash` with `set -euo pipefail`
+- Debug: `DEBUG=1 ./script.sh` enables tracing with informative PS4
+- Conditionals: Use `[[ ]]` instead of `[ ]`
 - Logging: `log -l ERROR|WARN|INFO|DEBUG|TRACE "message"`
 
 ## Modular Docs
