@@ -33,6 +33,7 @@ ipt  # Runs: ipset_builder.sh -t
 |------|---------|
 | `jffs/scripts/vpn-director/` | Main scripts: ipset_builder, tunnel_director, xray_tproxy, configure |
 | `jffs/scripts/vpn-director/utils/` | Shared utilities: common.sh, firewall.sh, shared.sh, config.sh, send-email.sh |
+| `test/` | Bats tests with mocks and fixtures |
 | `jffs/scripts/vpn-director/vpn-director.json.template` | Unified config template |
 | `jffs/configs/profile.add` | Shell alias for `ipt` command |
 | `config/xray.json.template` | Xray server config template |
@@ -70,3 +71,4 @@ See `.claude/rules/` for detailed docs:
 - `ipset-builder.md` — IPdeny sources, dump/restore, combo sets
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe
 - `shell-conventions.md` — utilities from common.sh/firewall.sh
+- `testing.md` — Bats framework, mocks, fixtures
