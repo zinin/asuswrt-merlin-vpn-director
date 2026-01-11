@@ -1,5 +1,11 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Debug mode: set DEBUG=1 to enable tracing
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
 
 ###############################################################################
 # VPN Director Configuration Wizard
@@ -71,7 +77,7 @@ confirm() {
 get_data_dir() {
     local config_file="$JFFS_DIR/vpn-director.json"
 
-    if [ ! -f "$config_file" ]; then
+    if [[ ! -f $config_file ]]; then
         config_file="$JFFS_DIR/vpn-director.json.template"
     fi
 
@@ -82,14 +88,14 @@ check_servers_file() {
     DATA_DIR=$(get_data_dir)
     SERVERS_FILE="$DATA_DIR/servers.json"
 
-    if [ ! -f "$SERVERS_FILE" ]; then
+    if [[ ! -f $SERVERS_FILE ]]; then
         print_error "Server list not found: $SERVERS_FILE"
         print_info "Run import_server_list.sh first"
         exit 1
     fi
 
     SERVER_COUNT=$(jq length "$SERVERS_FILE")
-    if [ "$SERVER_COUNT" -eq 0 ]; then
+    if [[ $SERVER_COUNT -eq 0 ]]; then
         print_error "Server list is empty"
         print_info "Run import_server_list.sh again"
         exit 1
@@ -121,7 +127,7 @@ step_select_xray_server() {
         printf "Select server [1-%d]: " "$total"
         read -r choice
 
-        if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "$total" ] 2>/dev/null; then
+        if [[ $choice -ge 1 ]] 2>/dev/null && [[ $choice -le $total ]] 2>/dev/null; then
             break
         fi
         print_error "Invalid choice. Enter a number between 1 and $total"
@@ -161,7 +167,7 @@ step_configure_xray_exclusions() {
     read -r choice
 
     # Default to ru (1) if empty
-    if [ -z "$choice" ]; then
+    if [[ -z $choice ]]; then
         choice="1"
     fi
 
@@ -182,14 +188,14 @@ step_configure_xray_exclusions() {
             10) code="il" ;;
             *) print_warning "Unknown option: $num"; continue ;;
         esac
-        if [ -z "$XRAY_EXCLUDE_SETS_LIST" ]; then
+        if [[ -z $XRAY_EXCLUDE_SETS_LIST ]]; then
             XRAY_EXCLUDE_SETS_LIST="$code"
         else
             XRAY_EXCLUDE_SETS_LIST="$XRAY_EXCLUDE_SETS_LIST,$code"
         fi
     done
 
-    if [ -n "$XRAY_EXCLUDE_SETS_LIST" ]; then
+    if [[ -n $XRAY_EXCLUDE_SETS_LIST ]]; then
         print_success "Excluding: $XRAY_EXCLUDE_SETS_LIST"
     else
         print_info "No countries excluded"
@@ -213,7 +219,7 @@ step_configure_clients() {
         printf "Client IP (or 'done'): "
         read -r client_ip
 
-        if [ "$client_ip" = "done" ]; then
+        if [[ $client_ip == "done" ]]; then
             break
         fi
 
@@ -261,7 +267,7 @@ step_configure_clients() {
         printf "\n"
     done
 
-    if [ -z "$XRAY_CLIENTS_LIST" ] && [ -z "$TUN_DIR_RULES_LIST" ]; then
+    if [[ -z $XRAY_CLIENTS_LIST ]] && [[ -z $TUN_DIR_RULES_LIST ]]; then
         print_warning "No clients configured"
     fi
 }
@@ -281,9 +287,9 @@ step_show_summary() {
     printf "Xray Exclusions: %s\n\n" "$XRAY_EXCLUDE_SETS_LIST"
 
     printf "Xray Clients:\n"
-    if [ -n "$XRAY_CLIENTS_LIST" ]; then
+    if [[ -n $XRAY_CLIENTS_LIST ]]; then
         printf '%s' "$XRAY_CLIENTS_LIST" | while read -r ip; do
-            [ -n "$ip" ] && printf "  - %s\n" "$ip"
+            [[ -n $ip ]] && printf "  - %s\n" "$ip"
         done
     else
         printf "  (none)\n"
@@ -291,9 +297,9 @@ step_show_summary() {
     printf "\n"
 
     printf "Tunnel Director Rules:\n"
-    if [ -n "$TUN_DIR_RULES_LIST" ]; then
+    if [[ -n $TUN_DIR_RULES_LIST ]]; then
         printf '%s' "$TUN_DIR_RULES_LIST" | while read -r rule; do
-            [ -n "$rule" ] && printf "  - %s\n" "$rule"
+            [[ -n $rule ]] && printf "  - %s\n" "$rule"
         done
     else
         printf "  (none)\n"
@@ -313,7 +319,7 @@ step_show_summary() {
 step_generate_configs() {
     print_header "Step 5: Generating Configs"
 
-    if [ ! -f "$JFFS_DIR/vpn-director.json.template" ]; then
+    if [[ ! -f $JFFS_DIR/vpn-director.json.template ]]; then
         print_error "Template not found: $JFFS_DIR/vpn-director.json.template"
         print_info "Run install.sh first to download required files"
         exit 1
@@ -334,18 +340,18 @@ step_generate_configs() {
 
     # Build JSON arrays
     xray_clients_json="[]"
-    if [ -n "$XRAY_CLIENTS_LIST" ]; then
+    if [[ -n $XRAY_CLIENTS_LIST ]]; then
         xray_clients_json=$(printf '%s' "$XRAY_CLIENTS_LIST" | grep -v '^$' | jq -R . | jq -s .)
     fi
 
     xray_exclude_json='["ru"]'
-    if [ -n "$XRAY_EXCLUDE_SETS_LIST" ]; then
+    if [[ -n $XRAY_EXCLUDE_SETS_LIST ]]; then
         # shellcheck disable=SC2086  # intentional word splitting
         xray_exclude_json=$(printf '%s\n' ${XRAY_EXCLUDE_SETS_LIST//,/ } | jq -R . | jq -s .)
     fi
 
     tun_dir_rules_json="[]"
-    if [ -n "$TUN_DIR_RULES_LIST" ]; then
+    if [[ -n $TUN_DIR_RULES_LIST ]]; then
         tun_dir_rules_json=$(printf '%s' "$TUN_DIR_RULES_LIST" | grep -v '^$' | jq -R . | jq -s .)
     fi
 
@@ -377,7 +383,7 @@ step_apply_rules() {
     # Restart Xray
     print_info "Restarting Xray..."
     XRAY_INIT=$(find /opt/etc/init.d -maxdepth 1 -name 'S*xray' 2>/dev/null | head -1)
-    if [ -n "$XRAY_INIT" ] && [ -x "$XRAY_INIT" ]; then
+    if [[ -n $XRAY_INIT ]] && [[ -x $XRAY_INIT ]]; then
         "$XRAY_INIT" restart
         print_success "Xray restarted"
     else
@@ -386,16 +392,16 @@ step_apply_rules() {
 
     # Build ipsets (including extra countries for Xray exclusions)
     print_info "Building ipsets (this may take a while)..."
-    if [ -x "$JFFS_DIR/ipset_builder.sh" ]; then
+    if [[ -x $JFFS_DIR/ipset_builder.sh ]]; then
         "$JFFS_DIR/ipset_builder.sh" -c "$XRAY_EXCLUDE_SETS_LIST" || {
             print_warning "ipset_builder.sh failed, some features may not work"
         }
     fi
 
     # Apply Tunnel Director rules
-    if [ -n "$TUN_DIR_RULES_LIST" ]; then
+    if [[ -n $TUN_DIR_RULES_LIST ]]; then
         print_info "Applying Tunnel Director rules..."
-        if [ -x "$JFFS_DIR/tunnel_director.sh" ]; then
+        if [[ -x $JFFS_DIR/tunnel_director.sh ]]; then
             "$JFFS_DIR/tunnel_director.sh" || {
                 print_warning "tunnel_director.sh failed"
             }
@@ -403,9 +409,9 @@ step_apply_rules() {
     fi
 
     # Apply Xray TPROXY rules
-    if [ -n "$XRAY_CLIENTS_LIST" ]; then
+    if [[ -n $XRAY_CLIENTS_LIST ]]; then
         print_info "Applying Xray TPROXY rules..."
-        if [ -x "$JFFS_DIR/xray_tproxy.sh" ]; then
+        if [[ -x $JFFS_DIR/xray_tproxy.sh ]]; then
             "$JFFS_DIR/xray_tproxy.sh" || {
                 print_warning "xray_tproxy.sh failed"
             }

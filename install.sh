@@ -1,5 +1,11 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Debug mode: set DEBUG=1 to enable tracing
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
 
 ###############################################################################
 # VPN Director Installer for Asuswrt-Merlin
@@ -42,7 +48,7 @@ print_info() {
 ###############################################################################
 
 check_environment() {
-    if [ ! -d /jffs ]; then
+    if [[ ! -d /jffs ]]; then
         print_error "This script must be run on Asuswrt-Merlin router"
         exit 1
     fi
@@ -53,7 +59,7 @@ check_environment() {
         missing="$missing curl"
     fi
 
-    if [ -n "$missing" ]; then
+    if [[ -n $missing ]]; then
         print_error "Missing required commands:$missing"
         print_info "Install with: opkg install curl"
         exit 1
