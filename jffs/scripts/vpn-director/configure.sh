@@ -81,7 +81,7 @@ get_data_dir() {
         config_file="$JFFS_DIR/vpn-director.json.template"
     fi
 
-    jq -r '.tunnel_director.data_dir // "/jffs/scripts/vpn-director/data"' "$config_file"
+    jq -r '.data_dir // "/jffs/scripts/vpn-director/data"' "$config_file"
 }
 
 check_servers_file() {
