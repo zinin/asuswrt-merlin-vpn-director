@@ -1,4 +1,4 @@
-#!/usr/bin/env ash
+#!/usr/bin/env bash
 
 ###################################################################################################
 # firewall.sh  - shared firewall functions library for Asuswrt-Merlin shell scripts
@@ -84,6 +84,14 @@
 if ! type log >/dev/null 2>&1; then
     logger -s -t "utils" -p "user.err" "firewall.sh requires common.sh; source it first"
     exit 1
+fi
+
+# Debug mode: inherited from sourcing script
+# If DEBUG=1, enable tracing for this library
+if [[ ${DEBUG:-0} == 1 ]] && [[ ${_FIREWALL_DEBUG_INIT:-0} == 0 ]]; then
+    export _FIREWALL_DEBUG_INIT=1
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
 fi
 
 ###################################################################################################
@@ -244,7 +252,7 @@ validate_ports() {
 #   * Returns 1 on invalid input.
 ###################################################################################################
 normalize_protos() {
-    local in="$1" have_tcp=0 have_udp=0 tok out=""
+    local in="$1" have_tcp=0 have_udp=0 tok
 
     [ -z "$in" ] && return 1
 
@@ -258,14 +266,22 @@ normalize_protos() {
 
     for tok in "$@"; do
         case "$tok" in
-            tcp) [ $have_tcp -eq 0 ] && { out="${out:+$out,}tcp"; have_tcp=1; } ;;
-            udp) [ $have_udp -eq 0 ] && { out="${out:+$out,}udp"; have_udp=1; } ;;
+            tcp) have_tcp=1 ;;
+            udp) have_udp=1 ;;
             *)   return 1 ;;
         esac
     done
 
-    [ -n "$out" ] || return 1
-    printf '%s\n' "$out"
+    # Output canonical form: tcp before udp
+    if [ $have_tcp -eq 1 ] && [ $have_udp -eq 1 ]; then
+        printf '%s\n' "tcp,udp"
+    elif [ $have_tcp -eq 1 ]; then
+        printf '%s\n' "tcp"
+    elif [ $have_udp -eq 1 ]; then
+        printf '%s\n' "udp"
+    else
+        return 1
+    fi
 }
 
 ###################################################################################################
