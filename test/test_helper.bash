@@ -1,8 +1,8 @@
 # test/test_helper.bash
 
 # Load bats helpers
-load '/usr/lib/bats-support/load.bash'
-load '/usr/lib/bats-assert/load.bash'
+load '/usr/lib/bats/bats-support/load.bash'
+load '/usr/lib/bats/bats-assert/load.bash'
 
 # Project paths
 export PROJECT_ROOT="$BATS_TEST_DIRNAME/.."
