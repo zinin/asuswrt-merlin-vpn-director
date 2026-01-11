@@ -314,14 +314,14 @@ else
     while IFS=: read -r table src src_excl set set_excl; do
         # Table must be listed in rt_tables as wgcN/ovpncN or main
         if ! table_allowed "$table"; then
-            log -l warn "table=$table is not supported" \
+            log -l WARN "table=$table is not supported" \
                 "(must be one of: ${valid_tables_csv:-<none>}); skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
 
         # Require non-empty 'src'
         if [ -z "$src" ]; then
-            log -l warn "Missing 'src' for table=$table; skipping rule with idx=$idx"
+            log -l WARN "Missing 'src' for table=$table; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
 
@@ -336,24 +336,24 @@ else
 
         # Validate interface exists
         if [ -z "$src_iif" ]; then
-            log -l warn "Empty interface after '%' in 'src'; skipping rule with idx=$idx"
+            log -l WARN "Empty interface after '%' in 'src'; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
         if [ ! -d "/sys/class/net/$src_iif" ]; then
-            log -l warn "Interface '$src_iif' not found; skipping rule with idx=$idx"
+            log -l WARN "Interface '$src_iif' not found; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
 
         # Validate src is a LAN/private CIDR (check base IP before '/')
         src_ip="${src%%/*}"
         if ! is_lan_ip "$src_ip"; then
-            log -l warn "src '$src' is not a private RFC1918 subnet; skipping rule with idx=$idx"
+            log -l WARN "src '$src' is not a private RFC1918 subnet; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
 
         # 'set' must be provided (non-empty)
         if [ -z "$set" ]; then
-            log -l warn "Missing 'set' for table=$table; skipping rule with idx=$idx"
+            log -l WARN "Missing 'set' for table=$table; skipping rule with idx=$idx"
             warnings=1; idx=$((idx + 1)); continue
         fi
 
@@ -365,7 +365,7 @@ else
             # Resolve destination ipset
             dest_set="$(resolve_set_name "$set")"
             if [ -z "$dest_set" ]; then
-                log -l warn "No ipset found for set='$set';" \
+                log -l WARN "No ipset found for set='$set';" \
                     "skipping rule with idx=$idx"
                 warnings=1; idx=$((idx + 1)); continue
             fi
@@ -377,7 +377,7 @@ else
             orig_excl="$set_excl"
             dest_set_excl="$(resolve_set_name "$orig_excl")"
             if [ -z "$dest_set_excl" ]; then
-                log -l warn "No exclusion ipset found for set_excl='$orig_excl';" \
+                log -l WARN "No exclusion ipset found for set_excl='$orig_excl';" \
                     "skipping rule with idx=$idx"
                 warnings=1; idx=$((idx + 1)); continue
             fi
@@ -392,7 +392,7 @@ else
 
         # Ensure it fits into our reserved field
         if [ "$slot" -gt "$_mark_field_max" ]; then
-            log -l warn "Too many rules for fwmark field (mask=$mark_mask_hex," \
+            log -l WARN "Too many rules for fwmark field (mask=$mark_mask_hex," \
                 "shift=$_mark_shift_val): idx=$idx > max=$_mark_field_max; skipping rule"
             warnings=1; idx=$((idx + 1)); continue
         fi
@@ -416,7 +416,7 @@ else
                 [ -n "$ex" ] || continue
                 ex_ip="${ex%%/*}"
                 if ! is_lan_ip "$ex_ip"; then
-                    log -l warn "src_excl='$ex' is not a private RFC1918 subnet;" \
+                    log -l WARN "src_excl='$ex' is not a private RFC1918 subnet;" \
                         "skipping rule with idx=$idx"
                     warnings=1; continue
                 fi
@@ -461,5 +461,5 @@ if [ "$changes" -eq 0 ]; then
 elif [ "$warnings" -eq 0 ]; then
     log "All changes have been applied successfully"
 else
-    log -l warn "Completed with warnings; please check logs for details"
+    log -l WARN "Completed with warnings; please check logs for details"
 fi

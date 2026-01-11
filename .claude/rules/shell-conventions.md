@@ -11,7 +11,7 @@ paths: "**/*.sh, jffs/**/*"
 
 ## Logging & Locking
 
-- Logging: `log -l err|warn|info|notice "message"`
+- Logging: `log -l ERROR|WARN|INFO|DEBUG|TRACE "message"` (default: INFO)
 - Locking: `acquire_lock [name]` prevents concurrent script execution
 - Temp files: `tmp_file` / `tmp_dir` with auto-cleanup on exit
 

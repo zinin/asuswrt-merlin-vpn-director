@@ -51,7 +51,7 @@ warnings=0
 check_tproxy_module() {
     if ! lsmod | grep -q xt_TPROXY; then
         modprobe xt_TPROXY 2>/dev/null || {
-            log -l err "xt_TPROXY module not available"
+            log -l ERROR "xt_TPROXY module not available"
             return 1
         }
     fi
@@ -85,7 +85,7 @@ check_required_ipsets() {
     for set_key in $XRAY_EXCLUDE_SETS; do
         [ -n "$set_key" ] || continue
         if ! resolve_exclude_set "$set_key" >/dev/null; then
-            log -l warn "Required ipset '$set_key' not found; waiting for ipset_builder.sh"
+            log -l WARN "Required ipset '$set_key' not found; waiting for ipset_builder.sh"
             return 1
         fi
     done
@@ -140,7 +140,7 @@ setup_clients_ipset() {
     for ip in $XRAY_CLIENTS; do
         [ -n "$ip" ] || continue
         ipset add "$XRAY_CLIENTS_IPSET" "$ip" 2>/dev/null || {
-            log -l warn "Failed to add $ip to $XRAY_CLIENTS_IPSET"
+            log -l WARN "Failed to add $ip to $XRAY_CLIENTS_IPSET"
         }
     done
 
@@ -164,7 +164,7 @@ setup_servers_ipset() {
     for ip in $XRAY_SERVERS; do
         [ -n "$ip" ] || continue
         ipset add "$XRAY_SERVERS_IPSET" "$ip" 2>/dev/null || {
-            log -l warn "Failed to add $ip to $XRAY_SERVERS_IPSET"
+            log -l WARN "Failed to add $ip to $XRAY_SERVERS_IPSET"
         }
     done
 
@@ -215,7 +215,7 @@ setup_iptables() {
         [ -n "$exclude_set" ] || continue
         resolved_set="$(resolve_exclude_set "$exclude_set")" || {
             # Should not happen due to check_required_ipsets, but just in case
-            log -l err "Exclusion ipset '$exclude_set' not found; aborting"
+            log -l ERROR "Exclusion ipset '$exclude_set' not found; aborting"
             return 1
         }
         ensure_fw_rule -q mangle "$XRAY_CHAIN" \
@@ -305,8 +305,8 @@ case "$ACTION" in
 
         # FAIL-SAFE: Check if required ipsets exist before proceeding
         if ! check_required_ipsets; then
-            log -l warn "Required ipsets not ready; exiting without applying rules"
-            log -l warn "Run ipset_builder.sh first, then re-run this script"
+            log -l WARN "Required ipsets not ready; exiting without applying rules"
+            log -l WARN "Run ipset_builder.sh first, then re-run this script"
             exit 0
         fi
 
@@ -318,7 +318,7 @@ case "$ACTION" in
         if [ "$warnings" -eq 0 ]; then
             log "Xray TPROXY routing applied successfully"
         else
-            log -l warn "Xray TPROXY routing applied with warnings"
+            log -l WARN "Xray TPROXY routing applied with warnings"
         fi
         ;;
 

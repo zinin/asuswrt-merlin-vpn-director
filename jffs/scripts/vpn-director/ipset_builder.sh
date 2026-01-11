@@ -113,7 +113,7 @@ download_file() {
         log "Successfully downloaded '$short_label'"
     else
         rm -f "$file"
-        log -l err "Failed to download '$short_label' (HTTP $http_code)"
+        log -l ERROR "Failed to download '$short_label' (HTTP $http_code)"
         exit 1
     fi
 }
@@ -198,7 +198,7 @@ restore_dump() {
     fi
 
     if [ "$rc" -ne 0 ]; then
-        log -l warn "Restore failed for ipset '$set_name'; will rebuild"
+        log -l WARN "Restore failed for ipset '$set_name'; will rebuild"
         return 1
     fi
 
@@ -269,7 +269,7 @@ build_ipset() {
     rm -f "$restore_script" "$cidr_list"
 
     if [ "$rc" -ne 0 ]; then
-        log -l err "Failed to build ipset '$set_name'"
+        log -l ERROR "Failed to build ipset '$set_name'"
         exit 1
     fi
 
@@ -284,7 +284,7 @@ build_ipset() {
     fi
 
     if [ "$cnt" -eq 0 ]; then
-        log -l warn "ipset '$set_name' is empty"
+        log -l WARN "ipset '$set_name' is empty"
         warnings=1
     fi
 }
@@ -512,7 +512,7 @@ build_combo_ipsets() {
             member="$(derive_set_name "$key")"
 
             if ! ipset_exists "$member"; then
-                log -l warn "Combo '$set_name': member '$member' not found; skipping"
+                log -l WARN "Combo '$set_name': member '$member' not found; skipping"
                 warnings=1
                 continue
             fi
@@ -524,7 +524,7 @@ build_combo_ipsets() {
 
         if [ "$added" -eq 0 ]; then
             ipset destroy "$set_name" 2>/dev/null || true
-            log -l warn "Combo '$set_name' had no valid members; not created"
+            log -l WARN "Combo '$set_name' had no valid members; not created"
             warnings=1
             continue
         fi
@@ -543,7 +543,7 @@ build_combo_ipsets
 if [ "$warnings" -eq 0 ]; then
     log "All ipsets built successfully"
 else
-    log -l warn "Completed with warnings; check logs"
+    log -l WARN "Completed with warnings; check logs"
 fi
 
 # Save hashes for Tunnel Director
