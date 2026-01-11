@@ -355,13 +355,21 @@ step_generate_configs() {
         tun_dir_rules_json=$(printf '%s' "$TUN_DIR_RULES_LIST" | grep -v '^$' | jq -R . | jq -s .)
     fi
 
-    # Read template and update with jq (xray.servers already set by import_server_list.sh)
+    # Build xray servers array from servers.json (unique IPs)
+    xray_servers_json="[]"
+    if [[ -f "$SERVERS_FILE" ]]; then
+        xray_servers_json=$(jq '[.[].ip] | unique' "$SERVERS_FILE")
+    fi
+
+    # Read template and update with jq
     jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson rules "$tun_dir_rules_json" \
+        --argjson servers "$xray_servers_json" \
         '.xray.clients = $clients |
          .xray.exclude_sets = $exclude |
+         .xray.servers = $servers |
          .tunnel_director.rules = $rules' \
         "$JFFS_DIR/vpn-director.json.template" \
         > "$JFFS_DIR/vpn-director.json"
