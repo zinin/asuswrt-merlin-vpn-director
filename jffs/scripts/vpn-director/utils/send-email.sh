@@ -45,7 +45,7 @@ RETRY_DELAY=60
 # 0c. Ensure email is configured
 ###############################################################################
 if [ ! -r "$AMTM_EMAIL_CONF" ] || [ ! -r "$AMTM_EMAIL_PW_ENC" ]; then
-    log -l err "Email is not configured in amtm. Please configure it first"
+    log -l ERROR "Email is not configured in amtm. Please configure it first"
     exit 1
 fi
 
@@ -70,13 +70,13 @@ BODY=$(printf '%b' "$*")
 
 # Validate subject
 if [ -z "${SUBJECT//[[:space:]]/}" ]; then
-    log -l err "Email subject is empty. Please provide an argument"
+    log -l ERROR "Email subject is empty. Please provide an argument"
     exit 2
 fi
 
 # Validate body
 if [ -z "${BODY//[[:space:]]/}" ]; then
-    log -l err "Email body is empty. Please provide at least one body argument"
+    log -l ERROR "Email body is empty. Please provide at least one body argument"
     exit 2
 fi
 
@@ -119,10 +119,10 @@ for try in 1 2 3; do
     fi
 
     if [ "$try" -lt 3 ]; then
-        log -l warn "Email send failed, retrying in ${RETRY_DELAY}s... (attempt $try/3)"
+        log -l WARN "Email send failed, retrying in ${RETRY_DELAY}s... (attempt $try/3)"
         sleep "$RETRY_DELAY"
     else
-        log -l err "Failed to send email to $TO_ADDRESS: $SUBJECT after 3 attempts"
+        log -l ERROR "Failed to send email to $TO_ADDRESS: $SUBJECT after 3 attempts"
         exit 3
     fi
 done
