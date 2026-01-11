@@ -124,3 +124,72 @@ load 'test_helper'
     assert_failure
     assert_output ""
 }
+
+# ============================================================================
+# log
+# ============================================================================
+
+@test "log: writes to LOG_FILE" {
+    load_common
+    log "test message"
+    run cat "$LOG_FILE"
+    assert_success
+    assert_output --partial "INFO"
+    assert_output --partial "test message"
+}
+
+@test "log: supports -l ERROR level" {
+    load_common
+    log -l ERROR "error message"
+    run cat "$LOG_FILE"
+    assert_output --partial "ERROR"
+    assert_output --partial "error message"
+}
+
+@test "log: supports -l WARN level" {
+    load_common
+    log -l WARN "warning message"
+    run cat "$LOG_FILE"
+    assert_output --partial "WARN"
+}
+
+@test "log_error_trace: includes stack trace" {
+    load_common
+
+    # Define nested function to test stack trace
+    inner_func() { log_error_trace "inner error"; }
+    outer_func() { inner_func; }
+
+    outer_func
+
+    run cat "$LOG_FILE"
+    assert_output --partial "inner error"
+    assert_output --partial "at"
+}
+
+# ============================================================================
+# strip_comments
+# ============================================================================
+
+@test "strip_comments: removes # comments" {
+    load_common
+    input=$'line1\n# comment\nline2'
+    run strip_comments "$input"
+    assert_success
+    assert_line -n 0 "line1"
+    assert_line -n 1 "line2"
+}
+
+@test "strip_comments: removes inline comments" {
+    load_common
+    run strip_comments "value # comment"
+    assert_success
+    assert_output "value"
+}
+
+@test "strip_comments: trims whitespace" {
+    load_common
+    run strip_comments "  spaced  "
+    assert_success
+    assert_output "spaced"
+}
