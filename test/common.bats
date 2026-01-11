@@ -40,3 +40,87 @@ load 'test_helper'
     assert_output "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
     rm /tmp/bats_hash_test
 }
+
+# ============================================================================
+# is_lan_ip
+# ============================================================================
+
+@test "is_lan_ip: 192.168.x.x is private" {
+    load_common
+    run is_lan_ip 192.168.1.100
+    assert_success
+}
+
+@test "is_lan_ip: 10.x.x.x is private" {
+    load_common
+    run is_lan_ip 10.0.0.1
+    assert_success
+}
+
+@test "is_lan_ip: 172.16.x.x is private" {
+    load_common
+    run is_lan_ip 172.16.0.1
+    assert_success
+}
+
+@test "is_lan_ip: 172.31.x.x is private" {
+    load_common
+    run is_lan_ip 172.31.255.255
+    assert_success
+}
+
+@test "is_lan_ip: 172.15.x.x is NOT private" {
+    load_common
+    run is_lan_ip 172.15.0.1
+    assert_failure
+}
+
+@test "is_lan_ip: 8.8.8.8 is NOT private" {
+    load_common
+    run is_lan_ip 8.8.8.8
+    assert_failure
+}
+
+@test "is_lan_ip: IPv6 ULA fd00:: is private" {
+    load_common
+    run is_lan_ip -6 "fd00::1"
+    assert_success
+}
+
+@test "is_lan_ip: IPv6 link-local fe80:: is private" {
+    load_common
+    run is_lan_ip -6 "fe80::1"
+    assert_success
+}
+
+@test "is_lan_ip: IPv6 global 2001:: is NOT private" {
+    load_common
+    run is_lan_ip -6 "2001:4860::1"
+    assert_failure
+}
+
+# ============================================================================
+# resolve_ip
+# ============================================================================
+
+@test "resolve_ip: returns literal IPv4" {
+    load_common
+    run resolve_ip 192.168.1.1
+    assert_success
+    assert_output "192.168.1.1"
+}
+
+@test "resolve_ip: resolves from /etc/hosts" {
+    load_common
+    # Uses fixture hosts file via HOSTS_FILE env
+    run resolve_ip mypc
+    assert_success
+    assert_output "192.168.1.100"
+}
+
+@test "resolve_ip: -q suppresses error on failure" {
+    load_common
+    run resolve_ip -q nonexistent.invalid
+    assert_failure
+    assert_output ""
+}

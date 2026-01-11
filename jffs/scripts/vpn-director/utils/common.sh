@@ -165,7 +165,7 @@ _resolve_ip_impl() {
                         gsub(/\.$/, "", $i)
                         if ($i == h) { print $1; exit }
                     }
-                }' /etc/hosts 2>/dev/null
+                }' "${HOSTS_FILE:-/etc/hosts}" 2>/dev/null
         )
         [ -n "$ip" ] && { printf '%s\n' "$ip"; return 0; }
 
@@ -177,7 +177,7 @@ _resolve_ip_impl() {
                 in_ans && /^Address/ {
                     for (i = 1; i <= NF; i++)
                         if ($i ~ pat && !(only_g && $i ~ ng)) { print $i; exit }
-                }'
+                }' 2>/dev/null
         )
         [ -n "$ip" ] || return 1
         printf '%s\n' "$ip"
@@ -196,7 +196,7 @@ _resolve_ip_impl() {
                         gsub(/\.$/, "", $i)
                         if ($i == h) print $1
                     }
-                }' /etc/hosts 2>/dev/null
+                }' "${HOSTS_FILE:-/etc/hosts}" 2>/dev/null
 
             nslookup "$host" 2>/dev/null |
             awk -v pat="$fam_pat" -v only_g="$only_global" -v ng="$non_global_pat" '
@@ -205,7 +205,7 @@ _resolve_ip_impl() {
                 in_ans && /^Address/ {
                     for (i = 1; i <= NF; i++)
                         if ($i ~ pat && !(only_g && $i ~ ng)) print $i
-                }'
+                }' 2>/dev/null
         } | awk '!seen[$0]++'
     )"
 
@@ -514,23 +514,23 @@ trap _cleanup_tmp EXIT INT TERM
 is_lan_ip() {
     local use_v6=0 ip
 
-    if [ "$1" = "-6" ]; then
+    if [[ $1 == "-6" ]]; then
         use_v6=1
         shift
     fi
-    ip="${1-}"
+    ip=${1:-}
 
-    if [ "$use_v6" -eq 1 ]; then
+    if [[ $use_v6 -eq 1 ]]; then
         case "$ip" in
-            [Ff][Cc]*|[Ff][Dd]*)                    return 0 ;;   # ULA fc00::/7
-            [Ff][Ee][89AaBb]*)                      return 0 ;;   # link-local fe80::/10
-            *)                                      return 1 ;;
+            [Ff][Cc]*|[Ff][Dd]*)        return 0 ;;  # ULA fc00::/7
+            [Ff][Ee][89AaBb]*)          return 0 ;;  # link-local fe80::/10
+            *)                          return 1 ;;
         esac
     else
         case "$ip" in
-            192.168.*)                              return 0 ;;   # 192.168.0.0/16
-            10.*)                                   return 0 ;;   # 10.0.0.0/8
-            172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;   # 172.16.0.0/12
+            192.168.*)                              return 0 ;;  # 192.168.0.0/16
+            10.*)                                   return 0 ;;  # 10.0.0.0/8
+            172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;  # 172.16.0.0/12
             *)                                      return 1 ;;
         esac
     fi
