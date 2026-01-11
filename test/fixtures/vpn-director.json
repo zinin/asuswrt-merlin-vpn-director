@@ -1,9 +1,9 @@
 {
+  "data_dir": "/tmp/bats_test_data",
   "tunnel_director": {
     "rules": [
       "wgc1:192.168.50.0/24::us,ca"
-    ],
-    "data_dir": "/tmp/bats_test_data"
+    ]
   },
   "xray": {
     "clients": ["192.168.1.100"],
