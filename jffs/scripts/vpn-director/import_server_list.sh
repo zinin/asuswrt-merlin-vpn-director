@@ -298,4 +298,6 @@ main() {
     printf "Server list saved. Run /jffs/scripts/vpn-director/configure.sh to continue setup.\n"
 }
 
-main "$@"
+if [[ "${IMPORT_TEST_MODE:-0}" != "1" ]]; then
+    main "$@"
+fi
