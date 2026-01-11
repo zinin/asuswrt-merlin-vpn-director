@@ -55,7 +55,7 @@ ipt  # Runs: ipset_builder.sh -t
 | `/jffs/scripts/vpn-director/vpn-director.json` | Unified config (Xray + Tunnel Director) |
 | `/opt/etc/xray/config.json` | Xray server configuration |
 
-**Data storage**: `tunnel_director.data_dir` in vpn-director.json (default: `/jffs/scripts/vpn-director/data`) — servers.json, ipset dumps
+**Data storage**: `data_dir` in vpn-director.json (default: `/jffs/scripts/vpn-director/data`) — servers.json, ipset dumps
 
 ## Shell Conventions
 
