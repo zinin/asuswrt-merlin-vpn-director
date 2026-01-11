@@ -106,8 +106,9 @@ fi
 _resolve_ip_impl() {
     # Parse flags
     local use_v6=0 only_global=0 return_all=0
-    while [ $# -gt 0 ]; do
-        case "$1" in
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
             -6) use_v6=1; shift ;;
             -g) only_global=1; shift ;;
             -a) return_all=1; shift ;;
@@ -116,8 +117,8 @@ _resolve_ip_impl() {
         esac
     done
 
-    local arg="${1-}"
-    [ -n "$arg" ] || return 1
+    local arg=${1:-}
+    [[ -n $arg ]] || return 1
 
     # Patterns
     local ipv4_pat='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
@@ -126,22 +127,40 @@ _resolve_ip_impl() {
     local ipv6_private_pat='^(::1|[Ff][CcDd].*|[Ff][Ee][89AaBb][0-9A-Fa-f]{2}:.*)$'
 
     # Select family
-    local fam_pat non_global_pat g_flags
-    if [ "$use_v6" -eq 1 ]; then
-        fam_pat="$ipv6_pat"; non_global_pat="$ipv6_private_pat"; g_flags='-Eiq'
+    local fam_pat non_global_pat
+    if [[ $use_v6 -eq 1 ]]; then
+        fam_pat=$ipv6_pat
+        non_global_pat=$ipv6_private_pat
     else
-        fam_pat="$ipv4_pat"; non_global_pat="$ipv4_private_pat";  g_flags='-Eq'
+        fam_pat=$ipv4_pat
+        non_global_pat=$ipv4_private_pat
     fi
 
     # Helper: emit if matches family and (if -g) is global/public
+    # Note: For IPv6, we use case-insensitive matching via shopt nocasematch
     _emit_if_ok() {
-        local cand="$1"
-        printf '%s\n' "$cand" | grep $g_flags -- "$fam_pat" >/dev/null || return 1
-        if [ "$only_global" -eq 1 ] && printf '%s\n' "$cand" |
-            grep $g_flags -- "$non_global_pat" >/dev/null;
-        then
-            return 1
+        local cand=$1
+
+        # Match against family pattern
+        if [[ $use_v6 -eq 1 ]]; then
+            # IPv6: case-insensitive matching
+            local orig_nocasematch
+            orig_nocasematch=$(shopt -p nocasematch 2>/dev/null || true)
+            shopt -s nocasematch
+            [[ $cand =~ $fam_pat ]] || { eval "$orig_nocasematch" 2>/dev/null || true; return 1; }
+            if [[ $only_global -eq 1 ]] && [[ $cand =~ $non_global_pat ]]; then
+                eval "$orig_nocasematch" 2>/dev/null || true
+                return 1
+            fi
+            eval "$orig_nocasematch" 2>/dev/null || true
+        else
+            # IPv4: case-sensitive matching
+            [[ $cand =~ $fam_pat ]] || return 1
+            if [[ $only_global -eq 1 ]] && [[ $cand =~ $non_global_pat ]]; then
+                return 1
+            fi
         fi
+
         printf '%s\n' "$cand"
         return 0
     }
@@ -151,9 +170,9 @@ _resolve_ip_impl() {
         return 0
     fi
 
-    local host="${arg%.}"  # strip trailing dot
+    local host=${arg%.}  # strip trailing dot
 
-    if [ "$return_all" -eq 0 ]; then
+    if [[ $return_all -eq 0 ]]; then
         # First match only (no dedup)
         local ip
         ip=$(
@@ -167,7 +186,7 @@ _resolve_ip_impl() {
                     }
                 }' "${HOSTS_FILE:-/etc/hosts}" 2>/dev/null
         )
-        [ -n "$ip" ] && { printf '%s\n' "$ip"; return 0; }
+        [[ -n $ip ]] && { printf '%s\n' "$ip"; return 0; }
 
         ip=$(
             nslookup "$host" 2>/dev/null |
@@ -179,14 +198,14 @@ _resolve_ip_impl() {
                         if ($i ~ pat && !(only_g && $i ~ ng)) { print $i; exit }
                 }' 2>/dev/null
         )
-        [ -n "$ip" ] || return 1
+        [[ -n $ip ]] || return 1
         printf '%s\n' "$ip"
         return 0
     fi
 
     # Return ALL matches (-a): gather + order-preserving dedup; avoid SC2181 by capturing output.
     local out
-    out="$(
+    out=$(
         {
             awk -v h="$host" -v pat="$fam_pat" -v only_g="$only_global" \
                 -v ng="$non_global_pat" '
@@ -207,9 +226,9 @@ _resolve_ip_impl() {
                         if ($i ~ pat && !(only_g && $i ~ ng)) print $i
                 }' 2>/dev/null
         } | awk '!seen[$0]++'
-    )"
+    )
 
-    [ -n "$out" ] || return 1
+    [[ -n $out ]] || return 1
     printf '%s\n' "$out"
     return 0
 }
