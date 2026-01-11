@@ -44,7 +44,7 @@ _cfg_arr() { jq -r "$1 // [] | .[]" "$VPD_CONFIG_FILE" | tr '\n' ' ' | sed 's/ $
 # 4. Tunnel Director variables
 ###################################################################################################
 TUN_DIR_RULES=$(_cfg_arr '.tunnel_director.rules')
-IPS_BDR_DIR=$(_cfg '.tunnel_director.data_dir')
+IPS_BDR_DIR=$(_cfg '.data_dir')
 
 ###################################################################################################
 # 5. Xray variables

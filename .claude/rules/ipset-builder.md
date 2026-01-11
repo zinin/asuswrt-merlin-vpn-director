@@ -38,7 +38,7 @@ ipset_builder.sh -c ru,ua  # Add extra countries
 
 ## Dump/Restore
 
-Cached dumps stored in `$IPS_BDR_DIR/ipsets/` (configurable via `tunnel_director.data_dir` in vpn-director.json, default: `/jffs/scripts/vpn-director/data`):
+Cached dumps stored in `$IPS_BDR_DIR/ipsets/` (configurable via `data_dir` in vpn-director.json, default: `/jffs/scripts/vpn-director/data`):
 ```
 ru-ipdeny.dump
 us-ipdeny.dump
@@ -64,7 +64,7 @@ derive_set_name "very_long_set_name..."
 |------|---------|
 | `/tmp/ipset_builder/` | Runtime state directory (`IPS_BUILDER_DIR` in shared.sh) |
 | `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Rules hash after build (for tunnel_director sync) |
-| `$IPS_BDR_DIR/ipsets/` | Persistent dump storage (from `tunnel_director.data_dir`) |
+| `$IPS_BDR_DIR/ipsets/` | Persistent dump storage (from `data_dir`) |
 
 ## Boot Delay
 
