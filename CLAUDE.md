@@ -59,7 +59,7 @@ ipt  # Runs: ipset_builder.sh -t
 ## Shell Conventions
 
 - Shebang: `#!/usr/bin/env ash` with `set -euo pipefail`
-- Logging: `log -l err|warn|info|notice "message"`
+- Logging: `log -l ERROR|WARN|INFO|DEBUG|TRACE "message"`
 
 ## Modular Docs
 
