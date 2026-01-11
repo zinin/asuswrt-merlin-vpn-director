@@ -1,0 +1,17 @@
+#!/bin/bash
+echo "ip $*" >> /tmp/bats_ip_calls.log
+case "$1" in
+    rule)
+        case "$2" in
+            show) echo "0: from all lookup local" ;;
+            add|del) exit 0 ;;
+        esac
+        ;;
+    route)
+        case "$2" in
+            show) echo "" ;;
+            add|del) exit 0 ;;
+        esac
+        ;;
+    *) exit 0 ;;
+esac

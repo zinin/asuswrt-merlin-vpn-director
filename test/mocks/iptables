@@ -1,0 +1,14 @@
+#!/bin/bash
+# Simple mock that tracks calls and returns success
+echo "iptables $*" >> /tmp/bats_iptables_calls.log
+case "$1" in
+    -t)
+        case "$3" in
+            -S) echo "-P PREROUTING ACCEPT" ;;  # fake chain list
+            -C) exit 1 ;;  # rule doesn't exist
+            -N|-A|-I|-D|-F|-X) exit 0 ;;
+            *) exit 0 ;;
+        esac
+        ;;
+    *) exit 0 ;;
+esac

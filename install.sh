@@ -1,5 +1,11 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Debug mode: set DEBUG=1 to enable tracing
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
 
 ###############################################################################
 # VPN Director Installer for Asuswrt-Merlin
@@ -9,7 +15,6 @@ set -e
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
@@ -43,20 +48,18 @@ print_info() {
 ###############################################################################
 
 check_environment() {
-    if [ ! -d /jffs ]; then
+    if [[ ! -d /jffs ]]; then
         print_error "This script must be run on Asuswrt-Merlin router"
         exit 1
     fi
 
     # Check required commands
     missing=""
-    for cmd in curl; do
-        if ! which "$cmd" >/dev/null 2>&1; then
-            missing="$missing $cmd"
-        fi
-    done
+    if ! which curl >/dev/null 2>&1; then
+        missing="$missing curl"
+    fi
 
-    if [ -n "$missing" ]; then
+    if [[ -n $missing ]]; then
         print_error "Missing required commands:$missing"
         print_info "Install with: opkg install curl"
         exit 1
@@ -126,9 +129,9 @@ print_next_steps() {
 
     printf "Next steps:\n\n"
     printf "  1. Import VLESS servers:\n"
-    printf "     ${GREEN}/jffs/scripts/vpn-director/import_server_list.sh${NC}\n\n"
+    printf '     %s/jffs/scripts/vpn-director/import_server_list.sh%s\n\n' "$GREEN" "$NC"
     printf "  2. Run configuration wizard:\n"
-    printf "     ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
+    printf '     %s/jffs/scripts/vpn-director/configure.sh%s\n\n' "$GREEN" "$NC"
     printf "Or edit configs manually:\n"
     printf "  /jffs/scripts/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"

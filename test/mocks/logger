@@ -1,0 +1,4 @@
+#!/bin/bash
+# Silent mock - just capture args
+echo "logger $*" >> /tmp/bats_logger_calls.log
+exit 0

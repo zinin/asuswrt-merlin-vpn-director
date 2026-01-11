@@ -1,4 +1,4 @@
-#!/usr/bin/env ash
+#!/usr/bin/env bash
 
 ###################################################################################################
 # shared.sh - INTERNAL shared library for ipset_builder.sh and tunnel_director.sh
@@ -28,7 +28,7 @@ derive_set_name() {
     set_lc=$(printf '%s' "$set" | tr 'A-Z' 'a-z')
 
     # Fits already? Return as-is
-    if [ "${#set_lc}" -le "$max" ]; then
+    if [[ "${#set_lc}" -le "$max" ]]; then
         printf '%s\n' "$set_lc"
         return 0
     fi

@@ -1,4 +1,4 @@
-#!/usr/bin/env ash
+#!/usr/bin/env bash
 
 ###############################################################################
 # send_email.sh - lightweight email notification helper for Asuswrt-Merlin
@@ -44,7 +44,7 @@ RETRY_DELAY=60
 ###############################################################################
 # 0c. Ensure email is configured
 ###############################################################################
-if [ ! -r "$AMTM_EMAIL_CONF" ] || [ ! -r "$AMTM_EMAIL_PW_ENC" ]; then
+if [[ ! -r "$AMTM_EMAIL_CONF" ]] || [[ ! -r "$AMTM_EMAIL_PW_ENC" ]]; then
     log -l ERROR "Email is not configured in amtm. Please configure it first"
     exit 1
 fi
@@ -69,13 +69,13 @@ shift                                 # drop $1, so $@ now starts with the body
 BODY=$(printf '%b' "$*")
 
 # Validate subject
-if [ -z "${SUBJECT//[[:space:]]/}" ]; then
+if [[ -z "${SUBJECT//[[:space:]]/}" ]]; then
     log -l ERROR "Email subject is empty. Please provide an argument"
     exit 2
 fi
 
 # Validate body
-if [ -z "${BODY//[[:space:]]/}" ]; then
+if [[ -z "${BODY//[[:space:]]/}" ]]; then
     log -l ERROR "Email body is empty. Please provide at least one body argument"
     exit 2
 fi
@@ -118,7 +118,7 @@ for try in 1 2 3; do
         break
     fi
 
-    if [ "$try" -lt 3 ]; then
+    if [[ "$try" -lt 3 ]]; then
         log -l WARN "Email send failed, retrying in ${RETRY_DELAY}s... (attempt $try/3)"
         sleep "$RETRY_DELAY"
     else

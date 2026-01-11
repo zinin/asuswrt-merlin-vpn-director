@@ -6,7 +6,8 @@ paths: "**/*.sh, jffs/**/*"
 
 ## Script Structure
 
-- Shebang: `#!/usr/bin/env ash` with `set -euo pipefail`
+- Shebang: `#!/usr/bin/env bash` with `set -euo pipefail`
+- Debug mode: `DEBUG=1 ./script.sh` enables `set -x` with informative PS4
 - shellcheck annotations for intentional expansions/externals (SC2086, SC2155, SC2034)
 
 ## Logging & Locking
@@ -55,3 +56,11 @@ paths: "**/*.sh, jffs/**/*"
 ## State Tracking
 
 Hash files in `/tmp/` detect config changes; scripts only reapply if changed.
+
+## Bash-specific Patterns
+
+- Use `[[ ]]` instead of `[ ]` for conditionals
+- Use `read -ra array <<< "$string"` for splitting strings into arrays
+- Use `${array[@]}` for iterating arrays
+- Use `[[ $var =~ regex ]]` for regex matching instead of grep
+- Debug mode: `DEBUG=1` enables `set -x` with PS4 showing file:line:function

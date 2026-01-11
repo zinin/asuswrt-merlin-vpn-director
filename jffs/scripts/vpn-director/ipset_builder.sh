@@ -1,4 +1,4 @@
-#!/usr/bin/env ash
+#!/usr/bin/env bash
 
 ###################################################################################################
 # ipset_builder.sh - ipset builder for country and combo sets
@@ -35,105 +35,41 @@
 # -------------------------------------------------------------------------------------------------
 set -euo pipefail
 
-###################################################################################################
-# 0a. Parse args
-###################################################################################################
-update=0
-start_tun_dir=0
-start_xray_tproxy=0
-extra_countries=""
-
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -u)  update=1;            shift ;;
-        -t)  start_tun_dir=1;     shift ;;
-        -x)  start_xray_tproxy=1; shift ;;
-        -c)  extra_countries="$2"; shift 2 ;;
-        *)                        break ;;
-    esac
-done
+# -------------------------------------------------------------------------------------------------
+# Debug mode: set DEBUG=1 to enable tracing
+# -------------------------------------------------------------------------------------------------
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
 
 ###################################################################################################
-# 0b. Load utils and shared variables
-###################################################################################################
-. /jffs/scripts/vpn-director/utils/common.sh
-. /jffs/scripts/vpn-director/utils/firewall.sh
-. /jffs/scripts/vpn-director/utils/shared.sh
-. /jffs/scripts/vpn-director/utils/config.sh
-
-acquire_lock  # avoid concurrent runs
-
-###################################################################################################
-# 0c. Define constants & variables
+# Constants (defined before --source-only for testability)
 ###################################################################################################
 
-# Paths for dumps
-COUNTRY_DUMP_DIR="$IPS_BDR_DIR/ipsets"
-
-# IPdeny downloads
-IPDENY_COUNTRY_BASE_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
-IPDENY_COUNTRY_FILE_SUFFIX='-aggregated.zone'
-
-# Mutable runtime flags
-warnings=0  # non-critical issues encountered
+# All two-letter ISO country codes, lowercase
+ALL_COUNTRY_CODES='
+ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bl bm bn bo bq br bs bt
+bv bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg eh
+er es et fi fj fk fm fo fr ga gb gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht
+hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls
+lt lu lv ly ma mc md me mf mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni
+nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg
+sh si sj sk sl sm sn so sr ss st sv sx sy sz tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug
+um us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw
+'
 
 ###################################################################################################
-# 0d. Define helper functions
+# Pure functions (defined before --source-only for testability)
 ###################################################################################################
-
-download_file() {
-    local url="$1" file="$2"
-    shift 2
-    local label="" http_code short_label
-
-    # Pull out --label flag
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --label) shift; label="$1" ;;
-        esac
-        shift
-    done
-
-    if [ -n "$label" ]; then
-        short_label="$label"
-    else
-        label="$url"
-        short_label="${url##*/}"
-    fi
-
-    log "Downloading '$label'..."
-
-    if ! http_code=$(curl -sS -o "$file" -w "%{http_code}" "$url"); then
-        http_code=000
-    fi
-
-    [ -n "$http_code" ] || http_code=000
-
-    if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
-        log "Successfully downloaded '$short_label'"
-    else
-        rm -f "$file"
-        log -l ERROR "Failed to download '$short_label' (HTTP $http_code)"
-        exit 1
-    fi
-}
-
-ipset_exists() {
-    ipset list -n "$1" >/dev/null 2>&1
-}
-
-get_ipset_count() {
-    ipset list "$1" 2>/dev/null |
-        awk '/Number of entries:/ { print $4; exit }' || true
-}
 
 # Round up to the next power of two (>= 1)
 _next_pow2() {
     local n=${1:-1} p=1
 
-    [ "$n" -lt 1 ] && n=1
+    [[ $n -lt 1 ]] && n=1
 
-    while [ "$p" -lt "$n" ]; do
+    while [[ $p -lt $n ]]; do
         p=$((p<<1))
     done
 
@@ -148,182 +84,10 @@ _calc_ipset_size() {
     local n=${1:-0} floor=1024 buckets
 
     buckets=$(((4 * n + 2) / 3))
-    [ "$buckets" -lt "$floor" ] && buckets=$floor
+    [[ $buckets -lt $floor ]] && buckets=$floor
 
     _next_pow2 "$buckets"
 }
-
-print_create_ipset() {
-    local set_name="$1" cnt="${2:-0}" size
-    size="$(_calc_ipset_size "$cnt")"
-
-    printf 'create %s hash:net family inet hashsize %s maxelem %s\n' \
-        "$set_name" "$size" "$size"
-}
-
-print_add_entry() { printf 'add %s %s\n' "$1" "$2"; }
-
-print_swap_and_destroy() {
-    printf 'swap %s %s\n' "$1" "$2"
-    printf 'destroy %s\n' "$1"
-}
-
-save_dump() { ipset save "$1" > "$2"; }
-
-restore_dump() {
-    local set_name="$1" dump="$2" cnt rc=0
-
-    # If forcing update or dump missing, signal caller to rebuild
-    if [ "$update" -eq 1 ] || [ ! -f "$dump" ]; then
-        return 1
-    fi
-
-    if ipset_exists "$set_name"; then
-        # Existing set: restore into a temp clone, then swap
-        local tmp_set="${set_name}_tmp" restore_script
-        restore_script=$(tmp_file)
-        ipset destroy "$tmp_set" 2>/dev/null || true
-
-        {
-            sed -e "s/^create $set_name /create $tmp_set /" \
-                -e "s/^add $set_name /add $tmp_set /" "$dump"
-            print_swap_and_destroy "$tmp_set" "$set_name"
-        } > "$restore_script"
-
-        ipset restore -! < "$restore_script" || rc=$?
-        rm -f "$restore_script"
-    else
-        # Set doesn't exist yet - restore directly
-        ipset restore -! < "$dump" || rc=$?
-    fi
-
-    if [ "$rc" -ne 0 ]; then
-        log -l WARN "Restore failed for ipset '$set_name'; will rebuild"
-        return 1
-    fi
-
-    cnt=$(get_ipset_count "$set_name")
-    log "Restored ipset '$set_name' from dump ($cnt entries)"
-
-    return 0
-}
-
-save_hashes() {
-    local tun_dir_rules_file
-    tun_dir_rules_file=$(tmp_file)
-
-    printf '%s\n' $TUN_DIR_RULES | awk 'NF' > "$tun_dir_rules_file"
-    printf '%s\n' "$(compute_hash "$tun_dir_rules_file")" > "$TUN_DIR_IPSETS_HASH"
-}
-
-build_ipset() {
-    local set_name="$1" src="$2" dump="$3"
-    shift 3
-
-    local label=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --label) shift; label="$1" ;;
-        esac
-        shift
-    done
-
-    local target_set cidr_list restore_script
-    local cnt=0 rc=0
-
-    log "Building ipset '$set_name'..."
-
-    # Decide whether we need a temporary set (for "hot" updates) or in-place create
-    if ipset_exists "$set_name"; then
-        target_set="${set_name}_tmp"
-        ipset destroy "$target_set" 2>/dev/null || true
-    else
-        target_set="$set_name"
-    fi
-
-    # Download CIDR list
-    cidr_list=$(tmp_file)
-    download_file "$src" "$cidr_list" --label "$label"
-
-    cnt=$(wc -l < "$cidr_list")
-    log "Total CIDRs for ipset '$set_name': $cnt"
-
-    # Generate an ipset-restore script
-    restore_script=$(tmp_file)
-    {
-        print_create_ipset "$target_set" "$cnt"
-
-        while IFS= read -r line; do
-            [ -n "$line" ] || continue
-            print_add_entry "$target_set" "$line"
-        done < "$cidr_list"
-
-        if [ "$target_set" != "$set_name" ]; then
-            print_swap_and_destroy "$target_set" "$set_name"
-        fi
-    } > "$restore_script"
-
-    # Apply
-    log "Applying ipset '$set_name'..."
-    ipset restore -! < "$restore_script" || rc=$?
-    rm -f "$restore_script" "$cidr_list"
-
-    if [ "$rc" -ne 0 ]; then
-        log -l ERROR "Failed to build ipset '$set_name'"
-        exit 1
-    fi
-
-    # Save dump and log
-    cnt=$(get_ipset_count "$set_name")
-    save_dump "$set_name" "$dump"
-
-    if [ "$target_set" = "$set_name" ]; then
-        log "Created new ipset '$set_name' ($cnt entries)"
-    else
-        log "Updated existing ipset '$set_name' ($cnt entries)"
-    fi
-
-    if [ "$cnt" -eq 0 ]; then
-        log -l WARN "ipset '$set_name' is empty"
-        warnings=1
-    fi
-}
-
-###################################################################################################
-# 0e. Run initialization checks
-###################################################################################################
-
-# Defer if system just booted
-if [ "$BOOT_WAIT_DELAY" -ne 0 ] && \
-    ! awk -v min="$MIN_BOOT_TIME" '{ exit ($1 < min) }' /proc/uptime;
-then
-    log "Uptime < ${MIN_BOOT_TIME}s, sleeping ${BOOT_WAIT_DELAY}s..."
-    sleep "$BOOT_WAIT_DELAY"
-fi
-
-# Ensure dump directories exist
-mkdir -p "$COUNTRY_DUMP_DIR"
-
-# Let user know if update was requested
-if [ "$update" -eq 1 ]; then
-    log "Update requested: forcing rebuild of all ipsets"
-fi
-
-###################################################################################################
-# 1. Build per-country ipsets (IPdeny, IPv4 only)
-###################################################################################################
-
-# All two-letter ISO country codes, lowercase
-ALL_COUNTRY_CODES='
-ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bl bm bn bo bq br bs bt
-bv bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg eh
-er es et fi fj fk fm fo fr ga gb gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht
-hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls
-lt lu lv ly ma mc md me mf mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni
-nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg
-sh si sj sk sl sm sn so sr ss st sv sx sy sz tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug
-um us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw
-'
 
 # Parse country codes from TUN_DIR_RULES
 # Accepts "cc" tokens from field 4 (set) and field 5 (set_excl)
@@ -368,66 +132,6 @@ parse_country_codes() {
     ' | sort
 }
 
-build_country_ipsets() {
-    local tun_cc extra_cc xray_cc all_cc missing_cc="" cc set_name dump url
-
-    tun_cc="$(printf '%s\n' $TUN_DIR_RULES | awk 'NF' | parse_country_codes)"
-
-    # Add extra countries from -c parameter (comma-separated to space-separated)
-    extra_cc=""
-    if [ -n "$extra_countries" ]; then
-        extra_cc="$(printf '%s' "$extra_countries" | tr ',' ' ')"
-    fi
-
-    # Add countries from XRAY_EXCLUDE_SETS (already space-separated from config.sh)
-    xray_cc="${XRAY_EXCLUDE_SETS:-}"
-
-    # Merge and deduplicate
-    all_cc="$(printf '%s %s %s' "$tun_cc" "$extra_cc" "$xray_cc" | xargs -n1 2>/dev/null | sort -u | xargs)"
-
-    if [ -z "$all_cc" ]; then
-        log "Step 1: no country references; skipping"
-        return 0
-    fi
-
-    log "Step 1: building country ipsets using IPdeny..."
-
-    # Try restoring dumps first
-    if [ "$update" -eq 1 ]; then
-        missing_cc="$all_cc"
-    else
-        log "Attempting to restore country ipsets from dumps..."
-        for cc in $all_cc; do
-            set_name="$cc"
-            dump="${COUNTRY_DUMP_DIR}/${set_name}-ipdeny.dump"
-            restore_dump "$set_name" "$dump" || missing_cc="$missing_cc $cc"
-        done
-        missing_cc="$(printf '%s\n' "$missing_cc" | xargs)"
-    fi
-
-    if [ -z "$missing_cc" ]; then
-        log "All country ipsets restored from dumps"
-        return 0
-    fi
-
-    log "Building IPdeny ipsets for: $missing_cc"
-
-    for cc in $missing_cc; do
-        set_name="$cc"
-        url="${IPDENY_COUNTRY_BASE_URL}/${cc}${IPDENY_COUNTRY_FILE_SUFFIX}"
-        dump="${COUNTRY_DUMP_DIR}/${set_name}-ipdeny.dump"
-
-        build_ipset "$set_name" "$url" "$dump" \
-            --label "${cc}${IPDENY_COUNTRY_FILE_SUFFIX}"
-    done
-}
-
-build_country_ipsets
-
-###################################################################################################
-# 2. Build combo ipsets
-###################################################################################################
-
 # Parse combo ipsets from TUN_DIR_RULES
 # Emits only fields that contain a comma (e.g., "us,ca,uk")
 # Reads rules from stdin
@@ -467,11 +171,341 @@ parse_combo_from_rules() {
     ' | sort -u
 }
 
+###################################################################################################
+# Allow sourcing for testing
+###################################################################################################
+if [[ ${1:-} == "--source-only" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
+
+###################################################################################################
+# 0a. Parse args
+###################################################################################################
+update=0
+start_tun_dir=0
+start_xray_tproxy=0
+extra_countries=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -u)  update=1;            shift ;;
+        -t)  start_tun_dir=1;     shift ;;
+        -x)  start_xray_tproxy=1; shift ;;
+        -c)  extra_countries="$2"; shift 2 ;;
+        *)                        break ;;
+    esac
+done
+
+###################################################################################################
+# 0b. Load utils and shared variables
+###################################################################################################
+. /jffs/scripts/vpn-director/utils/common.sh
+. /jffs/scripts/vpn-director/utils/firewall.sh
+. /jffs/scripts/vpn-director/utils/shared.sh
+. /jffs/scripts/vpn-director/utils/config.sh
+
+acquire_lock  # avoid concurrent runs
+
+###################################################################################################
+# 0c. Define constants & variables
+###################################################################################################
+
+# Paths for dumps
+COUNTRY_DUMP_DIR="$IPS_BDR_DIR/ipsets"
+
+# IPdeny downloads
+IPDENY_COUNTRY_BASE_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
+IPDENY_COUNTRY_FILE_SUFFIX='-aggregated.zone'
+
+# Mutable runtime flags
+warnings=0  # non-critical issues encountered
+
+###################################################################################################
+# 0d. Define helper functions
+###################################################################################################
+
+download_file() {
+    local url="$1" file="$2"
+    shift 2
+    local label="" http_code short_label
+
+    # Pull out --label flag
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --label) shift; label="$1" ;;
+        esac
+        shift
+    done
+
+    if [[ -n $label ]]; then
+        short_label="$label"
+    else
+        label="$url"
+        short_label="${url##*/}"
+    fi
+
+    log "Downloading '$label'..."
+
+    if ! http_code=$(curl -sS -o "$file" -w "%{http_code}" "$url"); then
+        http_code=000
+    fi
+
+    [[ -n $http_code ]] || http_code=000
+
+    if [[ $http_code -ge 200 ]] && [[ $http_code -lt 300 ]]; then
+        log "Successfully downloaded '$short_label'"
+    else
+        rm -f "$file"
+        log -l ERROR "Failed to download '$short_label' (HTTP $http_code)"
+        exit 1
+    fi
+}
+
+ipset_exists() {
+    ipset list -n "$1" >/dev/null 2>&1
+}
+
+get_ipset_count() {
+    ipset list "$1" 2>/dev/null |
+        awk '/Number of entries:/ { print $4; exit }' || true
+}
+
+print_create_ipset() {
+    local set_name="$1" cnt="${2:-0}" size
+    size="$(_calc_ipset_size "$cnt")"
+
+    printf 'create %s hash:net family inet hashsize %s maxelem %s\n' \
+        "$set_name" "$size" "$size"
+}
+
+print_add_entry() { printf 'add %s %s\n' "$1" "$2"; }
+
+print_swap_and_destroy() {
+    printf 'swap %s %s\n' "$1" "$2"
+    printf 'destroy %s\n' "$1"
+}
+
+save_dump() { ipset save "$1" > "$2"; }
+
+restore_dump() {
+    local set_name="$1" dump="$2" cnt rc=0
+
+    # If forcing update or dump missing, signal caller to rebuild
+    if [[ $update -eq 1 ]] || [[ ! -f $dump ]]; then
+        return 1
+    fi
+
+    if ipset_exists "$set_name"; then
+        # Existing set: restore into a temp clone, then swap
+        local tmp_set="${set_name}_tmp" restore_script
+        restore_script=$(tmp_file)
+        ipset destroy "$tmp_set" 2>/dev/null || true
+
+        {
+            sed -e "s/^create $set_name /create $tmp_set /" \
+                -e "s/^add $set_name /add $tmp_set /" "$dump"
+            print_swap_and_destroy "$tmp_set" "$set_name"
+        } > "$restore_script"
+
+        ipset restore -! < "$restore_script" || rc=$?
+        rm -f "$restore_script"
+    else
+        # Set doesn't exist yet - restore directly
+        ipset restore -! < "$dump" || rc=$?
+    fi
+
+    if [[ $rc -ne 0 ]]; then
+        log -l WARN "Restore failed for ipset '$set_name'; will rebuild"
+        return 1
+    fi
+
+    cnt=$(get_ipset_count "$set_name")
+    log "Restored ipset '$set_name' from dump ($cnt entries)"
+
+    return 0
+}
+
+save_hashes() {
+    local tun_dir_rules_file
+    tun_dir_rules_file=$(tmp_file)
+
+    local -a rules_array
+    read -ra rules_array <<< "$TUN_DIR_RULES"
+    printf '%s\n' "${rules_array[@]}" | awk 'NF' > "$tun_dir_rules_file"
+    printf '%s\n' "$(compute_hash "$tun_dir_rules_file")" > "$TUN_DIR_IPSETS_HASH"
+}
+
+build_ipset() {
+    local set_name="$1" src="$2" dump="$3"
+    shift 3
+
+    local label=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --label) shift; label="$1" ;;
+        esac
+        shift
+    done
+
+    local target_set cidr_list restore_script
+    local cnt=0 rc=0
+
+    log "Building ipset '$set_name'..."
+
+    # Decide whether we need a temporary set (for "hot" updates) or in-place create
+    if ipset_exists "$set_name"; then
+        target_set="${set_name}_tmp"
+        ipset destroy "$target_set" 2>/dev/null || true
+    else
+        target_set="$set_name"
+    fi
+
+    # Download CIDR list
+    cidr_list=$(tmp_file)
+    download_file "$src" "$cidr_list" --label "$label"
+
+    cnt=$(wc -l < "$cidr_list")
+    log "Total CIDRs for ipset '$set_name': $cnt"
+
+    # Generate an ipset-restore script
+    restore_script=$(tmp_file)
+    {
+        print_create_ipset "$target_set" "$cnt"
+
+        while IFS= read -r line; do
+            [[ -n $line ]] || continue
+            print_add_entry "$target_set" "$line"
+        done < "$cidr_list"
+
+        if [[ $target_set != "$set_name" ]]; then
+            print_swap_and_destroy "$target_set" "$set_name"
+        fi
+    } > "$restore_script"
+
+    # Apply
+    log "Applying ipset '$set_name'..."
+    ipset restore -! < "$restore_script" || rc=$?
+    rm -f "$restore_script" "$cidr_list"
+
+    if [[ $rc -ne 0 ]]; then
+        log -l ERROR "Failed to build ipset '$set_name'"
+        exit 1
+    fi
+
+    # Save dump and log
+    cnt=$(get_ipset_count "$set_name")
+    save_dump "$set_name" "$dump"
+
+    if [[ $target_set == "$set_name" ]]; then
+        log "Created new ipset '$set_name' ($cnt entries)"
+    else
+        log "Updated existing ipset '$set_name' ($cnt entries)"
+    fi
+
+    if [[ $cnt -eq 0 ]]; then
+        log -l WARN "ipset '$set_name' is empty"
+        warnings=1
+    fi
+}
+
+###################################################################################################
+# 0e. Run initialization checks
+###################################################################################################
+
+# Defer if system just booted
+if [[ $BOOT_WAIT_DELAY -ne 0 ]] && \
+    ! awk -v min="$MIN_BOOT_TIME" '{ exit ($1 < min) }' /proc/uptime;
+then
+    log "Uptime < ${MIN_BOOT_TIME}s, sleeping ${BOOT_WAIT_DELAY}s..."
+    sleep "$BOOT_WAIT_DELAY"
+fi
+
+# Ensure dump directories exist
+mkdir -p "$COUNTRY_DUMP_DIR"
+
+# Let user know if update was requested
+if [[ $update -eq 1 ]]; then
+    log "Update requested: forcing rebuild of all ipsets"
+fi
+
+###################################################################################################
+# 1. Build per-country ipsets (IPdeny, IPv4 only)
+###################################################################################################
+
+build_country_ipsets() {
+    local tun_cc extra_cc xray_cc all_cc missing_cc="" cc set_name dump url
+
+    local -a rules_array
+    read -ra rules_array <<< "$TUN_DIR_RULES"
+    tun_cc="$(printf '%s\n' "${rules_array[@]}" | awk 'NF' | parse_country_codes)"
+
+    # Add extra countries from -c parameter (comma-separated to space-separated)
+    extra_cc=""
+    if [[ -n $extra_countries ]]; then
+        extra_cc="$(printf '%s' "$extra_countries" | tr ',' ' ')"
+    fi
+
+    # Add countries from XRAY_EXCLUDE_SETS (already space-separated from config.sh)
+    xray_cc="${XRAY_EXCLUDE_SETS:-}"
+
+    # Merge and deduplicate
+    all_cc="$(printf '%s %s %s' "$tun_cc" "$extra_cc" "$xray_cc" | xargs -n1 2>/dev/null | sort -u | xargs)"
+
+    if [[ -z $all_cc ]]; then
+        log "Step 1: no country references; skipping"
+        return 0
+    fi
+
+    log "Step 1: building country ipsets using IPdeny..."
+
+    # Try restoring dumps first
+    if [[ $update -eq 1 ]]; then
+        missing_cc="$all_cc"
+    else
+        log "Attempting to restore country ipsets from dumps..."
+        local -a all_cc_array
+        read -ra all_cc_array <<< "$all_cc"
+        for cc in "${all_cc_array[@]}"; do
+            set_name="$cc"
+            dump="${COUNTRY_DUMP_DIR}/${set_name}-ipdeny.dump"
+            restore_dump "$set_name" "$dump" || missing_cc="$missing_cc $cc"
+        done
+        missing_cc="$(printf '%s\n' "$missing_cc" | xargs)"
+    fi
+
+    if [[ -z $missing_cc ]]; then
+        log "All country ipsets restored from dumps"
+        return 0
+    fi
+
+    log "Building IPdeny ipsets for: $missing_cc"
+
+    local -a missing_cc_array
+    read -ra missing_cc_array <<< "$missing_cc"
+    for cc in "${missing_cc_array[@]}"; do
+        set_name="$cc"
+        url="${IPDENY_COUNTRY_BASE_URL}/${cc}${IPDENY_COUNTRY_FILE_SUFFIX}"
+        dump="${COUNTRY_DUMP_DIR}/${set_name}-ipdeny.dump"
+
+        build_ipset "$set_name" "$url" "$dump" \
+            --label "${cc}${IPDENY_COUNTRY_FILE_SUFFIX}"
+    done
+}
+
+build_country_ipsets
+
+###################################################################################################
+# 2. Build combo ipsets
+###################################################################################################
+
 # Check if all combo ipsets already exist
 _all_combo_present_for() {
-    local list="$1" line set_name
+    local list="$1" set_name
 
-    for line in $list; do
+    local -a list_array
+    read -ra list_array <<< "$list"
+    for line in "${list_array[@]}"; do
         set_name="$(derive_set_name "${line//,/_}")"
         ipset_exists "$set_name" || return 1
     done
@@ -480,11 +514,13 @@ _all_combo_present_for() {
 }
 
 build_combo_ipsets() {
-    local combo_ipsets line set_name key member added
+    local combo_ipsets line set_name member added
 
-    combo_ipsets="$(printf '%s\n' $TUN_DIR_RULES | parse_combo_from_rules | awk 'NF')"
+    local -a rules_array
+    read -ra rules_array <<< "$TUN_DIR_RULES"
+    combo_ipsets="$(printf '%s\n' "${rules_array[@]}" | parse_combo_from_rules | awk 'NF')"
 
-    if [ -z "$combo_ipsets" ]; then
+    if [[ -z $combo_ipsets ]]; then
         log "Step 2: no combo ipsets required; skipping"
         return 0
     fi
@@ -497,7 +533,7 @@ build_combo_ipsets() {
     log "Step 2: building combo ipsets..."
 
     while IFS= read -r line; do
-        [ -n "$line" ] || continue
+        [[ -n $line ]] || continue
         set_name="$(derive_set_name "${line//,/_}")"
 
         if ipset_exists "$set_name"; then
@@ -508,7 +544,9 @@ build_combo_ipsets() {
         ipset create "$set_name" list:set
 
         added=0
-        for key in ${line//,/ }; do
+        local -a keys_array
+        read -ra keys_array <<< "${line//,/ }"
+        for key in "${keys_array[@]}"; do
             member="$(derive_set_name "$key")"
 
             if ! ipset_exists "$member"; then
@@ -522,7 +560,7 @@ build_combo_ipsets() {
             fi
         done
 
-        if [ "$added" -eq 0 ]; then
+        if [[ $added -eq 0 ]]; then
             ipset destroy "$set_name" 2>/dev/null || true
             log -l WARN "Combo '$set_name' had no valid members; not created"
             warnings=1
@@ -540,7 +578,7 @@ build_combo_ipsets
 ###################################################################################################
 # 3. Finalize
 ###################################################################################################
-if [ "$warnings" -eq 0 ]; then
+if [[ $warnings -eq 0 ]]; then
     log "All ipsets built successfully"
 else
     log -l WARN "Completed with warnings; check logs"
@@ -550,9 +588,9 @@ fi
 save_hashes
 
 # Start Tunnel Director if requested
-[ "$start_tun_dir" -eq 1 ] && /jffs/scripts/vpn-director/tunnel_director.sh
+[[ $start_tun_dir -eq 1 ]] && /jffs/scripts/vpn-director/tunnel_director.sh
 
 # Start Xray TPROXY if requested
-[ "$start_xray_tproxy" -eq 1 ] && /jffs/scripts/vpn-director/xray_tproxy.sh
+[[ $start_xray_tproxy -eq 1 ]] && /jffs/scripts/vpn-director/xray_tproxy.sh
 
 exit 0
