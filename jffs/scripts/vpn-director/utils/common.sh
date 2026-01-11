@@ -562,7 +562,7 @@ resolve_ip() {
 
     local arg="${1-}" out
     if [ -z "$arg" ]; then
-        log -l err "resolve_ip: usage: resolve_ip [-6] [-q] [-g] [-a] <host|ip>"
+        log -l ERROR "resolve_ip: usage: resolve_ip [-6] [-q] [-g] [-a] <host|ip>"
         return 1
     fi
 
@@ -574,7 +574,7 @@ resolve_ip() {
     set -- "$@" "$arg"
 
     if ! out="$(_resolve_ip_impl "$@")"; then
-        [ "$quiet" -eq 1 ] || log -l err "Cannot resolve '$arg'"
+        [ "$quiet" -eq 1 ] || log -l ERROR "Cannot resolve '$arg'"
         return 1
     fi
 
@@ -615,7 +615,7 @@ resolve_lan_ip() {
 
     local arg="${1-}"
     if [ -z "$arg" ]; then
-        log -l err "resolve_lan_ip: usage: resolve_lan_ip [-6] [-q] [-a] <host|ip>"
+        log -l ERROR "resolve_lan_ip: usage: resolve_lan_ip [-6] [-q] [-a] <host|ip>"
         return 1
     fi
 
@@ -632,7 +632,7 @@ resolve_lan_ip() {
     )"
 
     if [ -z "$filtered" ]; then
-        [ "$quiet" -eq 1 ] || log -l err "No LAN address found for '$arg'"
+        [ "$quiet" -eq 1 ] || log -l ERROR "No LAN address found for '$arg'"
         return 1
     fi
 
