@@ -120,3 +120,36 @@ load 'test_helper'
     assert_success
     assert_output "tcp,udp"
 }
+
+# ============================================================================
+# _spec_to_log
+# ============================================================================
+
+@test "_spec_to_log: empty input returns empty line" {
+    load_firewall
+    run _spec_to_log
+    assert_success
+    assert_output ""
+}
+
+@test "_spec_to_log: target only outputs arrow format without error" {
+    load_firewall
+    # This triggers the bug: empty left, only -j TARGET
+    run _spec_to_log "-j ACCEPT"
+    assert_success
+    assert_output "-> ACCEPT"
+}
+
+@test "_spec_to_log: DNAT with only --to-destination outputs arrow format" {
+    load_firewall
+    run _spec_to_log "-j DNAT --to-destination 192.168.1.10:443"
+    assert_success
+    assert_output "-> 192.168.1.10:443"
+}
+
+@test "_spec_to_log: full spec with dest, proto, port and target" {
+    load_firewall
+    run _spec_to_log "-d 1.2.3.4 -p tcp --dport 443 -j ACCEPT"
+    assert_success
+    assert_output "dest=1.2.3.4 proto=tcp port=443 -> ACCEPT"
+}

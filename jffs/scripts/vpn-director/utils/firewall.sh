@@ -157,10 +157,11 @@ _spec_to_log() {
     left="${left# }"
 
     # Arrow target (avoid leading space when left is empty)
+    # Note: use 'printf --' to prevent '-> ...' being parsed as an option
     if [[ $target == "DNAT" ]] && [[ -n $todst ]]; then
-        [[ -n $left ]] && printf '%s -> %s\n' "$left" "$todst" || printf '-> %s\n' "$todst"
+        [[ -n $left ]] && printf '%s -> %s\n' "$left" "$todst" || printf -- '-> %s\n' "$todst"
     elif [[ -n $target ]]; then
-        [[ -n $left ]] && printf '%s -> %s\n' "$left" "$target" || printf '-> %s\n' "$target"
+        [[ -n $left ]] && printf '%s -> %s\n' "$left" "$target" || printf -- '-> %s\n' "$target"
     else
         printf '%s\n' "$left"
     fi
