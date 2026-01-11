@@ -172,7 +172,7 @@ step_parse_and_save_servers() {
 
         # Validate port is numeric
         if ! printf '%s' "$port" | grep -qE '^[0-9]+$'; then
-            printf "[DEBUG] SKIP: invalid port '%s'\n" "$port" >> "$LOG_FILE"
+            log -l debug "SKIP: invalid port '$port'"
             log -l warn "Skipping $server: invalid port '$port'"
             continue
         fi
@@ -181,12 +181,12 @@ step_parse_and_save_servers() {
         ip=$(resolve_ip -q "$server" 2>/dev/null) || ip=$(resolve_ip -6 -g -q "$server" 2>/dev/null) || ip=""
 
         if [ -z "$ip" ]; then
-            printf "[DEBUG] SKIP: cannot resolve %s\n" "$server" >> "$LOG_FILE"
+            log -l debug "SKIP: cannot resolve $server"
             log -l warn "Cannot resolve $server, skipping"
             continue
         fi
 
-        printf "[DEBUG] Resolved: %s -> %s\n" "$server" "$ip" >> "$LOG_FILE"
+        log -l debug "Resolved: $server -> $ip"
         printf "  %s (%s) -> %s\n" "$name" "$server" "$ip" >&2
 
         # Output JSON line (use jq to properly escape strings)
