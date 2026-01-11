@@ -20,11 +20,17 @@ curl -fsSL \
 | sh
 ```
 
-After installation, run the configuration wizard:
+After installation:
 
-```bash
-/jffs/scripts/utils/configure.sh
-```
+1. Import VLESS servers (optional):
+   ```bash
+   /jffs/scripts/vpn-director/import_server_list.sh
+   ```
+
+2. Run the configuration wizard:
+   ```bash
+   /jffs/scripts/vpn-director/configure.sh
+   ```
 
 ## Requirements
 
@@ -44,24 +50,24 @@ After installation, run the configuration wizard:
 
 After installation, configs are located at:
 
-- `/jffs/scripts/xray/config.sh` - Xray clients and servers
-- `/jffs/scripts/firewall/config.sh` - Tunnel Director rules
+- `/jffs/scripts/vpn-director/vpn-director.json` - Unified config (Xray + Tunnel Director)
 - `/opt/etc/xray/config.json` - Xray server configuration
 
 ## Commands
 
 ```bash
-# Check Xray TPROXY status
-/jffs/scripts/xray/xray_tproxy.sh status
+# Xray TPROXY
+/jffs/scripts/vpn-director/xray_tproxy.sh status|start|stop|restart
 
-# Restart Xray TPROXY
-/jffs/scripts/xray/xray_tproxy.sh restart
+# IPSet Builder
+/jffs/scripts/vpn-director/ipset_builder.sh       # Restore from cache
+/jffs/scripts/vpn-director/ipset_builder.sh -u    # Force rebuild
 
-# Rebuild ipsets
-/jffs/scripts/firewall/ipset_builder.sh
+# Tunnel Director
+/jffs/scripts/vpn-director/tunnel_director.sh
 
-# Reapply Tunnel Director rules
-/jffs/scripts/firewall/tunnel_director.sh
+# Import servers
+/jffs/scripts/vpn-director/import_server_list.sh
 ```
 
 ## How It Works

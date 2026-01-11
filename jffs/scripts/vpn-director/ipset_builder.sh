@@ -21,9 +21,8 @@
 #   ipset_builder.sh -u -t -x  # combinations of the above
 #
 # Requirements / Notes:
-#   * All configuration lives in config.sh. Review, edit, then run "ipt"
+#   * All configuration lives in vpn-director.json. Review, edit, then run "ipt"
 #     (helper alias) to apply changes without rebooting.
-#   * Also reads /jffs/scripts/xray/config.sh for XRAY_EXCLUDE_SETS.
 ###################################################################################################
 
 # -------------------------------------------------------------------------------------------------

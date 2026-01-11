@@ -32,10 +32,10 @@ ipt  # Runs: ipset_builder.sh -t
 | Path | Purpose |
 |------|---------|
 | `jffs/scripts/vpn-director/` | Main scripts: ipset_builder, tunnel_director, xray_tproxy, configure |
-| `jffs/scripts/vpn-director/utils/` | Shared utilities: common.sh, firewall.sh, shared.sh, send-email.sh |
+| `jffs/scripts/vpn-director/utils/` | Shared utilities: common.sh, firewall.sh, shared.sh, config.sh, send-email.sh |
 | `jffs/scripts/vpn-director/vpn-director.json.template` | Unified config template |
 | `jffs/configs/profile.add` | Shell alias for `ipt` command |
-| `config/xray-config.json.template` | Xray server config template |
+| `config/xray.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
 
 ## Key Concepts
