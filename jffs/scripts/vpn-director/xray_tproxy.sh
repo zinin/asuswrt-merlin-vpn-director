@@ -86,7 +86,7 @@ resolve_exclude_set() {
 
 # Check if all required ipsets exist (fail-safe)
 check_required_ipsets() {
-    local set_key resolved_set
+    local set_key
     local -a exclude_sets_array
     read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
 
