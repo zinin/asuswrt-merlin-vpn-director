@@ -1,4 +1,4 @@
-#!/usr/bin/env ash
+#!/usr/bin/env bash
 
 ###################################################################################################
 # xray_tproxy.sh - transparent proxy routing for selected LAN clients via Xray
@@ -26,6 +26,12 @@
 # shellcheck disable=SC2086
 
 set -euo pipefail
+
+# Debug mode: set DEBUG=1 to enable tracing
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
 
 ###################################################################################################
 # 0a. Load utils and configuration
@@ -81,9 +87,11 @@ resolve_exclude_set() {
 # Check if all required ipsets exist (fail-safe)
 check_required_ipsets() {
     local set_key resolved_set
+    local -a exclude_sets_array
+    read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
 
-    for set_key in $XRAY_EXCLUDE_SETS; do
-        [ -n "$set_key" ] || continue
+    for set_key in "${exclude_sets_array[@]}"; do
+        [[ -n $set_key ]] || continue
         if ! resolve_exclude_set "$set_key" >/dev/null; then
             log -l WARN "Required ipset '$set_key' not found; waiting for ipset_builder.sh"
             return 1
@@ -103,13 +111,13 @@ setup_routing() {
     # Check if ip rule exists
     rule_exists=$(ip rule show 2>/dev/null | grep -c "fwmark $XRAY_FWMARK.*lookup $XRAY_ROUTE_TABLE" || true)
 
-    if [ "$rt_exists" -eq 0 ]; then
+    if [[ $rt_exists -eq 0 ]]; then
         ip route add local default dev lo table "$XRAY_ROUTE_TABLE"
         log "Added route: local default dev lo table $XRAY_ROUTE_TABLE"
         changes=1
     fi
 
-    if [ "$rule_exists" -eq 0 ]; then
+    if [[ $rule_exists -eq 0 ]]; then
         ip rule add pref "$XRAY_RULE_PREF" fwmark "$XRAY_FWMARK/$XRAY_FWMARK_MASK" table "$XRAY_ROUTE_TABLE"
         log "Added ip rule: pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XRAY_ROUTE_TABLE"
         changes=1
@@ -126,6 +134,8 @@ teardown_routing() {
 # Setup clients ipset
 setup_clients_ipset() {
     local ip
+    local -a clients_array
+    read -ra clients_array <<< "$XRAY_CLIENTS"
 
     # Create ipset if not exists
     if ! ipset list "$XRAY_CLIENTS_IPSET" >/dev/null 2>&1; then
@@ -137,8 +147,8 @@ setup_clients_ipset() {
     # Flush and repopulate
     ipset flush "$XRAY_CLIENTS_IPSET"
 
-    for ip in $XRAY_CLIENTS; do
-        [ -n "$ip" ] || continue
+    for ip in "${clients_array[@]}"; do
+        [[ -n $ip ]] || continue
         ipset add "$XRAY_CLIENTS_IPSET" "$ip" 2>/dev/null || {
             log -l WARN "Failed to add $ip to $XRAY_CLIENTS_IPSET"
         }
@@ -150,6 +160,8 @@ setup_clients_ipset() {
 # Setup servers ipset (to exclude from proxying)
 setup_servers_ipset() {
     local ip
+    local -a servers_array
+    read -ra servers_array <<< "$XRAY_SERVERS"
 
     # Create ipset if not exists
     if ! ipset list "$XRAY_SERVERS_IPSET" >/dev/null 2>&1; then
@@ -161,8 +173,8 @@ setup_servers_ipset() {
     # Flush and repopulate
     ipset flush "$XRAY_SERVERS_IPSET"
 
-    for ip in $XRAY_SERVERS; do
-        [ -n "$ip" ] || continue
+    for ip in "${servers_array[@]}"; do
+        [[ -n $ip ]] || continue
         ipset add "$XRAY_SERVERS_IPSET" "$ip" 2>/dev/null || {
             log -l WARN "Failed to add $ip to $XRAY_SERVERS_IPSET"
         }
@@ -174,6 +186,8 @@ setup_servers_ipset() {
 # Build iptables rules
 setup_iptables() {
     local exclude_set resolved_set
+    local -a exclude_sets_array
+    read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
 
     # Create chain
     create_fw_chain -f mangle "$XRAY_CHAIN"
@@ -211,8 +225,8 @@ setup_iptables() {
         -d 255.255.255.255/32 -j RETURN
 
     # Rule 8: Skip excluded country/custom ipsets
-    for exclude_set in $XRAY_EXCLUDE_SETS; do
-        [ -n "$exclude_set" ] || continue
+    for exclude_set in "${exclude_sets_array[@]}"; do
+        [[ -n $exclude_set ]] || continue
         resolved_set="$(resolve_exclude_set "$exclude_set")" || {
             # Should not happen due to check_required_ipsets, but just in case
             log -l ERROR "Exclusion ipset '$exclude_set' not found; aborting"
@@ -315,7 +329,7 @@ case "$ACTION" in
         setup_servers_ipset
         setup_iptables
 
-        if [ "$warnings" -eq 0 ]; then
+        if [[ $warnings -eq 0 ]]; then
             log "Xray TPROXY routing applied successfully"
         else
             log -l WARN "Xray TPROXY routing applied with warnings"
