@@ -17,7 +17,7 @@ curl -fsSL \
   -H "Pragma: no-cache" \
   -H "If-Modified-Since: Thu, 01 Jan 1970 00:00:00 GMT" \
   "https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh?v=$(date +%s)" \
-| sh
+| /usr/bin/env bash
 ```
 
 After installation:
