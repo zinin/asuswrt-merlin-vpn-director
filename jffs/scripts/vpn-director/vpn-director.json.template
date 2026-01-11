@@ -1,7 +1,7 @@
 {
+  "data_dir": "/jffs/scripts/vpn-director/data",
   "tunnel_director": {
-    "rules": [],
-    "data_dir": "/jffs/scripts/vpn-director/data"
+    "rules": []
   },
   "xray": {
     "clients": [],
