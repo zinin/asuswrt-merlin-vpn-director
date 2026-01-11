@@ -1,4 +1,4 @@
-#!/usr/bin/env ash
+#!/usr/bin/env bash
 
 ###################################################################################################
 # config.sh - load vpn-director.json and export variables
@@ -8,6 +8,14 @@
 
 set -euo pipefail
 
+# -------------------------------------------------------------------------------------------------
+# Debug mode: set DEBUG=1 to enable tracing
+# -------------------------------------------------------------------------------------------------
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
+
 ###################################################################################################
 # 1. Configuration file path (can be overridden via environment)
 ###################################################################################################
@@ -16,7 +24,7 @@ VPD_CONFIG_FILE="${VPD_CONFIG_FILE:-/jffs/scripts/vpn-director/vpn-director.json
 ###################################################################################################
 # 2. Validate config exists and is valid JSON
 ###################################################################################################
-if [ ! -f "$VPD_CONFIG_FILE" ]; then
+if [[ ! -f $VPD_CONFIG_FILE ]]; then
     echo "ERROR: Config not found: $VPD_CONFIG_FILE" >&2
     exit 1
 fi
