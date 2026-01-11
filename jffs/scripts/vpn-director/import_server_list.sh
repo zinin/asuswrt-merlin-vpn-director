@@ -41,9 +41,19 @@ parse_vless_uri() {
     # Extract name (after #, URL-decoded)
     raw_name="${rest##*#}"
     raw_name=$(printf '%s' "$raw_name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
-    # Remove non-ASCII bytes (emoji, etc), keep only printable ASCII
-    # Then trim leading/trailing spaces and commas
-    name=$(printf '%s' "$raw_name" | tr -cd '\11\12\15\40-\176' | sed 's/^[[:space:],]*//; s/[[:space:],]*$//')
+    # Filter: keep only letters (rus/eng), digits, spaces, basic punctuation
+    # Removes emoji and other non-standard characters
+    name=$(printf '%s' "$raw_name" | awk '{
+        result = ""
+        n = split($0, chars, "")
+        for (i = 1; i <= n; i++) {
+            c = chars[i]
+            if (c ~ /[a-zA-Z0-9 .,;:!?()\-]/) { result = result c; continue }
+            if (c ~ /[а-яА-ЯёЁ]/) { result = result c }
+        }
+        gsub(/^[ ,]+|[ ,]+$/, "", result)
+        print result
+    }')
     rest="${rest%%#*}"
 
     # Extract UUID (before @)
@@ -55,9 +65,8 @@ parse_vless_uri() {
     server="${server_port%%:*}"
     port="${server_port##*:}"
 
-    # Fallback: if name is empty or just punctuation, use server hostname
-    clean_name=$(printf '%s' "$name" | sed 's/[^a-zA-Z0-9]//g')
-    if [ -z "$clean_name" ]; then
+    # Fallback: if name is empty after filtering, use server hostname
+    if [ -z "$name" ]; then
         name="$server"
     fi
 
