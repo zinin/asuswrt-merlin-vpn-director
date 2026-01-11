@@ -12,8 +12,8 @@ fi
 # Run after install.sh to download and parse server list
 ###############################################################################
 
-# Source common utilities
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Source common utilities (use BASH_SOURCE for correct path when sourced)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=utils/common.sh
 . "$SCRIPT_DIR/utils/common.sh"
 
