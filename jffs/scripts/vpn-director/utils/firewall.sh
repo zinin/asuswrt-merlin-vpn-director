@@ -109,7 +109,7 @@ fi
 ###################################################################################################
 _spec_to_log() {
     # Accept either a single-string spec or a tokenized spec
-    if [ $# -eq 0 ]; then
+    if [[ $# -eq 0 ]]; then
         printf '\n'
         return
     fi
@@ -125,42 +125,42 @@ _spec_to_log() {
     local dport='' dports='' sport='' target='' todst=''
 
     # Important: consume one token per loop, and handle lookahead safely
-    while [ $# -gt 0 ]; do
+    while [[ $# -gt 0 ]]; do
         arg="$1"; shift
         case "$arg" in
-            -d)               [ $# -ge 1 ] && { dest="${1%/32}"; shift; } ;;
-            -s)               [ $# -ge 1 ] && { src="${1%/32}";  shift; } ;;
-            -i)               [ $# -ge 1 ] && { in_if="$1";      shift; } ;;
-            -o)               [ $# -ge 1 ] && { out_if="$1";     shift; } ;;
-            -p)               [ $# -ge 1 ] && { proto="$1";      shift; } ;;
-            --dport)          [ $# -ge 1 ] && { dport="$1";      shift; } ;;
-            --dports)         [ $# -ge 1 ] && { dports="$1";     shift; } ;;
-            --sport|--sports) [ $# -ge 1 ] && { sport="$1";      shift; } ;;
-            -j)               [ $# -ge 1 ] && { target="$1";     shift; } ;;
-            --to-destination) [ $# -ge 1 ] && { todst="$1";      shift; } ;;
-            -m)               [ $# -ge 1 ] && { shift; } ;;  # skip module name (e.g., "multiport")
+            -d)               [[ $# -ge 1 ]] && { dest="${1%/32}"; shift; } ;;
+            -s)               [[ $# -ge 1 ]] && { src="${1%/32}";  shift; } ;;
+            -i)               [[ $# -ge 1 ]] && { in_if="$1";      shift; } ;;
+            -o)               [[ $# -ge 1 ]] && { out_if="$1";     shift; } ;;
+            -p)               [[ $# -ge 1 ]] && { proto="$1";      shift; } ;;
+            --dport)          [[ $# -ge 1 ]] && { dport="$1";      shift; } ;;
+            --dports)         [[ $# -ge 1 ]] && { dports="$1";     shift; } ;;
+            --sport|--sports) [[ $# -ge 1 ]] && { sport="$1";      shift; } ;;
+            -j)               [[ $# -ge 1 ]] && { target="$1";     shift; } ;;
+            --to-destination) [[ $# -ge 1 ]] && { todst="$1";      shift; } ;;
+            -m)               [[ $# -ge 1 ]] && { shift; } ;;  # skip module name (e.g., "multiport")
             *)                ;;
         esac
     done
 
     # Build left side
     local left=""
-    [ -n "$dest"   ] && left="$left dest=$dest"
-    [ -n "$src"    ] && left="$left src=$src"
-    [ -n "$in_if"  ] && left="$left in_iface=$in_if"
-    [ -n "$out_if" ] && left="$left out_iface=$out_if"
-    [ -n "$proto"  ] && left="$left proto=$proto"
-    if   [ -n "$dports" ]; then left="$left ports=$dports"
-    elif [ -n "$dport"  ]; then left="$left port=$dport"
+    [[ -n $dest   ]] && left="$left dest=$dest"
+    [[ -n $src    ]] && left="$left src=$src"
+    [[ -n $in_if  ]] && left="$left in_iface=$in_if"
+    [[ -n $out_if ]] && left="$left out_iface=$out_if"
+    [[ -n $proto  ]] && left="$left proto=$proto"
+    if   [[ -n $dports ]]; then left="$left ports=$dports"
+    elif [[ -n $dport  ]]; then left="$left port=$dport"
     fi
-    [ -n "$sport" ] && left="$left sport=$sport"
+    [[ -n $sport ]] && left="$left sport=$sport"
     left="${left# }"
 
     # Arrow target (avoid leading space when left is empty)
-    if [ "$target" = "DNAT" ] && [ -n "$todst" ]; then
-        [ -n "$left" ] && printf '%s -> %s\n' "$left" "$todst" || printf '-> %s\n' "$todst"
-    elif [ -n "$target" ]; then
-        [ -n "$left" ] && printf '%s -> %s\n' "$left" "$target" || printf '-> %s\n' "$target"
+    if [[ $target == "DNAT" ]] && [[ -n $todst ]]; then
+        [[ -n $left ]] && printf '%s -> %s\n' "$left" "$todst" || printf '-> %s\n' "$todst"
+    elif [[ -n $target ]]; then
+        [[ -n $left ]] && printf '%s -> %s\n' "$left" "$target" || printf '-> %s\n' "$target"
     else
         printf '%s\n' "$left"
     fi
@@ -187,7 +187,7 @@ validate_port() {
     case "$v" in
         ''|*[!0-9]*) return 1 ;;
     esac
-    [ "$v" -ge 1 ] 2>/dev/null && [ "$v" -le 65535 ] 2>/dev/null
+    [[ $v -ge 1 ]] 2>/dev/null && [[ $v -le 65535 ]] 2>/dev/null
 }
 
 ###################################################################################################
@@ -208,24 +208,24 @@ validate_port() {
 validate_ports() {
     local p="$1" tok a b
 
-    [ -z "$p" ] && return 1
-    [ "$p" = "any" ] && return 0
+    [[ -z $p ]] && return 1
+    [[ $p == "any" ]] && return 0
 
     # Reject leading/trailing or consecutive commas
     case "$p" in
         ,*|*,|*,,*) return 1 ;;
     esac
 
-    IFS_SAVE=$IFS
-    IFS=','; set -- $p; IFS=$IFS_SAVE
+    local -a tokens
+    IFS=',' read -ra tokens <<< "$p"
 
-    for tok in "$@"; do
+    for tok in "${tokens[@]}"; do
         case "$tok" in
             *-*)
                 a="${tok%-*}"; b="${tok#*-}"
                 validate_port "$a" || return 1
                 validate_port "$b" || return 1
-                [ "$a" -le "$b" ] || return 1
+                [[ $a -le $b ]] || return 1
                 ;;
             *)
                 validate_port "$tok" || return 1
@@ -254,17 +254,17 @@ validate_ports() {
 normalize_protos() {
     local in="$1" have_tcp=0 have_udp=0 tok
 
-    [ -z "$in" ] && return 1
+    [[ -z $in ]] && return 1
 
-    if [ "$in" = "any" ]; then
+    if [[ $in == "any" ]]; then
         printf '%s\n' "tcp,udp"
         return 0
     fi
 
-    IFS_SAVE=$IFS
-    IFS=','; set -- $in; IFS=$IFS_SAVE
+    local -a tokens
+    IFS=',' read -ra tokens <<< "$in"
 
-    for tok in "$@"; do
+    for tok in "${tokens[@]}"; do
         case "$tok" in
             tcp) have_tcp=1 ;;
             udp) have_udp=1 ;;
@@ -273,11 +273,11 @@ normalize_protos() {
     done
 
     # Output canonical form: tcp before udp
-    if [ $have_tcp -eq 1 ] && [ $have_udp -eq 1 ]; then
+    if [[ $have_tcp -eq 1 ]] && [[ $have_udp -eq 1 ]]; then
         printf '%s\n' "tcp,udp"
-    elif [ $have_tcp -eq 1 ]; then
+    elif [[ $have_tcp -eq 1 ]]; then
         printf '%s\n' "tcp"
-    elif [ $have_udp -eq 1 ]; then
+    elif [[ $have_udp -eq 1 ]]; then
         printf '%s\n' "udp"
     else
         return 1
@@ -303,15 +303,15 @@ fw_chain_exists() {
     local cmd="iptables" table="" chain=""
 
     # Parse flags
-    while [ $# -gt 0 ]; do
+    while [[ $# -gt 0 ]]; do
         case "$1" in
             -6) cmd="ip6tables" ;;
             --) shift; break ;;
             -*) log -l ERROR "fw_chain_exists: unknown option: $1"; return 1 ;;
             *)
-                if [ -z "$table" ]; then
+                if [[ -z $table ]]; then
                     table="$1"
-                elif [ -z "$chain" ]; then
+                elif [[ -z $chain ]]; then
                     chain="$1"
                 else
                     log -l ERROR "fw_chain_exists: usage: fw_chain_exists [-6] <table> <chain>"
@@ -322,7 +322,7 @@ fw_chain_exists() {
         shift
     done
 
-    if [ -z "$table" ] || [ -z "$chain" ]; then
+    if [[ -z $table ]] || [[ -z $chain ]]; then
         log -l ERROR "fw_chain_exists: usage: fw_chain_exists [-6] <table> <chain>"
         return 1
     fi
@@ -356,7 +356,7 @@ create_fw_chain() {
     local table chain
 
     # Parse flags
-    while [ $# -gt 0 ]; do
+    while [[ $# -gt 0 ]]; do
         case "$1" in
             -6) cmd="ip6tables"; fam_label="IPv6"; shift ;;
             -q) quiet=1; shift ;;
@@ -368,13 +368,13 @@ create_fw_chain() {
     done
 
     # Helper to conditionally log info
-    _qlog() { [ "$quiet" -eq 1 ] || log "$@"; }
+    _qlog() { [[ $quiet -eq 1 ]] || log "$@"; }
 
     # Positional args
     table="${1-}"
     chain="${2-}"
 
-    if [ -z "$table" ] || [ -z "$chain" ]; then
+    if [[ -z $table ]] || [[ -z $chain ]]; then
         log -l ERROR "create_fw_chain: usage:" \
             "create_fw_chain [-6] [-q] [-f] <table> <chain>"
         return 1
@@ -384,7 +384,7 @@ create_fw_chain() {
 
     # Chain exists?
     if "$cmd" -t "$table" -S "$chain" >/dev/null 2>&1; then
-        if [ "$flush" -eq 1 ]; then
+        if [[ $flush -eq 1 ]]; then
             if "$cmd" -t "$table" -F "$chain" 2>/dev/null; then
                 _qlog "Flushed existing chain ($fam_label): table=$table chain=$chain"
                 return 0
@@ -430,7 +430,7 @@ delete_fw_chain() {
     local cmd="iptables" fam_label="IPv4" quiet=0
 
     # Parse flags
-    while [ $# -gt 0 ]; do
+    while [[ $# -gt 0 ]]; do
         case "$1" in
             -6) cmd="ip6tables"; fam_label="IPv6"; shift ;;
             -q) quiet=1; shift ;;
@@ -441,11 +441,11 @@ delete_fw_chain() {
     done
 
     # Helper to conditionally log info
-    _qlog() { [ "$quiet" -eq 1 ] || log "$@"; }
+    _qlog() { [[ $quiet -eq 1 ]] || log "$@"; }
 
     local table="${1-}" chain="${2-}"
 
-    if [ -z "$table" ] || [ -z "$chain" ]; then
+    if [[ -z $table ]] || [[ -z $chain ]]; then
         log -l ERROR "delete_fw_chain: usage: delete_fw_chain [-6] [-q] <table> <chain>"
         return 1
     fi
@@ -490,7 +490,7 @@ find_fw_rules() {
     local cmd="iptables" base="" pattern="" table chain out
 
     # Parse flags
-    while [ $# -gt 0 ]; do
+    while [[ $# -gt 0 ]]; do
         case "$1" in
             -6) cmd="ip6tables"; shift ;;
             --) shift; break ;;
@@ -502,7 +502,7 @@ find_fw_rules() {
     base="${1-}"
     pattern="${2-}"
 
-    if [ -z "$base" ] || [ -z "$pattern" ]; then
+    if [[ -z $base ]] || [[ -z $pattern ]]; then
         log -l ERROR "find_fw_rules: usage:" \
             "find_fw_rules \"<table> <chain>\" \"<pattern>\""
         return 1
@@ -512,7 +512,7 @@ find_fw_rules() {
     chain=${base#* }
 
     # Require both parts
-    if [ -z "$table" ] || [ -z "$chain" ] || [ "$table" = "$chain" ]; then
+    if [[ -z $table ]] || [[ -z $chain ]] || [[ $table == "$chain" ]]; then
         log -l ERROR "find_fw_rules: base must be \"<table> <chain>\", got: '$base'"
         return 1
     fi
@@ -547,7 +547,7 @@ purge_fw_rules() {
     local cmd="iptables" fam_label="IPv4" quiet=0 print_count=0
 
     # Parse flags
-    while [ $# -gt 0 ]; do
+    while [[ $# -gt 0 ]]; do
         case "$1" in
             -6)       cmd="ip6tables"; fam_label="IPv6"; shift ;;
             -q)       quiet=1; shift ;;
@@ -559,12 +559,12 @@ purge_fw_rules() {
     done
 
     # Helper to conditionally log info
-    _qlog() { [ "$quiet" -eq 1 ] || log "$@"; }
+    _qlog() { [[ $quiet -eq 1 ]] || log "$@"; }
 
     local base="${1-}" pattern="${2-}" table chain rules rest
     local cnt=0
 
-    if [ -z "$base" ] || [ -z "$pattern" ]; then
+    if [[ -z $base ]] || [[ -z $pattern ]]; then
         log -l ERROR "purge_fw_rules: usage:" \
             "purge_fw_rules [-6] [-q] [--count] \"<table> <chain>\" \"<pattern>\""
         return 1
@@ -575,17 +575,17 @@ purge_fw_rules() {
 
     # Chain may not exist; no-op
     if ! "$cmd" -t "$table" -S "$chain" >/dev/null 2>&1; then
-        [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+        [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
         return 0
     fi
 
     # Build args for find_fw_rules
     set -- "$base" "$pattern"
-    [ "$cmd" = ip6tables ] && set -- -6 "$@"
+    [[ $cmd == ip6tables ]] && set -- -6 "$@"
     rules="$(find_fw_rules "$@")"
 
-    if [ -z "$rules" ]; then
-        [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+    if [[ -z $rules ]]; then
+        [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
         return 0
     fi
 
@@ -607,7 +607,7 @@ purge_fw_rules() {
 $rules
 EOF
 
-    [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+    [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
     return 0
 }
 
@@ -648,7 +648,7 @@ ensure_fw_rule() {
     done
 
     local table="${1-}" chain="${2-}"
-    if [ -z "$table" ] || [ -z "$chain" ]; then
+    if [[ -z $table ]] || [[ -z $chain ]]; then
         log -l ERROR "ensure_fw_rule: usage: ensure_fw_rule [-6] [-q] [--count]" \
             "<table> <chain> [-I [pos] | -D] <rule...>"
         return 1
@@ -658,7 +658,7 @@ ensure_fw_rule() {
     case "${1-}" in
         -I)
             mode="-I"; shift
-            if [ -n "${1-}" ] && [ "$1" -eq "$1" ] 2>/dev/null; then
+            if [[ -n ${1-} ]] && [[ $1 -eq $1 ]] 2>/dev/null; then
                 pos="$1"; shift
             else
                 pos=1
@@ -669,16 +669,16 @@ ensure_fw_rule() {
     esac
 
     # Helper to conditionally log info
-    _qlog() { [ "$quiet" -eq 1 ] || log "$@"; }
+    _qlog() { [[ $quiet -eq 1 ]] || log "$@"; }
 
     # Existence check (position is irrelevant so we test without it)
     if "$cmd" -t "$table" -C "$chain" "$@" 2>/dev/null; then
-        if [ "$mode" = "-D" ]; then
+        if [[ $mode == "-D" ]]; then
             if "$cmd" -t "$table" -D "$chain" "$@" 2>/dev/null; then
                 cnt=$((cnt+1))
                 _qlog "Deleted rule ($fam_label):" \
                     "table=$table chain=$chain $(_spec_to_log "$@")"
-                [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+                [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
                 return 0
             else
                 log -l ERROR "Failed to delete rule ($fam_label):" \
@@ -689,18 +689,18 @@ ensure_fw_rule() {
         # Rule already present; no action.
         _qlog "Rule is already present ($fam_label):" \
             "table=$table chain=$chain $(_spec_to_log "$@")"
-        [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+        [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
         return 0
     fi
 
     # Nothing to delete
-    if [ "$mode" = "-D" ]; then
-        [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+    if [[ $mode == "-D" ]]; then
+        [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
         return 0
     fi
 
     # Rule not present -> add it
-    if [ "$mode" = "-I" ]; then
+    if [[ $mode == "-I" ]]; then
         if "$cmd" -t "$table" -I "$chain" "$pos" "$@" 2>/dev/null; then
             cnt=$((cnt+1))
             _qlog "Inserted rule at ins_pos=#$pos ($fam_label):" \
@@ -722,7 +722,7 @@ ensure_fw_rule() {
         fi
     fi
 
-    [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+    [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
     return 0
 }
 
@@ -751,7 +751,7 @@ sync_fw_rule() {
     local cmd="iptables" fam_label="IPv4" quiet=0 print_count=0
 
     # Parse flags
-    while [ $# -gt 0 ]; do
+    while [[ $# -gt 0 ]]; do
         case "$1" in
             -6)       cmd="ip6tables"; fam_label="IPv6"; shift ;;
             -q)       quiet=1; shift ;;
@@ -762,13 +762,13 @@ sync_fw_rule() {
     done
 
     # Helper to conditionally log info
-    _qlog() { [ "$quiet" -eq 1 ] || log "$@"; }
+    _qlog() { [[ $quiet -eq 1 ]] || log "$@"; }
 
     local table="${1-}" chain="${2-}" pattern="${3-}" desired="${4-}" ins_pos="${5-}"
     local matches expected line_count desired_count curr_pos
     local cnt=0 n=0
 
-    if [ -z "$table" ] || [ -z "$chain" ] || [ -z "$pattern" ] || [ -z "$desired" ]; then
+    if [[ -z $table ]] || [[ -z $chain ]] || [[ -z $pattern ]] || [[ -z $desired ]]; then
         log -l ERROR "sync_fw_rule: usage: sync_fw_rule [-6] [-q] [--count] <table> <chain>" \
             "\"<pattern>\" \"<desired args>\" [insert_pos]"
         return 1
@@ -780,16 +780,16 @@ sync_fw_rule() {
 
     # Find current matches (avoid SC2046: build argv then quote once)
     set -- "$table $chain" "$pattern"
-    [ "$cmd" = ip6tables ] && set -- -6 "$@"
+    [[ $cmd == ip6tables ]] && set -- -6 "$@"
     matches="$(find_fw_rules "$@")"
 
-    if [ -n "$matches" ]; then
+    if [[ -n $matches ]]; then
         line_count="$(printf '%s' "$matches" | grep -c '^' || true)"
         desired_count="$(printf '%s' "$matches" | grep -Fxc -- "$expected" || true)"
 
-        if [ "$line_count" -eq 1 ] && [ "$desired_count" -eq 1 ]; then
+        if [[ $line_count -eq 1 ]] && [[ $desired_count -eq 1 ]]; then
             # Exactly one match and it equals the desired spec
-            if [ -n "$ins_pos" ]; then
+            if [[ -n $ins_pos ]]; then
                 # Verify actual rule position among -A entries
                 # without passing quoted text via -v to awk
                 curr_pos="$(
@@ -797,26 +797,26 @@ sync_fw_rule() {
                     | awk '$1 == "-A" { i++ } { print i "\t" $0 }' \
                     | grep -F -- "$expected" | head -n1 | awk -F'\t' '{ print $1 }'
                 )"
-                if [ -n "$curr_pos" ] && [ "$curr_pos" -eq "$ins_pos" ] 2>/dev/null; then
+                if [[ -n $curr_pos ]] && [[ $curr_pos -eq $ins_pos ]] 2>/dev/null; then
                     _qlog "Rule already present at correct position ($fam_label):" \
                         "table=$table chain=$chain pos=$curr_pos $desired_log"
-                    [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+                    [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
                     return 0
                 fi
                 # Position differs -> fall through to purge & re-insert
             else
                 _qlog "Rule is already present ($fam_label):" \
                     "table=$table chain=$chain $desired_log"
-                [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+                [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
                 return 0
             fi
         fi
 
         # Purge all matches (build argv to avoid word-splitting issues)
         set --
-        [ "$cmd" = ip6tables ] && set -- "$@" -6
-        [ "$quiet" -eq 1 ] && set -- "$@" -q
-        [ "$print_count" -eq 1 ] && set -- "$@" --count
+        [[ $cmd == ip6tables ]] && set -- "$@" -6
+        [[ $quiet -eq 1 ]] && set -- "$@" -q
+        [[ $print_count -eq 1 ]] && set -- "$@" --count
         set -- "$@" "$table $chain" "$pattern"
         n="$(purge_fw_rules "$@")"
         cnt=$((cnt+n))
@@ -835,7 +835,7 @@ sync_fw_rule() {
     n="$(ensure_fw_rule "${cmd_array[@]}")" || n=0
     cnt=$((cnt + ${n:-0}))
 
-    [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
+    [[ $print_count -eq 1 ]] && printf '%s\n' "$cnt"
     return 0
 }
 
@@ -864,14 +864,14 @@ block_wan_for_host() {
 
     # WAN interface
     wan_if="$(nvram get wan${wan_id}_ifname)"
-    if [ -z "$wan_if" ]; then
+    if [[ -z $wan_if ]]; then
         log -l ERROR "wan${wan_id} interface name is empty; cannot block WAN for host"
         return 1
     fi
 
     # IPv4: try to resolve a single LAN IPv4; skip silently if none
     host_ip4="$(resolve_lan_ip -q "$host" || true)"
-    if [ -n "$host_ip4" ]; then
+    if [[ -n $host_ip4 ]]; then
         # WAN -> host: DROP
         ensure_fw_rule filter FORWARD -I 1 -i "$wan_if" -d "$host_ip4" -j DROP
         # host -> WAN: REJECT (admin prohibited)
@@ -881,11 +881,11 @@ block_wan_for_host() {
     fi
 
     # IPv6: only if enabled; block all global v6 addresses (ignore ULA / link-local)
-    if [ "$(get_ipv6_enabled)" -eq 1 ]; then
+    if [[ $(get_ipv6_enabled) -eq 1 ]]; then
         v6_list="$(resolve_ip -6 -q -g -a "$host" || true)"
-        if [ -n "$v6_list" ]; then
+        if [[ -n $v6_list ]]; then
             while IFS= read -r ip6; do
-                [ -n "$ip6" ] || continue
+                [[ -n $ip6 ]] || continue
                 # WAN -> host-v6: DROP
                 ensure_fw_rule -6 filter FORWARD -I 1 -i "$wan_if" -d "$ip6" -j DROP
                 # host-v6 -> WAN: REJECT
@@ -899,17 +899,17 @@ EOF
     fi
 
     # If nothing was blocked at all, fail gracefully
-    if [ "$any_blocked" -eq 0 ]; then
+    if [[ $any_blocked -eq 0 ]]; then
         log -l ERROR "No IPv4 LAN or global IPv6 found for '$host'; nothing to block"
         return 1
     fi
 
     # Log summary
-    if [ -n "$host_ip4" ] && [ -n "$v6_list" ]; then
+    if [[ -n $host_ip4 ]] && [[ -n $v6_list ]]; then
         log "Blocked WAN for host=$host (ipv4=$host_ip4" \
             "ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
             "on iface=$wan_if (wan_id=$wan_id)"
-    elif [ -n "$host_ip4" ]; then
+    elif [[ -n $host_ip4 ]]; then
         log "Blocked WAN for host=$host (ipv4=$host_ip4) on iface=$wan_if (wan_id=$wan_id)"
     else
         log "Blocked WAN for host=$host (ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
@@ -939,14 +939,14 @@ allow_wan_for_host() {
 
     # WAN interface
     wan_if="$(nvram get wan${wan_id}_ifname)"
-    if [ -z "$wan_if" ]; then
+    if [[ -z $wan_if ]]; then
         log -l ERROR "wan${wan_id} interface name is empty; cannot unblock WAN for host"
         return 1
     fi
 
     # IPv4: try to resolve a single LAN IPv4; skip silently if none
     host_ip4="$(resolve_lan_ip -q "$host" || true)"
-    if [ -n "$host_ip4" ]; then
+    if [[ -n $host_ip4 ]]; then
         ensure_fw_rule filter FORWARD -D -i "$wan_if" -d "$host_ip4" -j DROP
         ensure_fw_rule filter FORWARD -D -s "$host_ip4" -o "$wan_if" \
             -j REJECT --reject-with icmp-admin-prohibited
@@ -954,11 +954,11 @@ allow_wan_for_host() {
     fi
 
     # IPv6: only if enabled; remove rules for all global v6 addresses (ignore ULA / link-local)
-    if [ "$(get_ipv6_enabled)" -eq 1 ]; then
+    if [[ $(get_ipv6_enabled) -eq 1 ]]; then
         v6_list="$(resolve_ip -6 -q -g -a "$host" || true)"
-        if [ -n "$v6_list" ]; then
+        if [[ -n $v6_list ]]; then
             while IFS= read -r ip6; do
-                [ -n "$ip6" ] || continue
+                [[ -n $ip6 ]] || continue
                 ensure_fw_rule -6 filter FORWARD -D -i "$wan_if" -d "$ip6" -j DROP
                 ensure_fw_rule -6 filter FORWARD -D -s "$ip6" -o "$wan_if" \
                     -j REJECT --reject-with icmp6-adm-prohibited
@@ -970,17 +970,17 @@ EOF
     fi
 
     # If nothing was processed at all, fail gracefully
-    if [ "$any_processed" -eq 0 ]; then
+    if [[ $any_processed -eq 0 ]]; then
         log -l ERROR "No IPv4 LAN or global IPv6 found for '$host'; nothing to allow"
         return 1
     fi
 
     # Log summary
-    if [ -n "$host_ip4" ] && [ -n "$v6_list" ]; then
+    if [[ -n $host_ip4 ]] && [[ -n $v6_list ]]; then
         log "Allowed WAN for host=$host (ipv4=$host_ip4" \
             "ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
             "on iface=$wan_if (wan_id=$wan_id)"
-    elif [ -n "$host_ip4" ]; then
+    elif [[ -n $host_ip4 ]]; then
         log "Allowed WAN for host=$host (ipv4=$host_ip4) on iface=$wan_if (wan_id=$wan_id)"
     else
         log "Allowed WAN for host=$host (ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
