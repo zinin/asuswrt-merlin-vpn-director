@@ -129,9 +129,9 @@ print_next_steps() {
 
     printf "Next steps:\n\n"
     printf "  1. Import VLESS servers:\n"
-    printf '     %s/jffs/scripts/vpn-director/import_server_list.sh%s\n\n' "$GREEN" "$NC"
+    printf "     ${GREEN}/jffs/scripts/vpn-director/import_server_list.sh${NC}\n\n"
     printf "  2. Run configuration wizard:\n"
-    printf '     %s/jffs/scripts/vpn-director/configure.sh%s\n\n' "$GREEN" "$NC"
+    printf "     ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
     printf "Or edit configs manually:\n"
     printf "  /jffs/scripts/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"
