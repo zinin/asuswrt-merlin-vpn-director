@@ -115,10 +115,10 @@ _spec_to_log() {
     fi
 
     # If a single string was provided, retokenize it respecting quotes
-    if [ $# -eq 1 ]; then
-        set -f
-        eval "set -- $1"
-        set +f
+    if [[ $# -eq 1 ]]; then
+        local -a args
+        read -ra args <<< "$1"
+        set -- "${args[@]}"
     fi
 
     local dest='' src='' in_if='' out_if='' proto=''
@@ -592,9 +592,9 @@ purge_fw_rules() {
     while IFS= read -r rule; do
         # Rule looks like: "-A CHAIN rest-of-spec"
         rest=${rule#-A }              # -> "CHAIN rest-of-spec"
-        set -f                        # avoid glob expansion
-        eval "set -- $rest"           # re-tokenize respecting original quoting
-        set +f
+        local -a args
+        read -ra args <<< "$rest"
+        set -- "${args[@]}"
 
         if "$cmd" -t "$table" -D "$@" 2>/dev/null; then
             cnt=$((cnt+1))
@@ -822,19 +822,17 @@ sync_fw_rule() {
         cnt=$((cnt+n))
     fi
 
-    # Ensure desired rule (append or insert)
-    local v6_flag="" q_flag="" cmdargs
-    [ "$cmd" = ip6tables ] && v6_flag="-6 "
-    [ "$quiet" -eq 1 ] && q_flag="-q "
-    cmdargs="${v6_flag}${q_flag}--count \"$table\" \"$chain\""
-    if [ -n "$ins_pos" ]; then
-        cmdargs="$cmdargs -I \"$ins_pos\""
-    fi
-
-    set -f
-    eval "set -- $cmdargs $desired"
-    set +f
-    n="$(ensure_fw_rule "$@")" || n=0
+    # Build arguments as proper array (no string concatenation with quotes)
+    local -a cmd_array=()
+    [[ $cmd == ip6tables ]] && cmd_array+=("-6")
+    [[ $quiet -eq 1 ]] && cmd_array+=("-q")
+    cmd_array+=("--count" "$table" "$chain")
+    [[ -n $ins_pos ]] && cmd_array+=("-I" "$ins_pos")
+    # Add desired arguments
+    local -a desired_args
+    read -ra desired_args <<< "$desired"
+    cmd_array+=("${desired_args[@]}")
+    n="$(ensure_fw_rule "${cmd_array[@]}")" || n=0
     cnt=$((cnt + ${n:-0}))
 
     [ "$print_count" -eq 1 ] && printf '%s\n' "$cnt"
