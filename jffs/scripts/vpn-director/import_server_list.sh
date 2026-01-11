@@ -43,7 +43,7 @@ parse_vless_uri() {
     raw_name=$(printf '%s' "$raw_name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
     # Filter: keep only letters (rus/eng), digits, spaces, basic punctuation
     # Removes emoji and other non-standard characters
-    name=$(printf '%s' "$raw_name" | awk '{
+    name=$(printf '%s' "$raw_name" | gawk '{
         result = ""
         n = split($0, chars, "")
         for (i = 1; i <= n; i++) {

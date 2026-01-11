@@ -38,7 +38,7 @@ After installation:
 - Entware installed
 - Required packages:
   ```bash
-  opkg install curl coreutils-base64 coreutils-sha256sum xray-core
+  opkg install curl coreutils-base64 coreutils-sha256sum gawk xray-core
   ```
 - OpenVPN client configured in router UI (for Tunnel Director)
 
