@@ -96,6 +96,40 @@ back up your scripts before installing.
 
 To enable user scripts: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
 
+## Process Monitoring
+
+Xray may occasionally crash. Use monit for automatic restart.
+
+### Setup
+
+1. Install monit:
+   ```bash
+   opkg install monit
+   ```
+
+2. Create config `/opt/etc/monit.d/xray`:
+   ```
+   check process xray matching "xray"
+       start program = "/opt/etc/init.d/S24xray start"
+       stop program = "/opt/etc/init.d/S24xray stop"
+       if does not exist then restart
+   ```
+
+3. Edit `/opt/etc/monitrc`, set check interval:
+   ```
+   set daemon 30    # check every 30 seconds
+   ```
+
+4. Restart monit:
+   ```bash
+   /opt/etc/init.d/S99monit restart
+   ```
+
+5. Verify:
+   ```bash
+   monit status
+   ```
+
 ## License
 
 MIT
