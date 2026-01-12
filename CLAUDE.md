@@ -72,3 +72,4 @@ See `.claude/rules/` for detailed docs:
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe
 - `shell-conventions.md` — utilities from common.sh/firewall.sh
 - `testing.md` — Bats framework, mocks, fixtures
+- `entware-init.md` — Entware init system (rc.unslung, rc.func, S* scripts)
