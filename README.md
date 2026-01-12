@@ -115,17 +115,22 @@ Xray may occasionally crash. Use monit for automatic restart.
        if does not exist then restart
    ```
 
-3. Edit `/opt/etc/monitrc`, set check interval:
+3. Enable config directory in `/opt/etc/monitrc`:
+   ```
+   include /opt/etc/monit.d/*
+   ```
+
+4. Edit `/opt/etc/monitrc`, set check interval:
    ```
    set daemon 30    # check every 30 seconds
    ```
 
-4. Restart monit:
+5. Restart monit:
    ```bash
    /opt/etc/init.d/S99monit restart
    ```
 
-5. Verify:
+6. Verify:
    ```bash
    monit status
    ```
