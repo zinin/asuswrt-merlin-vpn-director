@@ -45,6 +45,7 @@ After installation:
 ### Optional
 
 - `opkg install openssl-util` — for email notifications
+- `opkg install monit` — for automatic Xray restart on crash (see [Process Monitoring](#process-monitoring))
 
 ## Manual Configuration
 
