@@ -23,7 +23,8 @@ test/
 ├── test_helper.bash    # Shared setup, helpers, paths
 ├── fixtures/           # Test data files
 │   ├── hosts           # Mock /etc/hosts
-│   └── vpn-director.json
+│   ├── vpn-director.json
+│   └── vless_servers.b64
 ├── mocks/              # Mock executables
 │   ├── nvram           # Mock nvram command
 │   ├── iptables        # Mock iptables
@@ -36,7 +37,8 @@ test/
 ├── firewall.bats       # Tests for firewall.sh
 ├── config.bats         # Tests for config.sh
 ├── ipset_builder.bats  # Tests for ipset_builder.sh
-└── tunnel_director.bats # Tests for tunnel_director.sh
+├── tunnel_director.bats # Tests for tunnel_director.sh
+└── import_server_list.bats # Tests for import_server_list.sh
 ```
 
 ## Writing Tests
