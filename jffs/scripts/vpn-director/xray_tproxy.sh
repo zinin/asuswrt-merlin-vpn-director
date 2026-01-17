@@ -349,6 +349,7 @@ case "$ACTION" in
 
         if ! check_required_ipsets; then
             log -l WARN "Required ipsets not ready; exiting without applying rules"
+            log -l WARN "Run ipset_builder.sh first, then re-run this script"
             exit 0
         fi
 

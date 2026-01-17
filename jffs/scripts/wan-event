@@ -5,6 +5,7 @@
 # Arguments: $1 = WAN unit (0, 1, ...), $2 = event type
 ###################################################################################################
 
+PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 SCRIPT_DIR="/jffs/scripts/vpn-director"
 
 # Skip if Entware not ready (during early boot)
