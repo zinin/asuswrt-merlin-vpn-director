@@ -143,6 +143,7 @@ download_scripts() {
         "jffs/scripts/vpn-director/utils/config.sh" \
         "jffs/scripts/vpn-director/utils/send-email.sh" \
         "jffs/scripts/firewall-start" \
+        "jffs/scripts/wan-event" \
         "jffs/configs/profile.add"
     do
         target="/$script"
