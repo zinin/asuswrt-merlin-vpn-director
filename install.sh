@@ -81,6 +81,48 @@ create_directories() {
 }
 
 ###############################################################################
+# Create Entware init.d script
+###############################################################################
+
+create_initd_script() {
+    print_info "Creating Entware init script..."
+
+    cat > /opt/etc/init.d/S99vpn-director << 'INITEOF'
+#!/bin/sh
+
+PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+SCRIPT_DIR="/jffs/scripts/vpn-director"
+
+start() {
+    # Build ipsets, then start tunnel_director + xray_tproxy
+    "$SCRIPT_DIR/ipset_builder.sh" -t -x
+
+    # Cron job: update ipsets daily at 03:00
+    cru a update_ipsets "0 3 * * * $SCRIPT_DIR/ipset_builder.sh -u -t -x"
+
+    # Startup notification
+    "$SCRIPT_DIR/utils/send-email.sh" "Startup Notification" \
+        "I've just started up and got connected to the internet."
+}
+
+stop() {
+    "$SCRIPT_DIR/xray_tproxy.sh" stop
+    cru d update_ipsets
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    *)       echo "Usage: $0 {start|stop|restart}" ;;
+esac
+INITEOF
+
+    chmod +x /opt/etc/init.d/S99vpn-director
+    print_success "Created /opt/etc/init.d/S99vpn-director"
+}
+
+###############################################################################
 # Download scripts
 ###############################################################################
 
@@ -100,7 +142,6 @@ download_scripts() {
         "jffs/scripts/vpn-director/utils/config.sh" \
         "jffs/scripts/vpn-director/utils/send-email.sh" \
         "jffs/scripts/firewall-start" \
-        "jffs/scripts/services-start" \
         "jffs/configs/profile.add"
     do
         target="/$script"
@@ -148,6 +189,7 @@ main() {
     check_environment
     create_directories
     download_scripts
+    create_initd_script
     print_next_steps
 }
 
