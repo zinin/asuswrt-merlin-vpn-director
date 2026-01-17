@@ -338,9 +338,25 @@ case "$ACTION" in
         ;;
 
     restart)
-        "$0" stop
+        log "Restarting Xray TPROXY routing..."
+        teardown_iptables
+        teardown_routing
         sleep 1
-        "$0" start
+
+        if ! check_tproxy_module; then
+            exit 1
+        fi
+
+        if ! check_required_ipsets; then
+            log -l WARN "Required ipsets not ready; exiting without applying rules"
+            exit 0
+        fi
+
+        setup_routing
+        setup_clients_ipset
+        setup_servers_ipset
+        setup_iptables
+        log "Xray TPROXY routing restarted successfully"
         ;;
 
     status)
