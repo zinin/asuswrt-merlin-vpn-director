@@ -76,6 +76,7 @@ create_directories() {
     mkdir -p "$JFFS_DIR/vpn-director/utils"
     mkdir -p "$XRAY_CONFIG_DIR"
     mkdir -p "/jffs/configs"
+    mkdir -p "/opt/etc/init.d"
 
     print_success "Directories created"
 }
