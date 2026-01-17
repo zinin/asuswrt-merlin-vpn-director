@@ -97,7 +97,7 @@ FROM_NAME="ASUS $(nvram get model)"   # router name shown in "From:"
     printf 'Subject: %s\n'          "$SUBJECT"
     printf 'Date: %s\n'             "$(date -R)"
     printf '\nHey there,\n\n%s\n\n' "$BODY"
-    printf '--------------------\n'
+    printf '%s\n' '--------------------'
     printf 'Best regards,\nYour friendly router\n'
 } > "$TMP_MAIL"
 
