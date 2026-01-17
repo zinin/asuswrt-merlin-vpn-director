@@ -33,6 +33,8 @@ ipt  # Runs: ipset_builder.sh -t
 |------|---------|
 | `jffs/scripts/vpn-director/` | Main scripts: ipset_builder, tunnel_director, xray_tproxy, configure |
 | `jffs/scripts/vpn-director/utils/` | Shared utilities: common.sh, firewall.sh, shared.sh, config.sh, send-email.sh |
+| `opt/etc/init.d/S99vpn-director` | Entware init.d script for startup |
+| `jffs/scripts/firewall-start` | Asuswrt-Merlin hook for firewall reload |
 | `test/` | Bats tests with mocks and fixtures |
 | `jffs/scripts/vpn-director/vpn-director.json.template` | Unified config template |
 | `jffs/configs/profile.add` | Shell alias for `ipt` command |
