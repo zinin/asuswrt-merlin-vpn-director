@@ -82,16 +82,14 @@ Routes traffic from specified LAN clients through OpenVPN tunnels based on desti
 
 ## Startup Scripts
 
-This project uses [Asuswrt-Merlin user scripts](https://github.com/RMerl/asuswrt-merlin.ng/wiki/User-scripts)
-for automatic startup:
+This project uses Entware init.d for automatic startup:
 
 | Script | When Called | Purpose |
 |--------|-------------|---------|
-| `services-start` | After all services started at boot | Builds ipsets, starts Xray TPROXY |
-| `firewall-start` | After firewall rules applied | Applies Tunnel Director rules |
+| `/opt/etc/init.d/S99vpn-director` | After Entware initialized | Builds ipsets, starts Xray TPROXY, sets up cron |
+| `/jffs/scripts/firewall-start` | After firewall rules applied | Applies Tunnel Director rules (runtime reload) |
 
-**Note:** Installation overwrites these files. If you have custom logic,
-back up your scripts before installing.
+**Note:** The init.d script ensures Entware bash is available before running vpn-director scripts.
 
 To enable user scripts: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
 
