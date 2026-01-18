@@ -194,6 +194,7 @@ download_telegram_bot() {
     local bot_binary=""
     local release_url="https://github.com/zinin/asuswrt-merlin-vpn-director/releases/latest/download"
     local bot_path="$JFFS_DIR/vpn-director/telegram-bot"
+    local tmp_path="${bot_path}.tmp"
     local was_running=false
 
     case "$arch" in
@@ -204,6 +205,13 @@ download_telegram_bot() {
             return 0
             ;;
     esac
+
+    # Download to temp file first
+    if ! curl -fsSL "$release_url/$bot_binary" -o "$tmp_path"; then
+        print_info "Warning: Failed to download telegram bot (optional component)"
+        rm -f "$tmp_path" 2>/dev/null || true
+        return 0
+    fi
 
     # Stop running bot before overwriting binary
     if pidof telegram-bot >/dev/null 2>&1; then
@@ -217,10 +225,8 @@ download_telegram_bot() {
         sleep 1
     fi
 
-    curl -fsSL "$release_url/$bot_binary" -o "$bot_path" || {
-        print_info "Warning: Failed to download telegram bot (optional component)"
-        return 0
-    }
+    # Atomic move from temp to final location
+    mv "$tmp_path" "$bot_path"
     chmod +x "$bot_path"
     print_success "Installed telegram bot"
 
