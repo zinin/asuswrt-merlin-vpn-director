@@ -14,20 +14,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.5'
 
       - name: Build arm64
-        run: |
-          cd telegram-bot
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../bin/telegram-bot-arm64 ./cmd/bot
+        run: make -C telegram-bot build-arm64
 
       - name: Build arm
-        run: |
-          cd telegram-bot
-          GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o ../bin/telegram-bot-arm ./cmd/bot
+        run: make -C telegram-bot build-arm
+
+      - name: Move binaries
+        run: mkdir -p bin && mv telegram-bot/bin/* bin/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
