@@ -104,11 +104,17 @@ start() {
     # Startup notification
     "$SCRIPT_DIR/utils/send-email.sh" "Startup Notification" \
         "I've just started up and got connected to the internet."
+
+    # Start telegram bot (if configured)
+    if [ -x "$SCRIPT_DIR/telegram-bot" ] && [ -f "$SCRIPT_DIR/telegram-bot.json" ]; then
+        "$SCRIPT_DIR/telegram-bot" >> /tmp/telegram-bot.log 2>&1 &
+    fi
 }
 
 stop() {
     "$SCRIPT_DIR/xray_tproxy.sh" stop
     cru d update_ipsets
+    killall telegram-bot 2>/dev/null || true
 }
 
 case "$1" in
@@ -164,6 +170,35 @@ download_scripts() {
 }
 
 ###############################################################################
+# Download telegram bot binary (optional)
+###############################################################################
+
+download_telegram_bot() {
+    print_info "Downloading telegram bot binary..."
+
+    local arch
+    arch=$(uname -m)
+    local bot_binary=""
+    local release_url="https://github.com/zinin/asuswrt-merlin-vpn-director/releases/latest/download"
+
+    case "$arch" in
+        aarch64) bot_binary="telegram-bot-arm64" ;;
+        armv7l)  bot_binary="telegram-bot-arm" ;;
+        *)
+            print_info "Architecture $arch not supported for telegram bot (optional component)"
+            return 0
+            ;;
+    esac
+
+    curl -fsSL "$release_url/$bot_binary" -o "$JFFS_DIR/vpn-director/telegram-bot" || {
+        print_info "Warning: Failed to download telegram bot (optional component)"
+        return 0
+    }
+    chmod +x "$JFFS_DIR/vpn-director/telegram-bot"
+    print_success "Installed telegram bot"
+}
+
+###############################################################################
 # Print next steps
 ###############################################################################
 
@@ -175,6 +210,8 @@ print_next_steps() {
     printf "     ${GREEN}/jffs/scripts/vpn-director/import_server_list.sh${NC}\n\n"
     printf "  2. Run configuration wizard:\n"
     printf "     ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
+    printf "  3. (Optional) Setup Telegram bot:\n"
+    printf "     ${GREEN}curl -fsSL %s/setup_telegram_bot.sh | bash${NC}\n\n" "$REPO_URL"
     printf "Or edit configs manually:\n"
     printf "  /jffs/scripts/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"
@@ -191,6 +228,7 @@ main() {
     check_environment
     create_directories
     download_scripts
+    download_telegram_bot
     create_initd_script
     print_next_steps
 }
