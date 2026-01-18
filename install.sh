@@ -193,6 +193,8 @@ download_telegram_bot() {
     arch=$(uname -m)
     local bot_binary=""
     local release_url="https://github.com/zinin/asuswrt-merlin-vpn-director/releases/latest/download"
+    local bot_path="$JFFS_DIR/vpn-director/telegram-bot"
+    local was_running=false
 
     case "$arch" in
         aarch64) bot_binary="telegram-bot-arm64" ;;
@@ -203,12 +205,30 @@ download_telegram_bot() {
             ;;
     esac
 
-    curl -fsSL "$release_url/$bot_binary" -o "$JFFS_DIR/vpn-director/telegram-bot" || {
+    # Stop running bot before overwriting binary
+    if pidof telegram-bot >/dev/null 2>&1; then
+        was_running=true
+        print_info "Stopping running telegram bot..."
+        if [[ -x /opt/etc/init.d/S98telegram-bot ]]; then
+            /opt/etc/init.d/S98telegram-bot stop >/dev/null 2>&1 || true
+        else
+            killall telegram-bot 2>/dev/null || true
+        fi
+        sleep 1
+    fi
+
+    curl -fsSL "$release_url/$bot_binary" -o "$bot_path" || {
         print_info "Warning: Failed to download telegram bot (optional component)"
         return 0
     }
-    chmod +x "$JFFS_DIR/vpn-director/telegram-bot"
+    chmod +x "$bot_path"
     print_success "Installed telegram bot"
+
+    # Restart bot if it was running
+    if [[ "$was_running" == true ]] && [[ -x /opt/etc/init.d/S98telegram-bot ]]; then
+        print_info "Starting telegram bot..."
+        /opt/etc/init.d/S98telegram-bot start >/dev/null 2>&1 || true
+    fi
 }
 
 ###############################################################################
