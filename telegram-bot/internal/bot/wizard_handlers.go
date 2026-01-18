@@ -230,13 +230,10 @@ func (b *Bot) updateExclusionsMessage(msg *tgbotapi.Message, state *wizard.State
 	var rows [][]tgbotapi.InlineKeyboardButton
 	var row []tgbotapi.InlineKeyboardButton
 	for _, ex := range defaultExclusions {
-		mark := "  "
-		if stateExclusions[ex] {
-			mark = "v "
-		}
-		btn := tgbotapi.NewInlineKeyboardButtonData(mark+ex, "excl:"+ex)
+		btnText := formatExclusionButton(ex, stateExclusions[ex])
+		btn := tgbotapi.NewInlineKeyboardButtonData(btnText, "excl:"+ex)
 		row = append(row, btn)
-		if len(row) == 4 {
+		if len(row) == 2 {
 			rows = append(rows, row)
 			row = nil
 		}
@@ -255,9 +252,12 @@ func (b *Bot) updateExclusionsMessage(msg *tgbotapi.Message, state *wizard.State
 			selected = append(selected, k)
 		}
 	}
+	sort.Strings(selected)
 	text := "Step 2/4: Exclude from proxy\n"
 	if len(selected) > 0 {
 		text += fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))
+	} else {
+		text += "Selected: (none)"
 	}
 
 	edit := tgbotapi.NewEditMessageTextAndMarkup(
