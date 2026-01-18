@@ -29,7 +29,8 @@ Commands:
 /restart - restart Xray
 /stop - stop Xray
 /logs - recent logs
-/ip - external IP`
+/ip - external IP
+/version - bot version`
 
 	b.sendMessage(msg.Chat.ID, text)
 }
@@ -121,6 +122,10 @@ func (b *Bot) handleIP(msg *tgbotapi.Message) {
 		return
 	}
 	b.sendMessage(msg.Chat.ID, fmt.Sprintf("External IP: %s", strings.TrimSpace(result.Output)))
+}
+
+func (b *Bot) handleVersion(msg *tgbotapi.Message) {
+	b.sendMessage(msg.Chat.ID, b.version)
 }
 
 func (b *Bot) sendMessage(chatID int64, text string) {
