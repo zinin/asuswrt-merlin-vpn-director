@@ -148,6 +148,7 @@ download_scripts() {
         "jffs/scripts/vpn-director/utils/shared.sh" \
         "jffs/scripts/vpn-director/utils/config.sh" \
         "jffs/scripts/vpn-director/utils/send-email.sh" \
+        "jffs/scripts/vpn-director/setup_telegram_bot.sh" \
         "jffs/scripts/firewall-start" \
         "jffs/scripts/wan-event" \
         "jffs/configs/profile.add"
@@ -211,7 +212,7 @@ print_next_steps() {
     printf "  2. Run configuration wizard:\n"
     printf "     ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
     printf "  3. (Optional) Setup Telegram bot:\n"
-    printf "     ${GREEN}curl -fsSL %s/setup_telegram_bot.sh | bash${NC}\n\n" "$REPO_URL"
+    printf "     ${GREEN}/jffs/scripts/vpn-director/setup_telegram_bot.sh${NC}\n\n"
     printf "Or edit configs manually:\n"
     printf "  /jffs/scripts/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"
