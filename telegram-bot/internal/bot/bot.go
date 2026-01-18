@@ -23,11 +23,39 @@ func New(cfg *config.Config) (*Bot, error) {
 
 	log.Printf("[INFO] Authorized as @%s", api.Self.UserName)
 
-	return &Bot{
+	b := &Bot{
 		api:    api,
 		config: cfg,
 		wizard: wizard.NewManager(),
-	}, nil
+	}
+
+	if err := b.registerCommands(); err != nil {
+		log.Printf("[WARN] Failed to register commands: %v", err)
+	}
+
+	return b, nil
+}
+
+func (b *Bot) registerCommands() error {
+	commands := []tgbotapi.BotCommand{
+		{Command: "status", Description: "Xray status"},
+		{Command: "servers", Description: "Server list"},
+		{Command: "import", Description: "Import servers from URL"},
+		{Command: "configure", Description: "Configuration wizard"},
+		{Command: "restart", Description: "Restart Xray"},
+		{Command: "stop", Description: "Stop Xray"},
+		{Command: "logs", Description: "Recent logs"},
+		{Command: "ip", Description: "External IP"},
+	}
+
+	cfg := tgbotapi.NewSetMyCommands(commands...)
+	_, err := b.api.Request(cfg)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("[INFO] Registered %d bot commands", len(commands))
+	return nil
 }
 
 func (b *Bot) IsAuthorized(username string) bool {
