@@ -543,3 +543,43 @@ func isValidLANIP(ip string) bool {
 	}
 	return false
 }
+
+// getServerGridColumns returns number of columns based on server count
+func getServerGridColumns(count int) int {
+	switch {
+	case count <= 5:
+		return 1
+	case count <= 10:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// truncateServerName truncates name to maxLen, adding "..." if truncated
+// Works with bytes (not runes) - safe for ASCII server names
+func truncateServerName(name string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(name) <= maxLen {
+		return name
+	}
+	if maxLen <= 3 {
+		return name[:maxLen]
+	}
+	return name[:maxLen-3] + "..."
+}
+
+// formatExclusionButton formats exclusion button text with emoji and country name
+func formatExclusionButton(code string, selected bool) string {
+	mark := "🔲"
+	if selected {
+		mark = "✅"
+	}
+	name := code
+	if n, ok := wizard.CountryNames[code]; ok {
+		name = n
+	}
+	return fmt.Sprintf("%s %s %s", mark, code, name)
+}
