@@ -10,12 +10,13 @@ import (
 )
 
 type Bot struct {
-	api    *tgbotapi.BotAPI
-	config *config.Config
-	wizard *wizard.Manager
+	api     *tgbotapi.BotAPI
+	config  *config.Config
+	wizard  *wizard.Manager
+	version string
 }
 
-func New(cfg *config.Config) (*Bot, error) {
+func New(cfg *config.Config, version string) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -24,9 +25,10 @@ func New(cfg *config.Config) (*Bot, error) {
 	log.Printf("[INFO] Authorized as @%s", api.Self.UserName)
 
 	b := &Bot{
-		api:    api,
-		config: cfg,
-		wizard: wizard.NewManager(),
+		api:     api,
+		config:  cfg,
+		wizard:  wizard.NewManager(),
+		version: version,
 	}
 
 	if err := b.registerCommands(); err != nil {
@@ -46,6 +48,7 @@ func (b *Bot) registerCommands() error {
 		{Command: "stop", Description: "Stop Xray"},
 		{Command: "logs", Description: "Recent logs"},
 		{Command: "ip", Description: "External IP"},
+		{Command: "version", Description: "Bot version"},
 	}
 
 	cfg := tgbotapi.NewSetMyCommands(commands...)
@@ -118,6 +121,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleImport(msg)
 	case "configure":
 		b.handleConfigure(msg)
+	case "version":
+		b.handleVersion(msg)
 	default:
 		b.handleWizardInput(msg)
 	}
