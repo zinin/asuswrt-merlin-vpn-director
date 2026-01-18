@@ -109,5 +109,6 @@ Binary: `bin/telegram-bot-{arch}`
 
 ## Logging
 
-- Stdout: `[INFO] Bot started`, `[ERROR] ...`
-- Log file: `/tmp/telegram-bot.log` (when daemonized)
+- Output: stdout + `/tmp/telegram-bot.log` (always, via `io.MultiWriter`)
+- Format: `2026/01/18 15:04:05 main.go:42: [INFO] Bot started`
+- Levels: `[INFO]`, `[WARN]`, `[ERROR]` (manual prefixes)
