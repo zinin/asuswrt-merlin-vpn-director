@@ -52,6 +52,7 @@ After installation:
 
 - `opkg install openssl-util` — for email notifications
 - `opkg install jq` — for Telegram bot setup script
+- `opkg install monit` — for automatic Xray restart on crash (see [Process Monitoring](#process-monitoring))
 
 ## Manual Configuration
 
@@ -133,6 +134,45 @@ This project uses Entware init.d for automatic startup:
 **Note:** The init.d script ensures Entware bash is available before running vpn-director scripts.
 
 To enable user scripts: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
+
+## Process Monitoring
+
+Xray may occasionally crash. Use monit for automatic restart.
+
+### Setup
+
+1. Install monit:
+   ```bash
+   opkg install monit
+   ```
+
+2. Create config `/opt/etc/monit.d/xray`:
+   ```
+   check process xray matching "xray"
+       start program = "/opt/etc/init.d/S24xray start"
+       stop program = "/opt/etc/init.d/S24xray stop"
+       if does not exist then restart
+   ```
+
+3. Enable config directory in `/opt/etc/monitrc`:
+   ```
+   include /opt/etc/monit.d/*
+   ```
+
+4. Edit `/opt/etc/monitrc`, set check interval:
+   ```
+   set daemon 30    # check every 30 seconds
+   ```
+
+5. Restart monit:
+   ```bash
+   /opt/etc/init.d/S99monit restart
+   ```
+
+6. Verify:
+   ```bash
+   monit status
+   ```
 
 ## License
 

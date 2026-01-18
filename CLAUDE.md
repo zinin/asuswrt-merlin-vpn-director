@@ -78,3 +78,4 @@ See `.claude/rules/` for detailed docs:
 - `shell-conventions.md` — utilities from common.sh/firewall.sh
 - `testing.md` — Bats framework, mocks, fixtures
 - `telegram-bot.md` — Go bot architecture, commands, wizard flow
+- `entware-init.md` — Entware init system (rc.unslung, rc.func, S* scripts)
