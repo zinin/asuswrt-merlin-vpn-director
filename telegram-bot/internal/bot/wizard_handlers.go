@@ -143,16 +143,34 @@ func (b *Bot) sendServerSelection(chatID int64, _ *wizard.State) {
 		return
 	}
 
+	cols := getServerGridColumns(len(servers))
+	// Max button text length depends on columns (Telegram limits)
+	maxNameLen := 30
+	if cols == 2 {
+		maxNameLen = 20
+	} else if cols == 3 {
+		maxNameLen = 14
+	}
+
 	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
 	for i, s := range servers {
-		btn := tgbotapi.NewInlineKeyboardButtonData(s.Name, fmt.Sprintf("server:%d", i))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+		btnText := fmt.Sprintf("%d. %s", i+1, truncateServerName(s.Name, maxNameLen))
+		btn := tgbotapi.NewInlineKeyboardButtonData(btnText, fmt.Sprintf("server:%d", i))
+		row = append(row, btn)
+		if len(row) == cols {
+			rows = append(rows, row)
+			row = nil
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("Cancel", "cancel"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, "Step 1/4: Select Xray server")
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Step 1/4: Select Xray server (%d available)", len(servers)))
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send server selection: %v", err)
