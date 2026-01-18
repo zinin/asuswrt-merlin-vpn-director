@@ -5,6 +5,6 @@ PROCS=telegram-bot
 ARGS=""
 PREARGS=""
 DESC="Telegram Bot for VPN Director"
-PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PATH=/jffs/scripts/vpn-director:/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 . /opt/etc/init.d/rc.func
