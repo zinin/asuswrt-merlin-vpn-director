@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -440,11 +441,16 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 		xrayExclusions = []string{"ru"}
 	}
 
-	// Server IPs
+	// Server IPs (unique and sorted, like jq '[.[].ip] | unique')
+	seen := make(map[string]bool)
 	var serverIPs []string
 	for _, s := range servers {
-		serverIPs = append(serverIPs, s.IP)
+		if !seen[s.IP] {
+			seen[s.IP] = true
+			serverIPs = append(serverIPs, s.IP)
+		}
 	}
+	sort.Strings(serverIPs)
 
 	vpnCfg.Xray.Clients = xrayClients
 	vpnCfg.Xray.ExcludeSets = xrayExclusions
