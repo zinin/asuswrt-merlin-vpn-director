@@ -127,6 +127,24 @@ INITEOF
 
     chmod +x /opt/etc/init.d/S99vpn-director
     print_success "Created /opt/etc/init.d/S99vpn-director"
+
+    # Create Telegram bot init.d script
+    print_info "Creating Entware init.d script for Telegram bot..."
+    cat > /opt/etc/init.d/S98telegram-bot << 'INITEOF'
+#!/bin/sh
+
+ENABLED=yes
+PROCS=telegram-bot
+ARGS=""
+PREARGS=""
+DESC="Telegram Bot for VPN Director"
+PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+. /opt/etc/init.d/rc.func
+INITEOF
+
+    chmod +x /opt/etc/init.d/S98telegram-bot
+    print_success "Created /opt/etc/init.d/S98telegram-bot"
 }
 
 ###############################################################################
