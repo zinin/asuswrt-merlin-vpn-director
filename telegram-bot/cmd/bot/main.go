@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -15,6 +16,16 @@ import (
 const configPath = "/jffs/scripts/vpn-director/telegram-bot.json"
 
 func main() {
+	// Initialize logging to file + stdout
+	logFile, err := os.OpenFile("/tmp/telegram-bot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatalf("[ERROR] Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+
 	cfg, err := config.Load(configPath)
 	if os.IsNotExist(err) {
 		log.Println("[INFO] Config not found, run setup_telegram_bot.sh first")
