@@ -16,7 +16,7 @@ fi
 
 # Bot token
 printf "Enter bot token: "
-read -r BOT_TOKEN
+read -r BOT_TOKEN < /dev/tty
 
 if [[ -z "$BOT_TOKEN" ]]; then
     echo "Error: token cannot be empty"
@@ -27,14 +27,14 @@ fi
 USERS=()
 while true; do
     printf "Enter username (without @): "
-    read -r USERNAME
+    read -r USERNAME < /dev/tty
 
     if [[ -n "$USERNAME" ]]; then
         USERS+=("$USERNAME")
     fi
 
     printf "Add another? [y/N]: "
-    read -r REPLY
+    read -r REPLY < /dev/tty
     case "$REPLY" in
         [Yy]*) continue ;;
         *) break ;;

@@ -17,6 +17,7 @@ const configPath = "/jffs/scripts/vpn-director/telegram-bot.json"
 func main() {
 	cfg, err := config.Load(configPath)
 	if os.IsNotExist(err) {
+		log.Println("[INFO] Config not found, run setup_telegram_bot.sh first")
 		os.Exit(0)
 	}
 	if err != nil {
@@ -24,6 +25,7 @@ func main() {
 	}
 
 	if strings.TrimSpace(cfg.BotToken) == "" {
+		log.Println("[INFO] Bot token not configured, skipping")
 		os.Exit(0)
 	}
 
