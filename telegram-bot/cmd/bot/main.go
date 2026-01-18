@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -12,6 +13,16 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/bot"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
 )
+
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildDate = "unknown"
+)
+
+func versionString() string {
+	return fmt.Sprintf("%s (%s, %s)", Version, Commit, BuildDate)
+}
 
 const configPath = "/jffs/scripts/vpn-director/telegram-bot.json"
 
@@ -43,12 +54,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	b, err := bot.New(cfg)
+	b, err := bot.New(cfg, versionString())
 	if err != nil {
 		log.Fatalf("[ERROR] Failed to create bot: %v", err)
 	}
 
-	log.Println("[INFO] Bot started")
+	log.Printf("[INFO] Telegram Bot %s started", versionString())
 	b.Run(ctx)
 	log.Println("[INFO] Bot stopped")
 }
