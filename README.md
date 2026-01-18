@@ -137,7 +137,7 @@ To enable user scripts: Administration -> System -> Enable JFFS custom scripts a
 
 ## Process Monitoring
 
-Xray may occasionally crash. Use monit for automatic restart.
+Xray and Telegram bot may occasionally crash. Use monit for automatic restart.
 
 ### Setup
 
@@ -146,11 +146,21 @@ Xray may occasionally crash. Use monit for automatic restart.
    opkg install monit
    ```
 
-2. Create config `/opt/etc/monit.d/xray`:
+2. Create configs in `/opt/etc/monit.d/`:
+
+   **xray:**
    ```
    check process xray matching "xray"
        start program = "/opt/etc/init.d/S24xray start"
        stop program = "/opt/etc/init.d/S24xray stop"
+       if does not exist then restart
+   ```
+
+   **telegram-bot:**
+   ```
+   check process telegram-bot matching "telegram-bot"
+       start program = "/opt/etc/init.d/S98telegram-bot start"
+       stop program = "/opt/etc/init.d/S98telegram-bot stop"
        if does not exist then restart
    ```
 

@@ -57,15 +57,9 @@ jq -n \
 echo
 echo "Config created: $CONFIG_FILE"
 
-# Restart bot if running
-if pgrep -x telegram-bot > /dev/null; then
-    killall telegram-bot 2>/dev/null || true
-    sleep 1
-fi
-
-if [[ -x "$JFFS_DIR/telegram-bot" ]]; then
-    "$JFFS_DIR/telegram-bot" >> /tmp/telegram-bot.log 2>&1 &
-    echo "Bot restarted"
+# Restart bot via init script
+if [[ -x /opt/etc/init.d/S98telegram-bot ]]; then
+    /opt/etc/init.d/S98telegram-bot restart
 fi
 
 echo
