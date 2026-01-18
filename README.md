@@ -7,6 +7,7 @@ Selective traffic routing through Xray TPROXY and OpenVPN tunnels.
 - **Xray TPROXY**: Transparent proxy for selected LAN clients via VLESS
 - **Tunnel Director**: Route traffic through OpenVPN/WireGuard by destination
 - **Country-based routing**: Exclude Russian IPs from proxy/tunnel
+- **Telegram Bot**: Remote management via Telegram (status, config, restart)
 - **Easy installation**: One-command setup with interactive configuration
 
 ## Quick Install
@@ -32,6 +33,11 @@ After installation:
    /jffs/scripts/vpn-director/configure.sh
    ```
 
+3. Setup Telegram bot (optional):
+   ```bash
+   /jffs/scripts/vpn-director/setup_telegram_bot.sh
+   ```
+
 ## Requirements
 
 - Asuswrt-Merlin firmware
@@ -45,6 +51,7 @@ After installation:
 ### Optional
 
 - `opkg install openssl-util` — for email notifications
+- `opkg install jq` — for Telegram bot setup script
 
 ## Manual Configuration
 
@@ -69,6 +76,40 @@ After installation, configs are located at:
 # Import servers
 /jffs/scripts/vpn-director/import_server_list.sh
 ```
+
+## Telegram Bot
+
+Remote management via Telegram with username-based authorization.
+
+### Setup
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and get the token
+2. Run setup script:
+   ```bash
+   /jffs/scripts/vpn-director/setup_telegram_bot.sh
+   ```
+3. Enter bot token and allowed usernames (without @)
+
+### Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/status` | Xray status |
+| `/servers` | List imported servers |
+| `/import <url>` | Import VLESS subscription |
+| `/configure` | Interactive configuration wizard |
+| `/restart` | Restart Xray |
+| `/stop` | Stop Xray |
+| `/logs` | Recent log entries |
+| `/ip` | Show external IP |
+
+### Configuration Wizard
+
+The `/configure` command starts a 4-step wizard:
+1. Select Xray server
+2. Choose country exclusions (ru, ua, etc.)
+3. Add LAN clients with routing (Xray/OpenVPN/WireGuard)
+4. Review and apply
 
 ## How It Works
 

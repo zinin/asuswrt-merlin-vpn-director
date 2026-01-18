@@ -40,6 +40,8 @@ ipt  # Runs: ipset_builder.sh -t
 | `jffs/configs/profile.add` | Shell alias for `ipt` command |
 | `config/xray.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
+| `telegram-bot/` | Go-based Telegram bot for remote management |
+| `setup_telegram_bot.sh` | Bot configuration script |
 
 ## Key Concepts
 
@@ -56,6 +58,7 @@ ipt  # Runs: ipset_builder.sh -t
 |------|---------|
 | `/jffs/scripts/vpn-director/vpn-director.json` | Unified config (Xray + Tunnel Director) |
 | `/opt/etc/xray/config.json` | Xray server configuration |
+| `/jffs/scripts/vpn-director/telegram-bot.json` | Telegram bot config (token, allowed users) |
 
 **Data storage**: `data_dir` in vpn-director.json (default: `/jffs/scripts/vpn-director/data`) — servers.json, ipset dumps
 
@@ -74,3 +77,4 @@ See `.claude/rules/` for detailed docs:
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe
 - `shell-conventions.md` — utilities from common.sh/firewall.sh
 - `testing.md` — Bats framework, mocks, fixtures
+- `telegram-bot.md` — Go bot architecture, commands, wizard flow
