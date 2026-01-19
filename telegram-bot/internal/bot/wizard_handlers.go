@@ -144,18 +144,11 @@ func (b *Bot) sendServerSelection(chatID int64, _ *wizard.State) {
 	}
 
 	cols := getServerGridColumns(len(servers))
-	// Max button text length depends on columns (Telegram limits)
-	maxNameLen := 30
-	if cols == 2 {
-		maxNameLen = 20
-	} else if cols == 3 {
-		maxNameLen = 14
-	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	var row []tgbotapi.InlineKeyboardButton
 	for i, s := range servers {
-		btnText := fmt.Sprintf("%d. %s", i+1, truncateServerName(s.Name, maxNameLen))
+		btnText := fmt.Sprintf("%d. %s", i+1, s.Name)
 		btn := tgbotapi.NewInlineKeyboardButtonData(btnText, fmt.Sprintf("server:%d", i))
 		row = append(row, btn)
 		if len(row) == cols {
@@ -564,29 +557,10 @@ func isValidLANIP(ip string) bool {
 
 // getServerGridColumns returns number of columns based on server count
 func getServerGridColumns(count int) int {
-	switch {
-	case count <= 5:
+	if count <= 10 {
 		return 1
-	case count <= 10:
-		return 2
-	default:
-		return 3
 	}
-}
-
-// truncateServerName truncates name to maxLen, adding "..." if truncated
-// Works with bytes (not runes) - safe for ASCII server names
-func truncateServerName(name string, maxLen int) string {
-	if maxLen <= 0 {
-		return ""
-	}
-	if len(name) <= maxLen {
-		return name
-	}
-	if maxLen <= 3 {
-		return name[:maxLen]
-	}
-	return name[:maxLen-3] + "..."
+	return 2
 }
 
 // formatExclusionButton formats exclusion button text with emoji and country name
