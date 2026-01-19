@@ -343,14 +343,7 @@ _parse_combo_sets() {
 }
 
 ###################################################################################################
-# Allow sourcing for testing
-###################################################################################################
-if [[ ${1:-} == "--source-only" ]]; then
-    return 0 2>/dev/null || exit 0
-fi
-
-###################################################################################################
-# Initialize state directories
+# Initialize state directories (called by public functions, not on source)
 ###################################################################################################
 _ipset_init() {
     _IPSET_DUMP_DIR="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
@@ -582,8 +575,32 @@ ipset_get_required_tproxy() {
 }
 
 ipset_cleanup() {
+    # TODO: implement cleanup of unused ipsets
     log "ipset_cleanup: not implemented yet"
 }
+
+###################################################################################################
+# Boot delay (wait for network after system startup)
+###################################################################################################
+_ipset_boot_wait() {
+    if [[ ${BOOT_WAIT_DELAY:-0} -ne 0 ]] && \
+        ! awk -v min="${MIN_BOOT_TIME:-60}" '{ exit ($1 < min) }' /proc/uptime;
+    then
+        log "Uptime < ${MIN_BOOT_TIME:-60}s, sleeping ${BOOT_WAIT_DELAY}s..."
+        sleep "$BOOT_WAIT_DELAY"
+    fi
+}
+
+###################################################################################################
+# Allow sourcing for testing (guard at end so all functions are defined)
+###################################################################################################
+if [[ ${1:-} == "--source-only" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+# When run directly (not sourced), execute boot wait and show status
+_ipset_boot_wait
+ipset_status
 ```
 
 **Step 5: Run tests to verify they pass**
@@ -744,14 +761,7 @@ _tunnel_get_prerouting_base_pos() {
 }
 
 ###################################################################################################
-# Allow sourcing for testing
-###################################################################################################
-if [[ ${1:-} == "--source-only" ]]; then
-    return 0 2>/dev/null || exit 0
-fi
-
-###################################################################################################
-# Initialize module
+# Initialize module (called by public functions, not on source)
 ###################################################################################################
 _tunnel_init() {
     # Build valid tables list
@@ -816,8 +826,25 @@ tunnel_apply() {
     new_hash=$(compute_hash "$tun_dir_rules")
     old_hash=$(cat "/tmp/tunnel_director/rules.sha256" 2>/dev/null || printf '%s' "$empty_hash")
 
-    if [[ $new_hash == "$old_hash" ]]; then
-        log "Tunnel Director: rules unchanged"
+    local build_needed=0
+
+    if [[ $new_hash != "$old_hash" ]]; then
+        build_needed=1
+    else
+        # Hash matches, but verify no drift (chains/rules may have been cleared by firewall restart)
+        local cfg_rows ch_rows pr_rows
+        cfg_rows=$(awk 'NF { c++ } END { print c + 0 }' "$tun_dir_rules")
+        ch_rows=$(iptables -t mangle -S 2>/dev/null | awk -v pre="$TUN_DIR_CHAIN_PREFIX" '$1=="-N" && $2~("^"pre"[0-9]+$") { c++ } END { print c + 0 }')
+        pr_rows=$(iptables -t mangle -S PREROUTING 2>/dev/null | awk -v pre="$TUN_DIR_CHAIN_PREFIX" '$0 ~ ("-j " pre "[0-9]+$") { c++ } END { print c + 0 }')
+
+        if [[ $cfg_rows -ne $ch_rows ]] || [[ $cfg_rows -ne $pr_rows ]]; then
+            log "Tunnel Director: drift detected (config=$cfg_rows, chains=$ch_rows, jumps=$pr_rows)"
+            build_needed=1
+        fi
+    fi
+
+    if [[ $build_needed -eq 0 ]]; then
+        log "Tunnel Director: rules unchanged and no drift"
         return 0
     fi
 
@@ -854,6 +881,13 @@ tunnel_apply() {
             warnings=1; idx=$((idx + 1)); continue
         fi
 
+        # Check fwmark slot limit before processing
+        local slot=$((idx + 1))
+        if [[ $slot -gt $_tunnel_mark_field_max ]]; then
+            log -l ERROR "Tunnel Director: rule $idx exceeds fwmark capacity ($_tunnel_mark_field_max max)"
+            warnings=1; break
+        fi
+
         # Parse interface from src
         local src_iif="br0"
         case "$src" in
@@ -877,14 +911,16 @@ tunnel_apply() {
             match="-m set --match-set $dest_set dst"
         fi
 
-        # Build exclusion clause
+        # Build exclusion clause (fail-safe: skip rule if excl ipset not found)
         local excl=""
         if [[ -n $set_excl ]]; then
             local dest_set_excl
             dest_set_excl=$(_tunnel_resolve_set "$set_excl")
-            if [[ -n $dest_set_excl ]]; then
-                excl="-m set ! --match-set $dest_set_excl dst"
+            if [[ -z $dest_set_excl ]]; then
+                log -l WARN "Tunnel Director: exclusion ipset '$set_excl' not found; skipping rule $idx"
+                warnings=1; idx=$((idx + 1)); continue
             fi
+            excl="-m set ! --match-set $dest_set_excl dst"
         fi
 
         # Compute fwmark
@@ -965,6 +1001,16 @@ tunnel_get_required_ipsets() {
     printf '%s\n' "${rules_array[@]}" | awk 'NF' | _parse_country_codes
     printf '%s\n' "${rules_array[@]}" | _parse_combo_sets
 }
+
+###################################################################################################
+# Allow sourcing for testing (guard at end so all functions are defined)
+###################################################################################################
+if [[ ${1:-} == "--source-only" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+# When run directly, show status
+tunnel_status
 ```
 
 **Step 4: Run tests**
@@ -1100,14 +1146,7 @@ _tproxy_resolve_exclude_set() {
 }
 
 ###################################################################################################
-# Allow sourcing for testing
-###################################################################################################
-if [[ ${1:-} == "--source-only" ]]; then
-    return 0 2>/dev/null || exit 0
-fi
-
-###################################################################################################
-# Internal functions
+# Internal functions (called by public functions, not on source)
 ###################################################################################################
 
 _tproxy_setup_routing() {
@@ -1275,19 +1314,20 @@ tproxy_status() {
 tproxy_apply() {
     log "TPROXY: applying..."
 
+    # Soft-fail: return 0 so vpn-director.sh doesn't abort under set -e
     if ! _tproxy_check_module; then
-        log -l WARN "TPROXY: xt_TPROXY unavailable; skipping"
-        return 1
+        log -l WARN "TPROXY: xt_TPROXY unavailable; skipping (soft-fail)"
+        return 0
     fi
 
-    # Check if required ipsets exist
+    # Check if required ipsets exist (soft-fail if missing)
     local -a exclude_sets_array
     read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
     for set_key in "${exclude_sets_array[@]}"; do
         [[ -n $set_key ]] || continue
         if ! _tproxy_resolve_exclude_set "$set_key" >/dev/null; then
-            log -l WARN "TPROXY: required ipset '$set_key' not found; exiting"
-            return 1
+            log -l WARN "TPROXY: required ipset '$set_key' not found; skipping (soft-fail)"
+            return 0
         fi
     done
 
@@ -1309,12 +1349,29 @@ tproxy_stop() {
 tproxy_get_required_ipsets() {
     printf '%s\n' ${XRAY_EXCLUDE_SETS:-} | xargs
 }
+
+###################################################################################################
+# Allow sourcing for testing (guard at end so all functions are defined)
+###################################################################################################
+if [[ ${1:-} == "--source-only" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+# When run directly, show status
+tproxy_status
 ```
 
 **Step 4: Run tests**
 
 Run: `npx bats test/unit/tproxy.bats`
 Expected: PASS
+
+**Note:** Unit tests for `_tproxy_check_module()` require mocks for `lsmod` and `modprobe`.
+Add to `test/mocks/lsmod`:
+```bash
+#!/bin/bash
+echo "xt_TPROXY    16384  1"
+```
 
 **Step 5: Commit**
 
@@ -1525,6 +1582,20 @@ cmd_status() {
 
 cmd_apply() {
     acquire_lock "vpn-director"
+
+    # Handle --dry-run: show plan without applying
+    if [[ $DRY_RUN -eq 1 ]]; then
+        log "DRY-RUN: would apply configuration"
+        log "DRY-RUN: tunnel ipsets needed: $(tunnel_get_required_ipsets)"
+        log "DRY-RUN: tproxy ipsets needed: $(tproxy_get_required_ipsets)"
+        return 0
+    fi
+
+    # Handle --force: pass to ipset module
+    [[ $FORCE -eq 1 ]] && export IPSET_FORCE_UPDATE=1
+
+    # Handle --quiet: reduce log level
+    [[ $QUIET -eq 1 ]] && export LOG_LEVEL=WARN
 
     local required_ipsets=""
 
@@ -1765,10 +1836,15 @@ esac
 
 **Step 4: Update profile.add**
 
-Add to `jffs/configs/profile.add`:
+Update `jffs/configs/profile.add`:
 
 ```bash
+# Remove old alias
+# alias ipt='/jffs/scripts/vpn-director/ipset_builder.sh -t'
+
+# Add new aliases
 alias vpd='/jffs/scripts/vpn-director/vpn-director.sh'
+alias ipt='vpd apply'  # Backward compatibility
 ```
 
 **Step 5: Commit**
@@ -1788,7 +1864,122 @@ EOF
 
 ---
 
-## Task 7: Remove old scripts
+## Task 7: Update all call sites before removing old scripts
+
+**Files to update:**
+- `install.sh` — lines 99, 102, 110, 152-154
+- `jffs/scripts/vpn-director/configure.sh` — lines 403-424, 449
+- `telegram-bot/internal/bot/wizard_handlers.go` — lines 487-502
+- `telegram-bot/internal/bot/handlers.go` — lines 39, 80, 93
+- `.claude/rules/*.md` — references to old scripts
+
+**Step 1: Update install.sh**
+
+Replace in `install.sh`:
+
+```bash
+# Old:
+"$SCRIPT_DIR/ipset_builder.sh" -t -x
+cru a update_ipsets "0 3 * * * $SCRIPT_DIR/ipset_builder.sh -u -t -x"
+"$SCRIPT_DIR/xray_tproxy.sh" stop
+
+# New:
+"$SCRIPT_DIR/vpn-director.sh" apply
+cru a vpn_director_update "0 3 * * * $SCRIPT_DIR/vpn-director.sh update"
+"$SCRIPT_DIR/vpn-director.sh" stop xray
+```
+
+Also update the files list (lines 152-154):
+```bash
+# Old:
+"jffs/scripts/vpn-director/ipset_builder.sh" \
+"jffs/scripts/vpn-director/tunnel_director.sh" \
+"jffs/scripts/vpn-director/xray_tproxy.sh" \
+
+# New:
+"jffs/scripts/vpn-director/vpn-director.sh" \
+```
+
+**Step 2: Update configure.sh**
+
+Replace in `jffs/scripts/vpn-director/configure.sh`:
+
+```bash
+# Old (lines 403-424):
+if [[ -x $JFFS_DIR/ipset_builder.sh ]]; then
+    "$JFFS_DIR/ipset_builder.sh" -c "$XRAY_EXCLUDE_SETS_LIST" || ...
+if [[ -x $JFFS_DIR/tunnel_director.sh ]]; then
+    "$JFFS_DIR/tunnel_director.sh" || ...
+if [[ -x $JFFS_DIR/xray_tproxy.sh ]]; then
+    "$JFFS_DIR/xray_tproxy.sh" || ...
+
+# New:
+if [[ -x $JFFS_DIR/vpn-director.sh ]]; then
+    "$JFFS_DIR/vpn-director.sh" apply || {
+        print_warning "vpn-director.sh apply failed"
+    }
+fi
+```
+
+Replace line 449:
+```bash
+# Old:
+printf "Check status with: /jffs/scripts/vpn-director/xray_tproxy.sh status\n"
+
+# New:
+printf "Check status with: /jffs/scripts/vpn-director/vpn-director.sh status\n"
+```
+
+**Step 3: Update telegram-bot handlers**
+
+Update `telegram-bot/internal/bot/wizard_handlers.go` (lines 487-502):
+
+```go
+// Old:
+result, err := shell.Exec(scriptsDir+"/ipset_builder.sh", "-t", "-x")
+result, err = shell.Exec(scriptsDir+"/xray_tproxy.sh", "restart")
+
+// New:
+result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "apply")
+result, err = shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
+```
+
+Update `telegram-bot/internal/bot/handlers.go`:
+
+```go
+// Old (line 39):
+result, err := shell.Exec(scriptsDir+"/xray_tproxy.sh", "status")
+// New:
+result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "status")
+
+// Old (line 80):
+result, err := shell.Exec(scriptsDir+"/xray_tproxy.sh", "restart")
+// New:
+result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
+
+// Old (line 93):
+result, err := shell.Exec(scriptsDir+"/xray_tproxy.sh", "stop")
+// New:
+result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "stop", "xray")
+```
+
+**Step 4: Commit**
+
+```bash
+git add -A
+git commit -m "$(cat <<'EOF'
+refactor: update all call sites to use vpn-director.sh
+
+- install.sh: use vpn-director.sh apply/update/stop
+- configure.sh: use vpn-director.sh apply
+- telegram-bot: update Go handlers to new CLI
+EOF
+)"
+```
+
+---
+
+## Task 8: Remove old scripts
 
 **Files:**
 - Delete: `jffs/scripts/vpn-director/ipset_builder.sh`
@@ -1800,8 +1991,8 @@ EOF
 
 ```bash
 grep -r "ipset_builder.sh\|tunnel_director.sh\|xray_tproxy.sh\|utils/shared.sh" \
-    --include="*.sh" --include="*.md" \
-    jffs/ opt/ test/ docs/ || echo "No references found"
+    --include="*.sh" --include="*.md" --include="*.go" \
+    jffs/ opt/ test/ docs/ telegram-bot/ || echo "No references found"
 ```
 
 **Step 2: Delete old files**
@@ -1830,7 +2021,7 @@ EOF
 
 ---
 
-## Task 8: Update tests
+## Task 9: Update tests
 
 **Files:**
 - Delete: `test/ipset_builder.bats`
@@ -1931,13 +2122,16 @@ EOF
 
 ---
 
-## Task 9: Update documentation
+## Task 10: Update documentation
 
 **Files:**
 - Modify: `CLAUDE.md`
+- Modify: `README.md`
 - Modify: `.claude/rules/ipset-builder.md`
 - Modify: `.claude/rules/tunnel-director.md`
 - Modify: `.claude/rules/xray-tproxy.md`
+- Modify: `.claude/rules/telegram-bot.md`
+- Modify: `.claude/rules/testing.md`
 
 **Step 1: Update CLAUDE.md**
 
@@ -2010,10 +2204,9 @@ EOF
 | 4 | Create lib/tproxy.sh | New module + unit tests |
 | 5 | Create vpn-director.sh | CLI + integration tests |
 | 6 | Update system hooks | firewall-start, wan-event, S99, profile |
-| 7 | Remove old scripts | ipset_builder, tunnel_director, xray_tproxy |
-| 8 | Update tests | Migrate to unit/integration structure |
-| 9 | Update documentation | CLAUDE.md, .claude/rules/* |
+| 7 | Update call sites | install.sh, configure.sh, telegram-bot/*.go |
+| 8 | Remove old scripts | ipset_builder, tunnel_director, xray_tproxy |
+| 9 | Update tests | Migrate to unit/integration structure |
+| 10 | Update documentation | CLAUDE.md, README.md, .claude/rules/* |
 
-**Total commits:** 9
-
-**Estimated time for implementation:** Varies by experience with codebase.
+**Total commits:** 10
