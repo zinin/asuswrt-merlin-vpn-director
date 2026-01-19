@@ -7,7 +7,7 @@ load '/usr/lib/bats/bats-assert/load.bash'
 # Project paths
 export PROJECT_ROOT="$BATS_TEST_DIRNAME/.."
 export SCRIPTS_DIR="$PROJECT_ROOT/jffs/scripts/vpn-director"
-export UTILS_DIR="$SCRIPTS_DIR/utils"
+export LIB_DIR="$SCRIPTS_DIR/lib"
 
 # Test mode - disables syslog, uses fixtures
 export TEST_MODE=1
@@ -31,19 +31,19 @@ teardown() {
 load_common() {
     # Set $0 to a fake script path for get_script_* functions
     export BASH_SOURCE_OVERRIDE="$SCRIPTS_DIR/test_script.sh"
-    source "$UTILS_DIR/common.sh"
+    source "$LIB_DIR/common.sh"
 }
 
 # Helper to source firewall.sh (requires common.sh first)
 load_firewall() {
     load_common
-    source "$UTILS_DIR/firewall.sh"
+    source "$LIB_DIR/firewall.sh"
 }
 
 # Helper to source config.sh
 load_config() {
     export VPD_CONFIG_FILE="$BATS_TEST_DIRNAME/fixtures/vpn-director.json"
-    source "$UTILS_DIR/config.sh"
+    source "$LIB_DIR/config.sh"
 }
 
 # Helper to source import_server_list.sh without running main

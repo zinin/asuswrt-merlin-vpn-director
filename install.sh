@@ -73,7 +73,7 @@ check_environment() {
 create_directories() {
     print_info "Creating directories..."
 
-    mkdir -p "$JFFS_DIR/vpn-director/utils"
+    mkdir -p "$JFFS_DIR/vpn-director/lib"
     mkdir -p "$XRAY_CONFIG_DIR"
     mkdir -p "/jffs/configs"
     mkdir -p "/opt/etc/init.d"
@@ -102,7 +102,7 @@ start() {
     cru a update_ipsets "0 3 * * * $SCRIPT_DIR/ipset_builder.sh -u -t -x"
 
     # Startup notification
-    "$SCRIPT_DIR/utils/send-email.sh" "Startup Notification" \
+    "$SCRIPT_DIR/lib/send-email.sh" "Startup Notification" \
         "I've just started up and got connected to the internet."
 }
 
@@ -155,11 +155,11 @@ download_scripts() {
         "jffs/scripts/vpn-director/configure.sh" \
         "jffs/scripts/vpn-director/import_server_list.sh" \
         "jffs/scripts/vpn-director/vpn-director.json.template" \
-        "jffs/scripts/vpn-director/utils/common.sh" \
-        "jffs/scripts/vpn-director/utils/firewall.sh" \
-        "jffs/scripts/vpn-director/utils/shared.sh" \
-        "jffs/scripts/vpn-director/utils/config.sh" \
-        "jffs/scripts/vpn-director/utils/send-email.sh" \
+        "jffs/scripts/vpn-director/lib/common.sh" \
+        "jffs/scripts/vpn-director/lib/firewall.sh" \
+        "jffs/scripts/vpn-director/lib/shared.sh" \
+        "jffs/scripts/vpn-director/lib/config.sh" \
+        "jffs/scripts/vpn-director/lib/send-email.sh" \
         "jffs/scripts/vpn-director/setup_telegram_bot.sh" \
         "jffs/scripts/firewall-start" \
         "jffs/scripts/wan-event" \

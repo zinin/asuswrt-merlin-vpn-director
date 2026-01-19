@@ -200,10 +200,10 @@ done
 ###################################################################################################
 # 0b. Load utils and shared variables
 ###################################################################################################
-. /jffs/scripts/vpn-director/utils/common.sh
-. /jffs/scripts/vpn-director/utils/firewall.sh
-. /jffs/scripts/vpn-director/utils/shared.sh
-. /jffs/scripts/vpn-director/utils/config.sh
+. /jffs/scripts/vpn-director/lib/common.sh
+. /jffs/scripts/vpn-director/lib/firewall.sh
+. /jffs/scripts/vpn-director/lib/shared.sh
+. /jffs/scripts/vpn-director/lib/config.sh
 
 acquire_lock  # avoid concurrent runs
 

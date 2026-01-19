@@ -126,14 +126,14 @@ fi
 ###################################################################################################
 # 0b. Load utils and shared variables
 ###################################################################################################
-# shellcheck source=utils/common.sh
-. /jffs/scripts/vpn-director/utils/common.sh
-# shellcheck source=utils/firewall.sh
-. /jffs/scripts/vpn-director/utils/firewall.sh
-# shellcheck source=utils/shared.sh
-. /jffs/scripts/vpn-director/utils/shared.sh
-# shellcheck source=utils/config.sh
-. /jffs/scripts/vpn-director/utils/config.sh
+# shellcheck source=lib/common.sh
+. /jffs/scripts/vpn-director/lib/common.sh
+# shellcheck source=lib/firewall.sh
+. /jffs/scripts/vpn-director/lib/firewall.sh
+# shellcheck source=lib/shared.sh
+. /jffs/scripts/vpn-director/lib/shared.sh
+# shellcheck source=lib/config.sh
+. /jffs/scripts/vpn-director/lib/config.sh
 
 ###################################################################################################
 # 0c. Script execution starts here - acquire lock and initialize variables

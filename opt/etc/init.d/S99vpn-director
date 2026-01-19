@@ -11,7 +11,7 @@ start() {
     cru a update_ipsets "0 3 * * * $SCRIPT_DIR/ipset_builder.sh -u -t -x"
 
     # Startup notification
-    "$SCRIPT_DIR/utils/send-email.sh" "Startup Notification" \
+    "$SCRIPT_DIR/lib/send-email.sh" "Startup Notification" \
         "I've just started up and got connected to the internet."
 }
 

@@ -7,7 +7,7 @@ load_tunnel_director() {
     load_common
     load_config
     # Also load shared.sh for derive_set_name (used by resolve_set_name)
-    source "$UTILS_DIR/shared.sh"
+    source "$LIB_DIR/shared.sh"
     export PATH="$BATS_TEST_DIRNAME/mocks:$PATH"
     source "$SCRIPTS_DIR/tunnel_director.sh" --source-only
 }
