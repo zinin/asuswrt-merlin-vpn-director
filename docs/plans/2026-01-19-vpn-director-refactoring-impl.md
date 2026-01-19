@@ -49,6 +49,16 @@ Update these files to use `lib/` instead of `utils/`:
 . /jffs/scripts/vpn-director/lib/config.sh
 ```
 
+`jffs/scripts/vpn-director/import_server_list.sh` line 18:
+```bash
+. "$SCRIPT_DIR/lib/common.sh"
+```
+
+`jffs/scripts/vpn-director/lib/send-email.sh` line 32 (after rename from utils/):
+```bash
+. /jffs/scripts/vpn-director/lib/common.sh
+```
+
 **Step 3: Update test_helper.bash**
 
 `test/test_helper.bash` line 11:
@@ -487,6 +497,8 @@ _build_combo_ipset() {
 ###################################################################################################
 
 ipset_status() {
+    _ipset_init
+
     echo "=== IPSet Status ==="
     echo ""
     echo "Loaded ipsets:"
@@ -496,7 +508,7 @@ ipset_status() {
     done
     echo ""
     echo "Cache directory: $_IPSET_DUMP_DIR"
-    if [[ -d $_IPSET_DUMP_DIR ]]; then
+    if [[ -d "$_IPSET_DUMP_DIR" ]]; then
         echo "Cached dumps:"
         ls -la "$_IPSET_DUMP_DIR"/*.dump 2>/dev/null | awk '{print "  " $9 " (" $5 " bytes, " $6 " " $7 ")"}' || echo "  (none)"
     fi
@@ -534,6 +546,7 @@ ipset_ensure() {
     done
 
     # Ensure country ipsets
+    local failed=0
     for cc in "${unique_countries[@]}"; do
         if [[ $force_update -eq 0 ]] && _ipset_exists "$cc"; then
             log -l DEBUG "IPSet '$cc' already loaded"
@@ -545,14 +558,23 @@ ipset_ensure() {
         fi
 
         _build_country_ipset "$cc" || {
-            log -l WARN "Failed to ensure ipset '$cc'"
+            log -l ERROR "Failed to build ipset '$cc' (no cache, download failed)"
+            failed=1
         }
     done
 
     # Ensure combo ipsets
     for combo in "${combos[@]}"; do
-        _build_combo_ipset "$combo"
+        _build_combo_ipset "$combo" || {
+            log -l WARN "Failed to build combo ipset '$combo'"
+        }
     done
+
+    # Return error if any critical ipset failed (per design: abort apply for dependent component)
+    if [[ $failed -eq 1 ]]; then
+        log -l ERROR "ipset_ensure: some ipsets failed to load"
+        return 1
+    fi
 }
 
 ipset_update() {
@@ -765,11 +787,13 @@ _tunnel_get_prerouting_base_pos() {
 ###################################################################################################
 _tunnel_init() {
     # Build valid tables list
-    _tunnel_valid_tables="$(
-        awk '$0!~/^#/ && $2 ~ /^wgc[0-9]+$/ { print $2 }' /etc/iproute2/rt_tables 2>/dev/null | sort
-        awk '$0!~/^#/ && $2 ~ /^ovpnc[0-9]+$/ { print $2 }' /etc/iproute2/rt_tables 2>/dev/null | sort
-        printf '%s\n' main
-    )" | xargs
+    _tunnel_valid_tables=$(
+        {
+            awk '$0!~/^#/ && $2 ~ /^wgc[0-9]+$/ { print $2 }' /etc/iproute2/rt_tables 2>/dev/null
+            awk '$0!~/^#/ && $2 ~ /^ovpnc[0-9]+$/ { print $2 }' /etc/iproute2/rt_tables 2>/dev/null
+            printf '%s\n' main
+        } | sort -u | xargs
+    )
 
     # Compute mark helpers
     _tunnel_mark_mask_val=$((TUN_DIR_MARK_MASK))
@@ -832,13 +856,25 @@ tunnel_apply() {
         build_needed=1
     else
         # Hash matches, but verify no drift (chains/rules may have been cleared by firewall restart)
-        local cfg_rows ch_rows pr_rows
+        local cfg_rows ch_rows pr_rows ip_rows
         cfg_rows=$(awk 'NF { c++ } END { print c + 0 }' "$tun_dir_rules")
         ch_rows=$(iptables -t mangle -S 2>/dev/null | awk -v pre="$TUN_DIR_CHAIN_PREFIX" '$1=="-N" && $2~("^"pre"[0-9]+$") { c++ } END { print c + 0 }')
         pr_rows=$(iptables -t mangle -S PREROUTING 2>/dev/null | awk -v pre="$TUN_DIR_CHAIN_PREFIX" '$0 ~ ("-j " pre "[0-9]+$") { c++ } END { print c + 0 }')
 
-        if [[ $cfg_rows -ne $ch_rows ]] || [[ $cfg_rows -ne $pr_rows ]]; then
-            log "Tunnel Director: drift detected (config=$cfg_rows, chains=$ch_rows, jumps=$pr_rows)"
+        # Count ip rules with our fwmark pattern (pref range TUN_DIR_PREF_BASE to TUN_DIR_PREF_BASE+cfg_rows)
+        local tun_dir_prefs_file ip_rules_prefs_file
+        tun_dir_prefs_file=$(tmp_file)
+        ip_rules_prefs_file=$(tmp_file)
+
+        awk -v base="$TUN_DIR_PREF_BASE" -v cnt="$cfg_rows" \
+            'BEGIN { for (i=0; i<cnt; i++) print base+i }' > "$tun_dir_prefs_file"
+        ip rule 2>/dev/null | awk -F: '/^[0-9]+:/ { print $1 }' > "$ip_rules_prefs_file"
+
+        ip_rows=$(awk 'NR==FNR { have[$1]=1; next } have[$1] { c++ } END { print c+0 }' \
+            "$ip_rules_prefs_file" "$tun_dir_prefs_file")
+
+        if [[ $cfg_rows -ne $ch_rows ]] || [[ $cfg_rows -ne $pr_rows ]] || [[ $cfg_rows -ne $ip_rows ]]; then
+            log "Tunnel Director: drift detected (config=$cfg_rows, chains=$ch_rows, jumps=$pr_rows, ip_rules=$ip_rows)"
             build_needed=1
         fi
     fi
@@ -893,6 +929,23 @@ tunnel_apply() {
         case "$src" in
             *%*) src_iif="${src#*%}"; src="${src%%%*}" ;;
         esac
+
+        # Validate interface exists
+        if [[ -z $src_iif ]]; then
+            log -l WARN "Tunnel Director: empty interface after '%'; skipping rule $idx"
+            warnings=1; idx=$((idx + 1)); continue
+        fi
+        if [[ ! -d /sys/class/net/$src_iif ]]; then
+            log -l WARN "Tunnel Director: interface '$src_iif' not found; skipping rule $idx"
+            warnings=1; idx=$((idx + 1)); continue
+        fi
+
+        # Validate src is a LAN/private CIDR
+        local src_ip="${src%%/*}"
+        if ! is_lan_ip "$src_ip"; then
+            log -l WARN "Tunnel Director: src '$src' is not RFC1918 subnet; skipping rule $idx"
+            warnings=1; idx=$((idx + 1)); continue
+        fi
 
         # Validate set
         if [[ -z $set ]]; then
@@ -1443,6 +1496,12 @@ setup() {
     assert_success
     assert_output --partial "Usage:"
 }
+
+# TODO: Add more integration tests for:
+# - apply/restart/update commands with mocked modules
+# - Error handling (missing xt_TPROXY, failed ipset downloads)
+# - Soft-fail scenarios for tproxy when module unavailable
+# - Order of module calls (ipset before tunnel before tproxy)
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -1595,7 +1654,8 @@ cmd_apply() {
     [[ $FORCE -eq 1 ]] && export IPSET_FORCE_UPDATE=1
 
     # Handle --quiet: reduce log level
-    [[ $QUIET -eq 1 ]] && export LOG_LEVEL=WARN
+    # Note: LOG_LEVEL filtering not yet implemented in log() - this is a placeholder
+    # [[ $QUIET -eq 1 ]] && export LOG_LEVEL=WARN
 
     local required_ipsets=""
 
@@ -1895,9 +1955,21 @@ Also update the files list (lines 152-154):
 "jffs/scripts/vpn-director/ipset_builder.sh" \
 "jffs/scripts/vpn-director/tunnel_director.sh" \
 "jffs/scripts/vpn-director/xray_tproxy.sh" \
+"jffs/scripts/vpn-director/utils/common.sh" \
+"jffs/scripts/vpn-director/utils/firewall.sh" \
+"jffs/scripts/vpn-director/utils/shared.sh" \
+"jffs/scripts/vpn-director/utils/config.sh" \
+"jffs/scripts/vpn-director/utils/send-email.sh" \
 
 # New:
 "jffs/scripts/vpn-director/vpn-director.sh" \
+"jffs/scripts/vpn-director/lib/common.sh" \
+"jffs/scripts/vpn-director/lib/firewall.sh" \
+"jffs/scripts/vpn-director/lib/config.sh" \
+"jffs/scripts/vpn-director/lib/ipset.sh" \
+"jffs/scripts/vpn-director/lib/tunnel.sh" \
+"jffs/scripts/vpn-director/lib/tproxy.sh" \
+"jffs/scripts/vpn-director/lib/send-email.sh" \
 ```
 
 **Step 2: Update configure.sh**
