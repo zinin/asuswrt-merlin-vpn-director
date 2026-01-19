@@ -209,8 +209,9 @@ Create `jffs/scripts/vpn-director/lib/ipset.sh`:
 #   ipset_ensure <sets...>    - Ensure ipsets exist (from cache or download)
 #   ipset_update <sets...>    - Force download fresh data from IPdeny
 #   ipset_cleanup             - Remove ipsets no longer needed
-#   ipset_get_required_tunnel - Get ipsets needed for Tunnel Director rules
-#   ipset_get_required_tproxy - Get ipsets needed for Xray TPROXY rules
+#
+# Note: This module is agnostic to tunnel/tproxy. The CLI orchestrator (vpn-director.sh)
+#       gets required ipsets from tunnel_get_required_ipsets() and tproxy_get_required_ipsets().
 ###################################################################################################
 
 # shellcheck disable=SC2086
@@ -581,21 +582,6 @@ ipset_update() {
     IPSET_FORCE_UPDATE=1 ipset_ensure "$@"
 }
 
-ipset_get_required_tunnel() {
-    local -a rules_array
-    read -ra rules_array <<< "${TUN_DIR_RULES:-}"
-
-    local countries combos
-    countries=$(printf '%s\n' "${rules_array[@]}" | awk 'NF' | _parse_country_codes)
-    combos=$(printf '%s\n' "${rules_array[@]}" | _parse_combo_sets)
-
-    printf '%s\n' $countries $combos | sort -u | xargs
-}
-
-ipset_get_required_tproxy() {
-    printf '%s\n' ${XRAY_EXCLUDE_SETS:-} | xargs
-}
-
 ipset_cleanup() {
     # TODO: implement cleanup of unused ipsets
     log "ipset_cleanup: not implemented yet"
@@ -810,6 +796,8 @@ _tunnel_init() {
 ###################################################################################################
 
 tunnel_status() {
+    _tunnel_init
+
     echo "=== Tunnel Director Status ==="
     echo ""
 
@@ -920,8 +908,8 @@ tunnel_apply() {
         # Check fwmark slot limit before processing
         local slot=$((idx + 1))
         if [[ $slot -gt $_tunnel_mark_field_max ]]; then
-            log -l ERROR "Tunnel Director: rule $idx exceeds fwmark capacity ($_tunnel_mark_field_max max)"
-            warnings=1; break
+            log -l WARN "Tunnel Director: rule $idx exceeds fwmark capacity ($_tunnel_mark_field_max max); skipping"
+            warnings=1; idx=$((idx + 1)); continue
         fi
 
         # Parse interface from src
@@ -988,12 +976,17 @@ tunnel_apply() {
         # Create chain
         create_fw_chain -q -f mangle "$chain"
 
-        # Add source exclusions
+        # Add source exclusions (validate each is private RFC1918)
         if [[ -n $src_excl ]]; then
             local -a excl_array
             IFS=',' read -ra excl_array <<< "$src_excl"
             for ex in "${excl_array[@]}"; do
                 [[ -n $ex ]] || continue
+                local ex_ip="${ex%%/*}"
+                if ! is_lan_ip "$ex_ip"; then
+                    log -l WARN "Tunnel Director: src_excl='$ex' is not RFC1918; skipping"
+                    warnings=1; continue
+                fi
                 ensure_fw_rule -q mangle "$chain" -s "$ex" -j RETURN
             done
         fi
@@ -1497,11 +1490,119 @@ setup() {
     assert_output --partial "Usage:"
 }
 
-# TODO: Add more integration tests for:
-# - apply/restart/update commands with mocked modules
-# - Error handling (missing xt_TPROXY, failed ipset downloads)
-# - Soft-fail scenarios for tproxy when module unavailable
-# - Order of module calls (ipset before tunnel before tproxy)
+# ============================================================================
+# apply/restart/update commands
+# ============================================================================
+
+@test "vpn-director: apply calls modules in correct order" {
+    # Override modules to track call order
+    _call_order=""
+    ipset_ensure() { _call_order="${_call_order}ipset,"; }
+    tunnel_apply() { _call_order="${_call_order}tunnel,"; }
+    tproxy_apply() { _call_order="${_call_order}tproxy,"; }
+    tunnel_get_required_ipsets() { echo "ru"; }
+    tproxy_get_required_ipsets() { echo "ua"; }
+    _ipset_boot_wait() { :; }
+    acquire_lock() { :; }
+
+    source "$SCRIPTS_DIR/vpn-director.sh" --source-only
+    cmd_apply
+
+    # Verify order: ipset -> tunnel -> tproxy
+    [[ "$_call_order" == "ipset,tunnel,tproxy," ]]
+}
+
+@test "vpn-director: apply --dry-run does not call apply functions" {
+    local applied=0
+    tunnel_apply() { applied=1; }
+    tproxy_apply() { applied=1; }
+    tunnel_get_required_ipsets() { echo "ru"; }
+    tproxy_get_required_ipsets() { echo ""; }
+    _ipset_boot_wait() { :; }
+    acquire_lock() { :; }
+
+    run "$SCRIPTS_DIR/vpn-director.sh" apply --dry-run
+    assert_success
+    assert_output --partial "DRY-RUN"
+    [[ $applied -eq 0 ]]
+}
+
+@test "vpn-director: restart stops before apply" {
+    _call_order=""
+    tunnel_stop() { _call_order="${_call_order}stop,"; }
+    tproxy_stop() { _call_order="${_call_order}stop,"; }
+    tunnel_apply() { _call_order="${_call_order}apply,"; }
+    tproxy_apply() { _call_order="${_call_order}apply,"; }
+    tunnel_get_required_ipsets() { echo ""; }
+    tproxy_get_required_ipsets() { echo ""; }
+    ipset_ensure() { :; }
+    _ipset_boot_wait() { :; }
+    acquire_lock() { :; }
+
+    source "$SCRIPTS_DIR/vpn-director.sh" --source-only
+    cmd_restart
+
+    # Stop should come before apply
+    [[ "$_call_order" == "stop,stop,apply,apply," ]]
+}
+
+# ============================================================================
+# Error handling and soft-fail scenarios
+# ============================================================================
+
+@test "vpn-director: tproxy soft-fails when xt_TPROXY unavailable" {
+    # Mock lsmod to not show xt_TPROXY
+    lsmod() { echo ""; }
+    modprobe() { return 1; }
+
+    load_tproxy_module
+    run tproxy_apply
+    assert_success  # Soft-fail returns 0
+    assert_output --partial "soft-fail"
+}
+
+@test "vpn-director: apply continues when tproxy soft-fails" {
+    _tunnel_applied=0
+    tunnel_apply() { _tunnel_applied=1; }
+    tproxy_apply() { log -l WARN "soft-fail"; return 0; }
+    tunnel_get_required_ipsets() { echo ""; }
+    tproxy_get_required_ipsets() { echo ""; }
+    ipset_ensure() { :; }
+    _ipset_boot_wait() { :; }
+    acquire_lock() { :; }
+
+    source "$SCRIPTS_DIR/vpn-director.sh" --source-only
+    cmd_apply
+
+    [[ $_tunnel_applied -eq 1 ]]
+}
+
+@test "vpn-director: ipset_ensure fails when download fails and no cache" {
+    load_ipset_module
+    # Mock curl to fail
+    curl() { return 1; }
+    # Ensure no cache exists
+    rm -f "$_IPSET_DUMP_DIR/xx-ipdeny.dump" 2>/dev/null || true
+
+    run ipset_ensure "xx"
+    assert_failure
+}
+
+# ============================================================================
+# Option parsing (both positions)
+# ============================================================================
+
+@test "vpn-director: options work before command" {
+    run "$SCRIPTS_DIR/vpn-director.sh" --force apply --dry-run
+    assert_success
+    assert_output --partial "DRY-RUN"
+}
+
+@test "vpn-director: options work after command" {
+    run "$SCRIPTS_DIR/vpn-director.sh" apply --dry-run --force
+    assert_success
+    assert_output --partial "DRY-RUN"
+}
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -1538,26 +1639,45 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Parse global options
+# Parse options (supports both pre-command and post-command placement)
+# vpn-director --force apply     # works
+# vpn-director apply --force     # works
+# vpn-director apply tunnel -v   # works
 FORCE=0
 QUIET=0
 VERBOSE=0
 DRY_RUN=0
+COMMAND=""
+COMPONENT=""
 
-while [[ $# -gt 0 ]]; do
+parse_option() {
     case $1 in
-        -f|--force)   FORCE=1; shift ;;
-        -q|--quiet)   QUIET=1; shift ;;
-        -v|--verbose) VERBOSE=1; export DEBUG=1; shift ;;
-        --dry-run)    DRY_RUN=1; shift ;;
-        -h|--help)    COMMAND="help"; shift ;;
+        -f|--force)   FORCE=1; return 0 ;;
+        -q|--quiet)   QUIET=1; return 0 ;;
+        -v|--verbose) VERBOSE=1; export DEBUG=1; return 0 ;;
+        --dry-run)    DRY_RUN=1; return 0 ;;
+        -h|--help)    COMMAND="help"; return 0 ;;
         -*)           echo "Unknown option: $1" >&2; exit 1 ;;
-        *)            break ;;
+        *)            return 1 ;;
     esac
+}
+
+# Phase 1: Parse pre-command options and extract command/component
+while [[ $# -gt 0 ]]; do
+    if parse_option "$1"; then
+        shift
+    elif [[ -z $COMMAND ]]; then
+        COMMAND="$1"; shift
+    elif [[ -z $COMPONENT ]]; then
+        COMPONENT="$1"; shift
+    else
+        # Extra positional argument
+        echo "Unexpected argument: $1" >&2; exit 1
+    fi
 done
 
-COMMAND="${1:-help}"
-COMPONENT="${2:-}"
+# Phase 2: Default command
+COMMAND="${COMMAND:-help}"
 
 # Debug mode
 if [[ $VERBOSE -eq 1 ]]; then
@@ -1641,6 +1761,9 @@ cmd_status() {
 
 cmd_apply() {
     acquire_lock "vpn-director"
+
+    # Wait for network if system just booted (before any downloads)
+    _ipset_boot_wait
 
     # Handle --dry-run: show plan without applying
     if [[ $DRY_RUN -eq 1 ]]; then
@@ -1737,6 +1860,9 @@ cmd_restart() {
 
 cmd_update() {
     acquire_lock "vpn-director"
+
+    # Wait for network if system just booted (before any downloads)
+    _ipset_boot_wait
 
     local required_ipsets
     required_ipsets="$(tunnel_get_required_ipsets) $(tproxy_get_required_ipsets)"
@@ -2169,6 +2295,13 @@ load_tproxy_module() {
     source "$LIB_DIR/ipset.sh" --source-only
     source "$LIB_DIR/firewall.sh"
     source "$LIB_DIR/tproxy.sh" --source-only
+}
+
+# Helper to source import_server_list.sh without running main
+load_import_server_list() {
+    load_common
+    export IMPORT_TEST_MODE=1
+    source "$SCRIPTS_DIR/import_server_list.sh"
 }
 ```
 
