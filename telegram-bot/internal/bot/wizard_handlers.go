@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -142,16 +143,34 @@ func (b *Bot) sendServerSelection(chatID int64, _ *wizard.State) {
 		return
 	}
 
+	cols := getServerGridColumns(len(servers))
+	// Max button text length depends on columns (Telegram limits)
+	maxNameLen := 30
+	if cols == 2 {
+		maxNameLen = 20
+	} else if cols == 3 {
+		maxNameLen = 14
+	}
+
 	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
 	for i, s := range servers {
-		btn := tgbotapi.NewInlineKeyboardButtonData(s.Name, fmt.Sprintf("server:%d", i))
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+		btnText := fmt.Sprintf("%d. %s", i+1, truncateServerName(s.Name, maxNameLen))
+		btn := tgbotapi.NewInlineKeyboardButtonData(btnText, fmt.Sprintf("server:%d", i))
+		row = append(row, btn)
+		if len(row) == cols {
+			rows = append(rows, row)
+			row = nil
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("Cancel", "cancel"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, "Step 1/4: Select Xray server")
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Step 1/4: Select Xray server (%d available)", len(servers)))
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send server selection: %v", err)
@@ -166,13 +185,10 @@ func (b *Bot) sendExclusionsSelection(chatID int64, state *wizard.State) {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	var row []tgbotapi.InlineKeyboardButton
 	for _, ex := range defaultExclusions {
-		mark := "  "
-		if stateExclusions[ex] {
-			mark = "v "
-		}
-		btn := tgbotapi.NewInlineKeyboardButtonData(mark+ex, "excl:"+ex)
+		btnText := formatExclusionButton(ex, stateExclusions[ex])
+		btn := tgbotapi.NewInlineKeyboardButtonData(btnText, "excl:"+ex)
 		row = append(row, btn)
-		if len(row) == 4 {
+		if len(row) == 2 {
 			rows = append(rows, row)
 			row = nil
 		}
@@ -192,9 +208,12 @@ func (b *Bot) sendExclusionsSelection(chatID int64, state *wizard.State) {
 			selected = append(selected, k)
 		}
 	}
+	sort.Strings(selected)
 	text := "Step 2/4: Exclude from proxy\n"
 	if len(selected) > 0 {
 		text += fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))
+	} else {
+		text += "Selected: (none)"
 	}
 
 	msg := tgbotapi.NewMessage(chatID, text)
@@ -211,13 +230,10 @@ func (b *Bot) updateExclusionsMessage(msg *tgbotapi.Message, state *wizard.State
 	var rows [][]tgbotapi.InlineKeyboardButton
 	var row []tgbotapi.InlineKeyboardButton
 	for _, ex := range defaultExclusions {
-		mark := "  "
-		if stateExclusions[ex] {
-			mark = "v "
-		}
-		btn := tgbotapi.NewInlineKeyboardButtonData(mark+ex, "excl:"+ex)
+		btnText := formatExclusionButton(ex, stateExclusions[ex])
+		btn := tgbotapi.NewInlineKeyboardButtonData(btnText, "excl:"+ex)
 		row = append(row, btn)
-		if len(row) == 4 {
+		if len(row) == 2 {
 			rows = append(rows, row)
 			row = nil
 		}
@@ -236,9 +252,12 @@ func (b *Bot) updateExclusionsMessage(msg *tgbotapi.Message, state *wizard.State
 			selected = append(selected, k)
 		}
 	}
+	sort.Strings(selected)
 	text := "Step 2/4: Exclude from proxy\n"
 	if len(selected) > 0 {
 		text += fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))
+	} else {
+		text += "Selected: (none)"
 	}
 
 	edit := tgbotapi.NewEditMessageTextAndMarkup(
@@ -440,11 +459,16 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 		xrayExclusions = []string{"ru"}
 	}
 
-	// Server IPs
+	// Server IPs (unique and sorted, like jq '[.[].ip] | unique')
+	seen := make(map[string]bool)
 	var serverIPs []string
 	for _, s := range servers {
-		serverIPs = append(serverIPs, s.IP)
+		if !seen[s.IP] {
+			seen[s.IP] = true
+			serverIPs = append(serverIPs, s.IP)
+		}
 	}
+	sort.Strings(serverIPs)
 
 	vpnCfg.Xray.Clients = xrayClients
 	vpnCfg.Xray.ExcludeSets = xrayExclusions
@@ -536,4 +560,44 @@ func isValidLANIP(ip string) bool {
 		return second >= 16 && second <= 31
 	}
 	return false
+}
+
+// getServerGridColumns returns number of columns based on server count
+func getServerGridColumns(count int) int {
+	switch {
+	case count <= 5:
+		return 1
+	case count <= 10:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// truncateServerName truncates name to maxLen, adding "..." if truncated
+// Works with bytes (not runes) - safe for ASCII server names
+func truncateServerName(name string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(name) <= maxLen {
+		return name
+	}
+	if maxLen <= 3 {
+		return name[:maxLen]
+	}
+	return name[:maxLen-3] + "..."
+}
+
+// formatExclusionButton formats exclusion button text with emoji and country name
+func formatExclusionButton(code string, selected bool) string {
+	mark := "🔲"
+	if selected {
+		mark = "✅"
+	}
+	name := code
+	if n, ok := wizard.CountryNames[code]; ok {
+		name = n
+	}
+	return fmt.Sprintf("%s %s %s", mark, code, name)
 }

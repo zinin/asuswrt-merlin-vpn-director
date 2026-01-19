@@ -43,6 +43,34 @@ func TestParseURI_URLEncodedName(t *testing.T) {
 	}
 }
 
+func TestParseURI_NameWithEmojiFlag(t *testing.T) {
+	// URI with emoji flag in name (like BlancVPN subscription)
+	uri := "vless://uuid@server.com:443#%F0%9F%87%B7%F0%9F%87%BA%20%D0%A0%D0%BE%D1%81%D1%81%D0%B8%D1%8F%2C%20%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0"
+
+	server, err := ParseURI(uri)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should strip emoji flag and keep only text
+	if server.Name != "Россия, Москва" {
+		t.Errorf("expected Name 'Россия, Москва', got '%s'", server.Name)
+	}
+}
+
+func TestParseURI_NameWithMultipleEmojis(t *testing.T) {
+	uri := "vless://uuid@server.com:443#🇺🇸%20USA,%20New%20York%20🏙️"
+
+	server, err := ParseURI(uri)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if server.Name != "USA, New York" {
+		t.Errorf("expected Name 'USA, New York', got '%s'", server.Name)
+	}
+}
+
 func TestParseURI_NoName(t *testing.T) {
 	uri := "vless://uuid@server.example.com:443"
 

@@ -7,7 +7,26 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 )
+
+// cleanName removes emoji flags and keeps only allowed characters:
+// letters (latin + cyrillic), digits, spaces, and basic punctuation
+func cleanName(s string) string {
+	var result strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			unicode.Is(unicode.Cyrillic, r),
+			r == ' ', r == '.', r == ',', r == ';', r == ':',
+			r == '!', r == '?', r == '(', r == ')', r == '-':
+			result.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(result.String())
+}
 
 type Server struct {
 	Address string `json:"address"`
@@ -28,6 +47,7 @@ func ParseURI(uri string) (*Server, error) {
 	name := ""
 	if idx := strings.LastIndex(rest, "#"); idx != -1 {
 		name, _ = url.QueryUnescape(rest[idx+1:])
+		name = cleanName(name)
 		rest = rest[:idx]
 	}
 
