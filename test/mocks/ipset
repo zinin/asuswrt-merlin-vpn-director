@@ -1,21 +1,46 @@
 #!/bin/bash
 echo "ipset $*" >> /tmp/bats_ipset_calls.log
+
+# Helper function to check if ipset exists
+ipset_name_exists() {
+    case "$1" in
+        ru|us|ca|XRAY_CLIENTS|XRAY_SERVERS|us_ca) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 case "$1" in
     list)
-        case "$2" in
-            -n) echo "$3" ;;  # just echo the name back
-            ru|us|ca)
-                echo "Name: $2"
-                echo "Type: hash:net"
-                echo "Number of entries: 1000"
-                ;;
-            XRAY_CLIENTS|XRAY_SERVERS)
-                echo "Name: $2"
-                echo "Type: hash:net"
-                echo "Number of entries: 5"
-                ;;
-            *) exit 1 ;;  # ipset doesn't exist
-        esac
+        # Handle -n flag for name-only listing
+        if [ "$2" = "-n" ]; then
+            name="$3"
+            if ipset_name_exists "$name"; then
+                echo "$name"
+                exit 0
+            else
+                exit 1
+            fi
+        else
+            name="$2"
+            case "$name" in
+                ru|us|ca)
+                    echo "Name: $name"
+                    echo "Type: hash:net"
+                    echo "Number of entries: 1000"
+                    ;;
+                XRAY_CLIENTS|XRAY_SERVERS)
+                    echo "Name: $name"
+                    echo "Type: hash:net"
+                    echo "Number of entries: 5"
+                    ;;
+                us_ca)
+                    echo "Name: $name"
+                    echo "Type: list:set"
+                    echo "Number of entries: 2"
+                    ;;
+                *) exit 1 ;;  # ipset doesn't exist
+            esac
+        fi
         ;;
     create|add|flush|destroy|save|restore) exit 0 ;;
     *) exit 0 ;;

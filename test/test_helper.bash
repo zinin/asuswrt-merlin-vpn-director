@@ -4,8 +4,21 @@
 load '/usr/lib/bats/bats-support/load.bash'
 load '/usr/lib/bats/bats-assert/load.bash'
 
-# Project paths
-export PROJECT_ROOT="$BATS_TEST_DIRNAME/.."
+# Project paths - find test/ directory regardless of nesting depth
+_find_test_root() {
+    local dir="$BATS_TEST_DIRNAME"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/test_helper.bash" ]]; then
+            printf '%s' "$dir"
+            return
+        fi
+        dir="$(dirname "$dir")"
+    done
+    # Fallback to BATS_TEST_DIRNAME if not found
+    printf '%s' "$BATS_TEST_DIRNAME"
+}
+export TEST_ROOT="$(_find_test_root)"
+export PROJECT_ROOT="$TEST_ROOT/.."
 export SCRIPTS_DIR="$PROJECT_ROOT/jffs/scripts/vpn-director"
 export LIB_DIR="$SCRIPTS_DIR/lib"
 
@@ -15,8 +28,8 @@ export LOG_FILE="/tmp/bats_test_vpn_director.log"
 
 # Override system paths for mocks
 setup() {
-    export PATH="$BATS_TEST_DIRNAME/mocks:$PATH"
-    export HOSTS_FILE="$BATS_TEST_DIRNAME/fixtures/hosts"
+    export PATH="$TEST_ROOT/mocks:$PATH"
+    export HOSTS_FILE="$TEST_ROOT/fixtures/hosts"
 
     # Clean log file
     : > "$LOG_FILE"
@@ -24,7 +37,7 @@ setup() {
 
 teardown() {
     # Cleanup temp files if any
-    rm -f /tmp/bats_test_*
+    rm -rf /tmp/bats_test_*
 }
 
 # Helper to source common.sh with mocks
@@ -42,7 +55,7 @@ load_firewall() {
 
 # Helper to source config.sh
 load_config() {
-    export VPD_CONFIG_FILE="$BATS_TEST_DIRNAME/fixtures/vpn-director.json"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director.json"
     source "$LIB_DIR/config.sh"
 }
 
