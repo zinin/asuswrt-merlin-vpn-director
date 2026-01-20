@@ -53,6 +53,7 @@ After installation:
 - `opkg install openssl-util` — for email notifications
 - `opkg install jq` — for Telegram bot setup script
 - `opkg install monit` — for automatic Xray restart on crash (see [Process Monitoring](#process-monitoring))
+- `opkg install coreutils-tr` — fixes buggy `tr` command (stock busybox `tr` corrupts characters with certain locales)
 
 ## Manual Configuration
 

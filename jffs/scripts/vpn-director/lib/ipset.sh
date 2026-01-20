@@ -190,10 +190,11 @@ _is_valid_country_code() {
 # -------------------------------------------------------------------------------------------------
 _normalize_spec() {
     local raw="$1" normalized="" token lc_token
-    local -a tokens result_tokens
+    local -a tokens=() result_tokens=()
 
     # Remove leading/trailing whitespace and convert to lowercase
-    raw=$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # Note: use 'A-Z' 'a-z' instead of '[:upper:]' '[:lower:]' due to tr bug on some routers
+    raw=$(printf '%s' "$raw" | tr 'A-Z' 'a-z' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
     # Empty after trim?
     if [[ -z $raw ]]; then

@@ -64,3 +64,45 @@ Hash files in `/tmp/` detect config changes; scripts only reapply if changed.
 - Use `${array[@]}` for iterating arrays
 - Use `[[ $var =~ regex ]]` for regex matching instead of grep
 - Debug mode: `DEBUG=1` enables `set -x` with PS4 showing file:line:function
+
+## Known Pitfalls
+
+### `tr` with POSIX character classes breaks on router
+
+**Problem**: `tr '[:upper:]' '[:lower:]'` corrupts certain characters on Asuswrt-Merlin routers with Entware.
+
+Example: letter `u` (0x75) becomes `l` (0x6c):
+```bash
+echo "ru" | tr '[:upper:]' '[:lower:]'
+# Expected: ru
+# Actual:   rl
+```
+
+This is a bug in glibc/busybox `tr` with certain locale settings (`LC_ALL=en_US.UTF-8`). Setting `LC_ALL=C` does not fix it.
+
+**Solution**: Always use explicit ASCII ranges instead of POSIX character classes:
+```bash
+# BAD - breaks on router
+tr '[:upper:]' '[:lower:]'
+
+# GOOD - works everywhere
+tr 'A-Z' 'a-z'
+```
+
+**Rule**: Never use `[:upper:]` / `[:lower:]` in shell scripts for this project. Always use `A-Z` / `a-z`.
+
+**Alternative fix**: Install `opkg install coreutils-tr` which provides a working `/opt/bin/tr`. After installation and `hash -r`, the correct `tr` will be used. However, code should still use `A-Z` / `a-z` for compatibility with systems without coreutils.
+
+### Uninitialized arrays with `set -u`
+
+**Problem**: With `set -u` (nounset), accessing uninitialized array length fails:
+```bash
+local -a my_array
+echo ${#my_array[@]}  # Error: my_array: unbound variable
+```
+
+**Solution**: Always initialize arrays:
+```bash
+local -a my_array=()
+echo ${#my_array[@]}  # Works: outputs 0
+```

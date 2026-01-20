@@ -78,7 +78,7 @@ See `.claude/rules/` for detailed docs:
 - `tunnel-director.md` — rule format, chain architecture, fwmark layout
 - `ipset-builder.md` — IPdeny sources, dump/restore, combo sets
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe
-- `shell-conventions.md` — utilities from lib/common.sh, lib/firewall.sh
+- `shell-conventions.md` — utilities from lib/common.sh, lib/firewall.sh, **known pitfalls**
 - `testing.md` — Bats framework, mocks, fixtures
 - `telegram-bot.md` — Go bot architecture, commands, wizard flow
 - `entware-init.md` — Entware init system (rc.unslung, rc.func, S* scripts)
