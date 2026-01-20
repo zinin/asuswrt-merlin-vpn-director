@@ -1,0 +1,13 @@
+# Reserved routing tables
+#
+255     local
+254     main
+253     default
+0       unspec
+#
+# Custom tables for VPN
+#
+111     wgc1
+112     wgc2
+121     ovpnc1
+122     ovpnc2

@@ -30,9 +30,14 @@ export LOG_FILE="/tmp/bats_test_vpn_director.log"
 setup() {
     export PATH="$TEST_ROOT/mocks:$PATH"
     export HOSTS_FILE="$TEST_ROOT/fixtures/hosts"
+    export RT_TABLES_FILE="$TEST_ROOT/fixtures/rt_tables"
 
     # Clean log file
     : > "$LOG_FILE"
+
+    # Create a mock /etc/iproute2/rt_tables symlink for tests
+    mkdir -p /tmp/bats_etc_iproute2
+    ln -sf "$TEST_ROOT/fixtures/rt_tables" /tmp/bats_etc_iproute2/rt_tables
 }
 
 teardown() {
