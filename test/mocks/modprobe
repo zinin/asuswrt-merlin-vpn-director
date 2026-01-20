@@ -1,0 +1,4 @@
+#!/bin/bash
+# Mock modprobe - log call and succeed
+echo "modprobe $*" >> /tmp/bats_modprobe_calls.log 2>/dev/null || true
+exit 0

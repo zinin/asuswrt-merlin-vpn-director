@@ -1,0 +1,4 @@
+#!/bin/bash
+# Mock lsmod - returns xt_TPROXY as loaded
+echo "xt_TPROXY              16384  1"
+echo "nf_tproxy_ipv4         16384  1 xt_TPROXY"

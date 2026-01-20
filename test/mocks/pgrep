@@ -1,0 +1,11 @@
+#!/bin/bash
+# Mock pgrep - simulate xray running
+case "$*" in
+    *xray*)
+        echo "12345 xray run -confdir /opt/etc/xray"
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
