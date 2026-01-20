@@ -64,6 +64,31 @@ load_config() {
     source "$LIB_DIR/config.sh"
 }
 
+# Helper to source ipset.sh module
+load_ipset_module() {
+    load_common
+    load_config
+    source "$LIB_DIR/ipset.sh" --source-only
+}
+
+# Helper to source tunnel.sh module
+load_tunnel_module() {
+    load_common
+    load_config
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/firewall.sh"
+    source "$LIB_DIR/tunnel.sh" --source-only
+}
+
+# Helper to source tproxy.sh module
+load_tproxy_module() {
+    load_common
+    load_config
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/firewall.sh"
+    source "$LIB_DIR/tproxy.sh" --source-only
+}
+
 # Helper to source import_server_list.sh without running main
 load_import_server_list() {
     load_common

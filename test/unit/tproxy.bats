@@ -2,14 +2,8 @@
 
 load '../test_helper'
 
-# Helper to source lib/tproxy.sh for testing
-load_tproxy_module() {
-    load_common
-    load_config
-    source "$LIB_DIR/firewall.sh"
-    source "$LIB_DIR/ipset.sh" --source-only
-    source "$LIB_DIR/tproxy.sh" --source-only
-}
+# Note: load_tproxy_module is provided by test_helper.bash
+# It loads: common.sh, config.sh, ipset.sh, firewall.sh, tproxy.sh
 
 # ============================================================================
 # _tproxy_check_module - check xt_TPROXY kernel module

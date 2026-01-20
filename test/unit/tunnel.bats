@@ -2,15 +2,8 @@
 
 load '../test_helper'
 
-# Helper to source lib/tunnel.sh for testing
-load_tunnel_module() {
-    load_common
-    source "$LIB_DIR/firewall.sh"
-    load_config
-    source "$LIB_DIR/shared.sh"
-    source "$LIB_DIR/ipset.sh" --source-only
-    source "$LIB_DIR/tunnel.sh" --source-only
-}
+# Note: load_tunnel_module is provided by test_helper.bash
+# It loads: common.sh, config.sh, ipset.sh, firewall.sh, tunnel.sh
 
 # ============================================================================
 # _tunnel_table_allowed - validate routing tables

@@ -10,10 +10,9 @@
 # Dependencies:
 #   - common.sh (log, tmp_file, compute_hash, is_lan_ip)
 #   - firewall.sh (create_fw_chain, delete_fw_chain, ensure_fw_rule, sync_fw_rule, purge_fw_rules)
-#   - shared.sh (TUN_DIR_HASH)
 #   - config.sh (TUN_DIR_RULES, TUN_DIR_CHAIN_PREFIX, TUN_DIR_PREF_BASE, TUN_DIR_MARK_MASK,
 #                TUN_DIR_MARK_SHIFT)
-#   - ipset.sh (_derive_set_name, parse_country_codes, parse_combo_from_rules)
+#   - ipset.sh (_derive_set_name, parse_country_codes, parse_combo_from_rules, TUN_DIR_HASH)
 #
 # Public API:
 #   tunnel_status()              - show TUN_DIR_* chains, ip rules, fwmarks

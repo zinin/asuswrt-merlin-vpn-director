@@ -50,6 +50,24 @@ if [[ ${DEBUG:-0} == 1 ]]; then
 fi
 
 ###################################################################################################
+# State directories and files (from merged shared.sh)
+###################################################################################################
+
+# State directories
+IPS_BUILDER_DIR="/tmp/ipset_builder"
+TUN_DIRECTOR_DIR="/tmp/tunnel_director"
+
+# State files
+TUN_DIR_IPSETS_HASH="$IPS_BUILDER_DIR/tun_dir_ipsets.sha256"
+TUN_DIR_HASH="$TUN_DIRECTOR_DIR/tun_dir_rules.sha256"
+
+# Ensure directories exist
+mkdir -p "$IPS_BUILDER_DIR" "$TUN_DIRECTOR_DIR"
+
+# Export for use by other modules
+export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_IPSETS_HASH TUN_DIR_HASH
+
+###################################################################################################
 # Constants (defined before --source-only for testability)
 ###################################################################################################
 

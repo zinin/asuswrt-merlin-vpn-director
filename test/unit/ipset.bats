@@ -2,12 +2,8 @@
 
 load '../test_helper'
 
-# Helper to source lib/ipset.sh for testing
-load_ipset_module() {
-    load_common
-    load_config
-    source "$LIB_DIR/ipset.sh" --source-only
-}
+# Note: load_ipset_module is provided by test_helper.bash
+# It loads: common.sh, config.sh, ipset.sh
 
 # ============================================================================
 # _next_pow2 - round up to next power of two
