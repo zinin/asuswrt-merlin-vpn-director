@@ -75,7 +75,7 @@ Config options in `vpn-director.json` (`advanced.boot`):
 
 | Function | Purpose |
 |----------|---------|
-| `download_file()` | Curl wrapper with logging and HTTP status check |
+| `download_file()` | Download file with retry and timeout (prefers wget-ssl, fallback curl) |
 | `ipset_exists()` | Check if ipset is loaded |
 | `get_ipset_count()` | Get number of entries in ipset |
 | `build_ipset()` | Download, create, swap, dump |
