@@ -134,7 +134,7 @@ _tproxy_check_required_ipsets() {
     for set_key in "${exclude_sets_array[@]}"; do
         [[ -n $set_key ]] || continue
         if ! _tproxy_resolve_exclude_set "$set_key" >/dev/null; then
-            log -l WARN "Required ipset '$set_key' not found; waiting for ipset_builder.sh"
+            log -l WARN "Required ipset '$set_key' not found; run 'vpn-director.sh apply' first"
             return 1
         fi
     done
@@ -437,7 +437,7 @@ tproxy_apply() {
     # Soft-fail: if required ipsets not ready, return 0 without applying
     if ! _tproxy_check_required_ipsets; then
         log -l WARN "Required ipsets not ready; exiting without applying rules"
-        log -l WARN "Run ipset_builder.sh first, then re-run this script"
+        log -l WARN "Run 'vpn-director.sh apply' first to build required ipsets"
         return 0
     fi
 

@@ -398,32 +398,12 @@ step_apply_rules() {
         print_warning "Xray init script not found, skipping restart"
     fi
 
-    # Build ipsets (including extra countries for Xray exclusions)
-    print_info "Building ipsets (this may take a while)..."
-    if [[ -x $JFFS_DIR/ipset_builder.sh ]]; then
-        "$JFFS_DIR/ipset_builder.sh" -c "$XRAY_EXCLUDE_SETS_LIST" || {
-            print_warning "ipset_builder.sh failed, some features may not work"
+    # Apply VPN Director rules (ipsets, tunnel, xray)
+    print_info "Applying VPN Director rules (this may take a while)..."
+    if [[ -x $JFFS_DIR/vpn-director.sh ]]; then
+        "$JFFS_DIR/vpn-director.sh" apply || {
+            print_warning "vpn-director.sh apply failed"
         }
-    fi
-
-    # Apply Tunnel Director rules
-    if [[ -n $TUN_DIR_RULES_LIST ]]; then
-        print_info "Applying Tunnel Director rules..."
-        if [[ -x $JFFS_DIR/tunnel_director.sh ]]; then
-            "$JFFS_DIR/tunnel_director.sh" || {
-                print_warning "tunnel_director.sh failed"
-            }
-        fi
-    fi
-
-    # Apply Xray TPROXY rules
-    if [[ -n $XRAY_CLIENTS_LIST ]]; then
-        print_info "Applying Xray TPROXY rules..."
-        if [[ -x $JFFS_DIR/xray_tproxy.sh ]]; then
-            "$JFFS_DIR/xray_tproxy.sh" || {
-                print_warning "xray_tproxy.sh failed"
-            }
-        fi
     fi
 
     print_success "Rules applied"
@@ -446,7 +426,7 @@ main() {
     step_apply_rules                  # Step 6
 
     print_header "Configuration Complete"
-    printf "Check status with: /jffs/scripts/vpn-director/xray_tproxy.sh status\n"
+    printf "Check status with: /jffs/scripts/vpn-director/vpn-director.sh status\n"
 }
 
 main "$@"

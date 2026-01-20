@@ -92,30 +92,41 @@ create_initd_script() {
 #!/bin/sh
 
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-SCRIPT_DIR="/jffs/scripts/vpn-director"
+
+# Note: We don't source rc.func because VPN Director manages multiple
+# subsystems (firewall rules, ipsets, xray) that require custom lifecycle management.
+# ENABLED and DESC are kept for consistency with Entware conventions.
+ENABLED=yes
+DESC="VPN Director"
+VPD="/jffs/scripts/vpn-director/vpn-director.sh"
 
 start() {
-    # Build ipsets, then start tunnel_director + xray_tproxy
-    "$SCRIPT_DIR/ipset_builder.sh" -t -x
-
-    # Cron job: update ipsets daily at 03:00
-    cru a update_ipsets "0 3 * * * $SCRIPT_DIR/ipset_builder.sh -u -t -x"
-
-    # Startup notification
-    "$SCRIPT_DIR/lib/send-email.sh" "Startup Notification" \
-        "I've just started up and got connected to the internet."
+    echo "Starting $DESC..."
+    if "$VPD" apply; then
+        # Remove legacy cron job from previous versions
+        cru d update_ipsets 2>/dev/null
+        cru a vpn_director_update "0 3 * * * $VPD update"
+        /jffs/scripts/vpn-director/lib/send-email.sh "Startup" "VPN Director started" 2>/dev/null || true
+    else
+        echo "Failed to start $DESC"
+        return 1
+    fi
 }
 
 stop() {
-    "$SCRIPT_DIR/xray_tproxy.sh" stop
-    cru d update_ipsets
+    echo "Stopping $DESC..."
+    "$VPD" stop
+    cru d vpn_director_update
+    # Also remove legacy cron job if present
+    cru d update_ipsets 2>/dev/null
 }
 
 case "$1" in
     start)   start ;;
     stop)    stop ;;
     restart) stop; start ;;
-    *)       echo "Usage: $0 {start|stop|restart}" ;;
+    status)  "$VPD" status ;;
+    *)       echo "Usage: $0 {start|stop|restart|status}" ;;
 esac
 INITEOF
 
@@ -149,16 +160,16 @@ download_scripts() {
     print_info "Downloading scripts..."
 
     for script in \
-        "jffs/scripts/vpn-director/ipset_builder.sh" \
-        "jffs/scripts/vpn-director/tunnel_director.sh" \
-        "jffs/scripts/vpn-director/xray_tproxy.sh" \
+        "jffs/scripts/vpn-director/vpn-director.sh" \
         "jffs/scripts/vpn-director/configure.sh" \
         "jffs/scripts/vpn-director/import_server_list.sh" \
         "jffs/scripts/vpn-director/vpn-director.json.template" \
         "jffs/scripts/vpn-director/lib/common.sh" \
         "jffs/scripts/vpn-director/lib/firewall.sh" \
-        "jffs/scripts/vpn-director/lib/shared.sh" \
         "jffs/scripts/vpn-director/lib/config.sh" \
+        "jffs/scripts/vpn-director/lib/ipset.sh" \
+        "jffs/scripts/vpn-director/lib/tunnel.sh" \
+        "jffs/scripts/vpn-director/lib/tproxy.sh" \
         "jffs/scripts/vpn-director/lib/send-email.sh" \
         "jffs/scripts/vpn-director/setup_telegram_bot.sh" \
         "jffs/scripts/firewall-start" \

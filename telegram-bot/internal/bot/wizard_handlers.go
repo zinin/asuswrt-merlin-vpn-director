@@ -484,26 +484,26 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 		}
 	}
 
-	// Apply configuration via ipset_builder
-	result, err := shell.Exec(scriptsDir+"/ipset_builder.sh", "-t", "-x")
+	// Apply configuration via vpn-director
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "apply")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("ipset_builder.sh exec error: %v", err))
+		b.sendMessage(chatID, fmt.Sprintf("vpn-director.sh apply exec error: %v", err))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(chatID, fmt.Sprintf("ipset_builder error (exit %d): %s", result.ExitCode, result.Output))
+		b.sendMessage(chatID, fmt.Sprintf("vpn-director apply error (exit %d): %s", result.ExitCode, result.Output))
 		return
 	}
-	b.sendMessage(chatID, "ipset_builder completed")
+	b.sendMessage(chatID, "VPN Director applied")
 
 	// Restart Xray to apply new config
-	result, err = shell.Exec(scriptsDir+"/xray_tproxy.sh", "restart")
+	result, err = shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("xray_tproxy.sh exec error: %v", err))
+		b.sendMessage(chatID, fmt.Sprintf("vpn-director.sh restart exec error: %v", err))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(chatID, fmt.Sprintf("xray_tproxy error (exit %d): %s", result.ExitCode, result.Output))
+		b.sendMessage(chatID, fmt.Sprintf("vpn-director restart error (exit %d): %s", result.ExitCode, result.Output))
 		return
 	}
 	b.sendMessage(chatID, "Xray restarted")

@@ -36,7 +36,7 @@ Commands:
 }
 
 func (b *Bot) handleStatus(msg *tgbotapi.Message) {
-	result, err := shell.Exec(scriptsDir+"/xray_tproxy.sh", "status")
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "status")
 	if err != nil {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
 		return
@@ -77,7 +77,7 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 
 func (b *Bot) handleRestart(msg *tgbotapi.Message) {
 	b.sendMessage(msg.Chat.ID, "Restarting Xray...")
-	result, err := shell.Exec(scriptsDir+"/xray_tproxy.sh", "restart")
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
 	if err != nil {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
 		return
@@ -90,7 +90,7 @@ func (b *Bot) handleRestart(msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleStop(msg *tgbotapi.Message) {
-	result, err := shell.Exec(scriptsDir+"/xray_tproxy.sh", "stop")
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "stop", "xray")
 	if err != nil {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
 		return
