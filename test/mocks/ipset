@@ -14,7 +14,13 @@ case "$1" in
         # Handle -n flag for name-only listing
         if [ "$2" = "-n" ]; then
             name="$3"
-            if ipset_name_exists "$name"; then
+            if [ -z "$name" ]; then
+                # List all known ipsets
+                echo "ru"
+                echo "us"
+                echo "ca"
+                exit 0
+            elif ipset_name_exists "$name"; then
                 echo "$name"
                 exit 0
             else

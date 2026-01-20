@@ -74,6 +74,31 @@ IPDENY_FILE_SUFFIX='-aggregated.zone'
 ###################################################################################################
 
 # -------------------------------------------------------------------------------------------------
+# _ipset_boot_wait - defer execution if system just booted
+# -------------------------------------------------------------------------------------------------
+# Uses MIN_BOOT_TIME and BOOT_WAIT_DELAY from config.sh
+# If uptime < MIN_BOOT_TIME, sleep for BOOT_WAIT_DELAY seconds
+# -------------------------------------------------------------------------------------------------
+_ipset_boot_wait() {
+    local uptime_secs min_time wait_delay
+
+    # Get config values (default to sensible values if not set)
+    min_time="${MIN_BOOT_TIME:-120}"
+    wait_delay="${BOOT_WAIT_DELAY:-30}"
+
+    # Skip if wait disabled
+    [[ $wait_delay -eq 0 ]] && return 0
+
+    # Get current uptime in seconds
+    uptime_secs=$(awk '{ print int($1) }' /proc/uptime)
+
+    if [[ $uptime_secs -lt $min_time ]]; then
+        log "Uptime ${uptime_secs}s < ${min_time}s, sleeping ${wait_delay}s..."
+        sleep "$wait_delay"
+    fi
+}
+
+# -------------------------------------------------------------------------------------------------
 # _next_pow2 - round up to the next power of two (>= 1)
 # -------------------------------------------------------------------------------------------------
 _next_pow2() {
@@ -586,8 +611,8 @@ ipset_ensure() {
         local set_name="$spec"
         local dump="${dump_dir}/${set_name}-ipdeny.dump"
 
-        # Try restore from cache first
-        if _restore_from_cache "$set_name" "$dump" 0; then
+        # Try restore from cache first (skip if IPSET_FORCE_UPDATE is set)
+        if _restore_from_cache "$set_name" "$dump" "${IPSET_FORCE_UPDATE:-0}"; then
             return 0
         fi
 
