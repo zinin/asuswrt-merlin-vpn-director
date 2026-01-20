@@ -8,36 +8,39 @@ Traffic routing system for Asus routers: Xray TPROXY, Tunnel Director, IPSet Bui
 # Install
 curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh | bash
 
-# Xray TPROXY
-/jffs/scripts/vpn-director/xray_tproxy.sh status|start|stop|restart
+# VPN Director CLI
+/jffs/scripts/vpn-director/vpn-director.sh status              # Show all status
+/jffs/scripts/vpn-director/vpn-director.sh apply               # Apply configuration
+/jffs/scripts/vpn-director/vpn-director.sh stop                # Stop all components
+/jffs/scripts/vpn-director/vpn-director.sh restart             # Restart all
+/jffs/scripts/vpn-director/vpn-director.sh update              # Update ipsets + reapply
 
-# IPSet Builder
-/jffs/scripts/vpn-director/ipset_builder.sh       # Restore from cache
-/jffs/scripts/vpn-director/ipset_builder.sh -u    # Force rebuild
-/jffs/scripts/vpn-director/ipset_builder.sh -t    # Rebuild + Tunnel Director
-/jffs/scripts/vpn-director/ipset_builder.sh -x    # Rebuild + Xray TPROXY
-
-# Tunnel Director
-/jffs/scripts/vpn-director/tunnel_director.sh
+# Component-specific commands
+/jffs/scripts/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
+/jffs/scripts/vpn-director/vpn-director.sh restart xray        # Restart Xray TPROXY only
 
 # Import servers
 /jffs/scripts/vpn-director/import_server_list.sh
 
-# Shell alias
-ipt  # Runs: ipset_builder.sh -t
+# Shell aliases
+vpd status    # Short form via alias
+vpd apply
+vpd update
+ipt           # Legacy alias (runs: vpd update)
 ```
 
 ## Architecture
 
 | Path | Purpose |
 |------|---------|
-| `jffs/scripts/vpn-director/` | Main scripts: ipset_builder, tunnel_director, xray_tproxy, configure |
-| `jffs/scripts/vpn-director/utils/` | Shared utilities: common.sh, firewall.sh, shared.sh, config.sh, send-email.sh |
+| `jffs/scripts/vpn-director/vpn-director.sh` | Unified CLI entry point |
+| `jffs/scripts/vpn-director/lib/` | Modules: common, firewall, config, ipset, tunnel, tproxy |
 | `opt/etc/init.d/S99vpn-director` | Entware init.d script for startup |
 | `jffs/scripts/firewall-start` | Asuswrt-Merlin hook for firewall reload |
-| `test/` | Bats tests with mocks and fixtures |
+| `jffs/scripts/wan-event` | Asuswrt-Merlin hook for WAN events |
+| `test/` | Bats tests (unit/, integration/) |
 | `jffs/scripts/vpn-director/vpn-director.json.template` | Unified config template |
-| `jffs/configs/profile.add` | Shell alias for `ipt` command |
+| `jffs/configs/profile.add` | Shell alias for `vpd` command |
 | `config/xray.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
 | `telegram-bot/` | Go-based Telegram bot for remote management |
@@ -75,7 +78,7 @@ See `.claude/rules/` for detailed docs:
 - `tunnel-director.md` — rule format, chain architecture, fwmark layout
 - `ipset-builder.md` — IPdeny sources, dump/restore, combo sets
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe
-- `shell-conventions.md` — utilities from common.sh/firewall.sh
+- `shell-conventions.md` — utilities from lib/common.sh, lib/firewall.sh
 - `testing.md` — Bats framework, mocks, fixtures
 - `telegram-bot.md` — Go bot architecture, commands, wizard flow
 - `entware-init.md` — Entware init system (rc.unslung, rc.func, S* scripts)

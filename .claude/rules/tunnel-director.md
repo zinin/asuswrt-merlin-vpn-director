@@ -6,9 +6,11 @@ paths: "jffs/scripts/vpn-director/**"
 
 Policy-based outbound routing through VPN tunnels (WireGuard/OpenVPN) or WAN.
 
+Module location: `lib/tunnel.sh`
+
 ## Overview
 
-`tunnel_director.sh` routes LAN traffic through VPN clients based on destination ipsets.
+The tunnel module routes LAN traffic through VPN clients based on destination ipsets.
 
 **Anti-censorship design**:
 - Inclusion: route only to specific countries/lists
@@ -61,7 +63,7 @@ In `vpn-director.json`:
 | JSON Path | Default | Purpose |
 |-----------|---------|---------|
 | `tunnel_director.rules` | `[]` | Routing rules (JSON array) |
-| `tunnel_director.ipset_dump_dir` | `/jffs/ipset_builder` | Persistent dump storage |
+| `data_dir` | `/jffs/scripts/vpn-director/data` | Persistent storage (ipset dumps, servers) |
 | `advanced.tunnel_director.chain_prefix` | `TUN_DIR_` | Chain name prefix |
 | `advanced.tunnel_director.pref_base` | `16384` | ip rule priority base |
 | `advanced.tunnel_director.mark_mask` | `0x00ff0000` | Mask for TD bits |
@@ -76,7 +78,7 @@ Default: bits 16-23 (8 bits = 255 rules max)
 | File | Purpose |
 |------|---------|
 | `/tmp/tunnel_director/tun_dir_rules.sha256` | Hash of last applied rules |
-| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Hash from ipset_builder (for sync) |
+| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Hash from ipset module (for sync) |
 
 **Rebuild triggers**:
 - Rules hash changed
@@ -86,7 +88,7 @@ Default: bits 16-23 (8 bits = 255 rules max)
 
 ## Dependencies
 
-- Requires ipsets from `ipset_builder.sh`
+- Requires ipsets from `lib/ipset.sh`
 - Waits for `TUN_DIR_IPSETS_HASH` to match rules hash
 - VPN client must be active with NAT enabled
 
@@ -105,6 +107,6 @@ Default: bits 16-23 (8 bits = 255 rules max)
 
 ## Utilities Used
 
-From `common.sh`: `log`, `acquire_lock`, `tmp_file`, `strip_comments`, `compute_hash`, `is_lan_ip`
+From `lib/common.sh`: `log`, `acquire_lock`, `tmp_file`, `strip_comments`, `compute_hash`, `is_lan_ip`
 
-From `firewall.sh`: `create_fw_chain`, `delete_fw_chain`, `ensure_fw_rule`, `sync_fw_rule`, `purge_fw_rules`
+From `lib/firewall.sh`: `create_fw_chain`, `delete_fw_chain`, `ensure_fw_rule`, `sync_fw_rule`, `purge_fw_rules`
