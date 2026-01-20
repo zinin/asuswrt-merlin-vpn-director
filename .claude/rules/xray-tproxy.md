@@ -6,14 +6,14 @@ paths: "jffs/scripts/vpn-director/**"
 
 Transparent proxy routing for LAN clients via Xray.
 
-## Usage
+Module location: `lib/tproxy.sh`
+
+## Usage via CLI
 
 ```bash
-xray_tproxy.sh          # Apply rules (default: start)
-xray_tproxy.sh start    # Apply rules
-xray_tproxy.sh stop     # Remove all rules
-xray_tproxy.sh restart  # Stop + start
-xray_tproxy.sh status   # Show current status
+vpn-director.sh status xray       # Show Xray TPROXY status
+vpn-director.sh restart xray      # Restart Xray TPROXY
+vpn-director.sh apply             # Apply all (including TPROXY)
 ```
 
 ## How It Works
@@ -83,7 +83,7 @@ ip rule add pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XR
 
 - `xt_TPROXY` kernel module
 - Xray running with dokodemo-door inbound (tproxy mode)
-- ipsets from `ipset_builder.sh` (for country exclusions)
+- ipsets from `lib/ipset.sh` (for country exclusions)
 
 ## Fail-Safe
 

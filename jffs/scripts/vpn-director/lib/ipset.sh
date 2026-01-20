@@ -1,0 +1,697 @@
+#!/usr/bin/env bash
+
+###################################################################################################
+# ipset.sh - ipset management module for VPN Director
+# -------------------------------------------------------------------------------------------------
+# Purpose:
+#   Modular library for ipset operations: status, ensure, update.
+#   Migrated from ipset_builder.sh to provide independent, testable functions.
+#
+# Dependencies:
+#   - common.sh (log, tmp_file, compute_hash)
+#   - config.sh (IPS_BDR_DIR)
+#
+# Public API:
+#   ipset_status()          - show loaded ipsets, sizes, cache info
+#   ipset_ensure()          - ensure ipsets exist (load from cache or download)
+#   ipset_update()          - force fresh download of ipsets
+#
+# Internal functions (for testing):
+#   _next_pow2()            - round up to next power of 2
+#   _calc_ipset_size()      - calculate hashsize from entry count (min 1024)
+#   _derive_set_name()      - lowercase or hash for long names (>31 chars)
+#   parse_country_codes()   - extract country codes from rules (stdin)
+#   parse_combo_from_rules() - extract combo ipsets from rules (stdin)
+#   _ipset_exists()         - check if ipset exists
+#   _ipset_count()          - get entry count
+#
+# Usage:
+#   source lib/ipset.sh              # source and run main if any
+#   source lib/ipset.sh --source-only # source only for testing
+###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# Disable unneeded shellcheck warnings
+# -------------------------------------------------------------------------------------------------
+# shellcheck disable=SC2086
+# shellcheck disable=SC2155
+
+# -------------------------------------------------------------------------------------------------
+# Abort script on any error
+# -------------------------------------------------------------------------------------------------
+set -euo pipefail
+
+# -------------------------------------------------------------------------------------------------
+# Debug mode: set DEBUG=1 to enable tracing
+# -------------------------------------------------------------------------------------------------
+if [[ ${DEBUG:-0} == 1 ]]; then
+    set -x
+    PS4='+${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+fi
+
+###################################################################################################
+# State directories and files (from merged shared.sh)
+###################################################################################################
+
+# State directories
+IPS_BUILDER_DIR="/tmp/ipset_builder"
+TUN_DIRECTOR_DIR="/tmp/tunnel_director"
+
+# State files
+TUN_DIR_IPSETS_HASH="$IPS_BUILDER_DIR/tun_dir_ipsets.sha256"
+TUN_DIR_HASH="$TUN_DIRECTOR_DIR/tun_dir_rules.sha256"
+
+# Ensure directories exist
+mkdir -p "$IPS_BUILDER_DIR" "$TUN_DIRECTOR_DIR"
+
+# Export for use by other modules
+export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_IPSETS_HASH TUN_DIR_HASH
+
+###################################################################################################
+# Constants (defined before --source-only for testability)
+###################################################################################################
+
+# All two-letter ISO country codes, lowercase
+ALL_COUNTRY_CODES='
+ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bl bm bn bo bq br bs bt
+bv bw by bz ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg eh
+er es et fi fj fk fm fo fr ga gb gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht
+hu id ie il im in io iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls
+lt lu lv ly ma mc md me mf mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni
+nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg
+sh si sj sk sl sm sn so sr ss st sv sx sy sz tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug
+um us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw
+'
+
+# IPdeny base URL for country zone files
+IPDENY_BASE_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
+IPDENY_FILE_SUFFIX='-aggregated.zone'
+
+###################################################################################################
+# Pure helper functions (defined before --source-only for testability)
+###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# _ipset_boot_wait - defer execution if system just booted
+# -------------------------------------------------------------------------------------------------
+# Uses MIN_BOOT_TIME and BOOT_WAIT_DELAY from config.sh
+# If uptime < MIN_BOOT_TIME, sleep for BOOT_WAIT_DELAY seconds
+# -------------------------------------------------------------------------------------------------
+_ipset_boot_wait() {
+    local uptime_secs min_time wait_delay
+
+    # Get config values (default to sensible values if not set)
+    min_time="${MIN_BOOT_TIME:-120}"
+    wait_delay="${BOOT_WAIT_DELAY:-30}"
+
+    # Skip if wait disabled
+    [[ $wait_delay -eq 0 ]] && return 0
+
+    # Get current uptime in seconds
+    uptime_secs=$(awk '{ print int($1) }' /proc/uptime)
+
+    if [[ $uptime_secs -lt $min_time ]]; then
+        log "Uptime ${uptime_secs}s < ${min_time}s, sleeping ${wait_delay}s..."
+        sleep "$wait_delay"
+    fi
+}
+
+# -------------------------------------------------------------------------------------------------
+# _next_pow2 - round up to the next power of two (>= 1)
+# -------------------------------------------------------------------------------------------------
+_next_pow2() {
+    local n=${1:-1} p=1
+
+    [[ $n -lt 1 ]] && n=1
+
+    while [[ $p -lt $n ]]; do
+        p=$((p<<1))
+    done
+
+    printf '%s\n' "$p"
+}
+
+# -------------------------------------------------------------------------------------------------
+# _calc_ipset_size - calculate ipset hashsize from element count
+# -------------------------------------------------------------------------------------------------
+# Uses target load factor of ~0.75:
+#   - buckets = ceil(4 * n / 3)
+#   - round buckets to next power of 2
+#   - floor at 1024 for safety
+# -------------------------------------------------------------------------------------------------
+_calc_ipset_size() {
+    local n=${1:-0} floor=1024 buckets
+
+    buckets=$(((4 * n + 2) / 3))
+    [[ $buckets -lt $floor ]] && buckets=$floor
+
+    _next_pow2 "$buckets"
+}
+
+# -------------------------------------------------------------------------------------------------
+# _derive_set_name - return lowercase name or SHA-256 prefix for long names
+# -------------------------------------------------------------------------------------------------
+# IPset names are limited to 31 characters. For longer names, we use a
+# 24-character SHA-256 prefix as a stable alias.
+# -------------------------------------------------------------------------------------------------
+_derive_set_name() {
+    local set="$1" max=31 set_lc hash
+
+    set_lc=$(printf '%s' "$set" | tr 'A-Z' 'a-z')
+
+    # Fits already? Return as-is
+    if [[ "${#set_lc}" -le "$max" ]]; then
+        printf '%s\n' "$set_lc"
+        return 0
+    fi
+
+    hash="$(printf '%s' "$set_lc" | compute_hash | cut -c1-24)"
+
+    log -l TRACE "Assigned alias='$hash' for set='$set_lc'" \
+        "because set name exceeds $max chars"
+
+    printf '%s\n' "$hash"
+}
+
+# -------------------------------------------------------------------------------------------------
+# _is_valid_country_code - check if string is a valid 2-letter ISO country code
+# -------------------------------------------------------------------------------------------------
+_is_valid_country_code() {
+    local code="$1"
+    [[ $code =~ ^[a-z]{2}$ ]] && [[ " $ALL_COUNTRY_CODES " == *" $code "* ]]
+}
+
+# -------------------------------------------------------------------------------------------------
+# _normalize_spec - normalize ipset spec (trim, lowercase, validate)
+# -------------------------------------------------------------------------------------------------
+# Input: raw spec (single country code or comma-separated list)
+# Output: normalized spec or empty string if invalid
+# Filters: trims whitespace, lowercases, drops empty tokens, validates country codes
+# -------------------------------------------------------------------------------------------------
+_normalize_spec() {
+    local raw="$1" normalized="" token lc_token
+    local -a tokens result_tokens
+
+    # Remove leading/trailing whitespace and convert to lowercase
+    raw=$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Empty after trim?
+    if [[ -z $raw ]]; then
+        return 1
+    fi
+
+    # Split on comma
+    IFS=',' read -ra tokens <<< "$raw"
+
+    for token in "${tokens[@]}"; do
+        # Trim whitespace from each token
+        lc_token=$(printf '%s' "$token" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+        # Skip empty tokens
+        [[ -z $lc_token ]] && continue
+
+        # Validate as country code
+        if ! _is_valid_country_code "$lc_token"; then
+            log -l WARN "Invalid country code '$lc_token'; skipping"
+            continue
+        fi
+
+        result_tokens+=("$lc_token")
+    done
+
+    # No valid tokens?
+    if [[ ${#result_tokens[@]} -eq 0 ]]; then
+        log -l ERROR "No valid country codes found in spec '$1'"
+        return 1
+    fi
+
+    # Join with comma
+    normalized=$(IFS=','; printf '%s' "${result_tokens[*]}")
+    printf '%s\n' "$normalized"
+}
+
+# -------------------------------------------------------------------------------------------------
+# parse_country_codes - extract country codes from tunnel director rules
+# -------------------------------------------------------------------------------------------------
+# Accepts rules via stdin in format: table:src[%iface][:src_excl]:set[:set_excl]
+# Extracts 2-letter country codes from field 4 (set) and field 5 (set_excl)
+# Validates against ALL_COUNTRY_CODES
+# -------------------------------------------------------------------------------------------------
+parse_country_codes() {
+    awk -v valid="$ALL_COUNTRY_CODES" '
+        function add_code(tok, base) {
+            gsub(/[[:space:]]+/, "", tok)
+            if (tok ~ /^[a-z]{2}$/) {
+                base = tok
+                if (V[base]) seen[base] = 1
+            }
+        }
+        BEGIN {
+            n = split(valid, arr, /[[:space:]\r\n]+/)
+            for (i = 1; i <= n; i++) if (arr[i] != "") V[arr[i]] = 1
+        }
+        {
+            # Split on ":" outside [...] (for IPv6 literals in src)
+            depth = 0; tok = ""; nf2 = 0
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "[") depth++
+                else if (c == "]" && depth > 0) depth--
+                if (c == ":" && depth == 0) {
+                    f[++nf2] = tok; tok = ""
+                }
+                else tok = tok c
+            }
+            f[++nf2] = tok
+
+            # Field 4 = set, Field 5 = set_excl
+            for (fld = 4; fld <= 5; fld++) {
+                if (fld > nf2) continue
+                n = split(tolower(f[fld]), parts, ",")
+                for (i = 1; i <= n; i++) add_code(parts[i])
+            }
+
+            for (i = 1; i <= nf2; i++) delete f[i]
+        }
+        END { for (c in seen) print c }
+    ' | sort
+}
+
+# -------------------------------------------------------------------------------------------------
+# parse_combo_from_rules - extract combo ipsets from tunnel director rules
+# -------------------------------------------------------------------------------------------------
+# Emits only fields that contain a comma (e.g., "us,ca,uk")
+# indicating a combo set that unions multiple country sets.
+# Reads rules from stdin.
+# -------------------------------------------------------------------------------------------------
+parse_combo_from_rules() {
+    awk '
+        function emit_combo(field, f, n, a, i, t, out) {
+            f = field
+            gsub(/[[:space:]]/, "", f)
+            if (f ~ /,/) {
+                n = split(f, a, ",")
+                out = ""
+                for (i = 1; i <= n; i++) {
+                    t = a[i]
+                    out = out (out ? "," : "") t
+                }
+                print out
+            }
+        }
+
+        {
+            # Split on ":" outside [...]
+            depth = 0; tok = ""; nf2 = 0
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "[") depth++
+                else if (c == "]" && depth > 0) depth--
+                if (c == ":" && depth == 0) {
+                    F[++nf2] = tok; tok = ""
+                }
+                else tok = tok c
+            }
+            F[++nf2] = tok
+
+            if (nf2 >= 4) emit_combo(F[4])
+            if (nf2 >= 5) emit_combo(F[5])
+        }
+    ' | sort -u
+}
+
+###################################################################################################
+# IPSet command wrappers (for testing via mocks)
+###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# _ipset_exists - check if an ipset exists
+# -------------------------------------------------------------------------------------------------
+_ipset_exists() {
+    ipset list -n "$1" >/dev/null 2>&1
+}
+
+# -------------------------------------------------------------------------------------------------
+# _ipset_count - get number of entries in an ipset
+# -------------------------------------------------------------------------------------------------
+_ipset_count() {
+    ipset list "$1" 2>/dev/null |
+        awk '/Number of entries:/ { print $4; exit }' || true
+}
+
+###################################################################################################
+# Internal helper functions
+###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# _print_create_ipset - generate ipset create command
+# -------------------------------------------------------------------------------------------------
+_print_create_ipset() {
+    local set_name="$1" cnt="${2:-0}" size
+    size="$(_calc_ipset_size "$cnt")"
+
+    printf 'create %s hash:net family inet hashsize %s maxelem %s\n' \
+        "$set_name" "$size" "$size"
+}
+
+# -------------------------------------------------------------------------------------------------
+# _print_add_entry - generate ipset add command
+# -------------------------------------------------------------------------------------------------
+_print_add_entry() {
+    printf 'add %s %s\n' "$1" "$2"
+}
+
+# -------------------------------------------------------------------------------------------------
+# _print_swap_and_destroy - generate ipset swap and destroy commands
+# -------------------------------------------------------------------------------------------------
+_print_swap_and_destroy() {
+    printf 'swap %s %s\n' "$1" "$2"
+    printf 'destroy %s\n' "$1"
+}
+
+# -------------------------------------------------------------------------------------------------
+# _download_zone - download a zone file from IPdeny
+# -------------------------------------------------------------------------------------------------
+_download_zone() {
+    local cc="$1" dest="$2"
+    local url="${IPDENY_BASE_URL}/${cc}${IPDENY_FILE_SUFFIX}"
+    local http_code
+
+    log "Downloading zone file for '$cc'..."
+
+    if ! http_code=$(curl -sS -o "$dest" -w "%{http_code}" "$url"); then
+        http_code=000
+    fi
+
+    [[ -n $http_code ]] || http_code=000
+
+    if [[ $http_code -ge 200 ]] && [[ $http_code -lt 300 ]]; then
+        log "Successfully downloaded zone for '$cc'"
+        return 0
+    else
+        rm -f "$dest"
+        log -l ERROR "Failed to download zone for '$cc' (HTTP $http_code)"
+        return 1
+    fi
+}
+
+# -------------------------------------------------------------------------------------------------
+# _restore_from_cache - restore ipset from dump file
+# -------------------------------------------------------------------------------------------------
+# Returns 0 on success, 1 if restore failed or dump not found.
+# Uses atomic swap for existing sets.
+# -------------------------------------------------------------------------------------------------
+_restore_from_cache() {
+    local set_name="$1" dump="$2" force="${3:-0}"
+    local cnt rc=0
+
+    # If forcing update or dump missing, signal caller to rebuild
+    if [[ $force -eq 1 ]] || [[ ! -f $dump ]]; then
+        return 1
+    fi
+
+    if _ipset_exists "$set_name"; then
+        # Existing set: restore into a temp clone, then swap
+        local tmp_set="${set_name}_tmp" restore_script
+        restore_script=$(tmp_file)
+        ipset destroy "$tmp_set" 2>/dev/null || true
+
+        {
+            sed -e "s/^create $set_name /create $tmp_set /" \
+                -e "s/^add $set_name /add $tmp_set /" "$dump"
+            _print_swap_and_destroy "$tmp_set" "$set_name"
+        } > "$restore_script"
+
+        ipset restore -! < "$restore_script" || rc=$?
+        rm -f "$restore_script"
+    else
+        # Set doesn't exist yet - restore directly
+        ipset restore -! < "$dump" || rc=$?
+    fi
+
+    if [[ $rc -ne 0 ]]; then
+        log -l WARN "Restore failed for ipset '$set_name'; will rebuild"
+        return 1
+    fi
+
+    cnt=$(_ipset_count "$set_name")
+    log "Restored ipset '$set_name' from dump ($cnt entries)"
+
+    return 0
+}
+
+# -------------------------------------------------------------------------------------------------
+# _build_country_ipset - build a country ipset from IPdeny
+# -------------------------------------------------------------------------------------------------
+_build_country_ipset() {
+    local cc="$1" dump_dir="$2"
+    local set_name="$cc"
+    local dump="${dump_dir}/${set_name}-ipdeny.dump"
+    local target_set cidr_list restore_script
+    local cnt=0 rc=0
+
+    log "Building country ipset '$set_name'..."
+
+    # Decide whether we need a temporary set (for "hot" updates) or in-place create
+    if _ipset_exists "$set_name"; then
+        target_set="${set_name}_tmp"
+        ipset destroy "$target_set" 2>/dev/null || true
+    else
+        target_set="$set_name"
+    fi
+
+    # Download CIDR list
+    cidr_list=$(tmp_file)
+    if ! _download_zone "$cc" "$cidr_list"; then
+        rm -f "$cidr_list"
+        return 1
+    fi
+
+    cnt=$(wc -l < "$cidr_list")
+    log "Total CIDRs for ipset '$set_name': $cnt"
+
+    # Generate an ipset-restore script
+    restore_script=$(tmp_file)
+    {
+        _print_create_ipset "$target_set" "$cnt"
+
+        while IFS= read -r line; do
+            [[ -n $line ]] || continue
+            _print_add_entry "$target_set" "$line"
+        done < "$cidr_list"
+
+        if [[ $target_set != "$set_name" ]]; then
+            _print_swap_and_destroy "$target_set" "$set_name"
+        fi
+    } > "$restore_script"
+
+    # Apply
+    log "Applying ipset '$set_name'..."
+    ipset restore -! < "$restore_script" || rc=$?
+    rm -f "$restore_script" "$cidr_list"
+
+    if [[ $rc -ne 0 ]]; then
+        log -l ERROR "Failed to build ipset '$set_name'"
+        return 1
+    fi
+
+    # Save dump
+    ipset save "$set_name" > "$dump"
+
+    cnt=$(_ipset_count "$set_name")
+    if [[ $target_set == "$set_name" ]]; then
+        log "Created new ipset '$set_name' ($cnt entries)"
+    else
+        log "Updated existing ipset '$set_name' ($cnt entries)"
+    fi
+
+    if [[ $cnt -eq 0 ]]; then
+        log -l WARN "ipset '$set_name' is empty"
+    fi
+
+    return 0
+}
+
+# -------------------------------------------------------------------------------------------------
+# _build_combo_ipset - build a combo (list:set) ipset
+# -------------------------------------------------------------------------------------------------
+_build_combo_ipset() {
+    local combo="$1"  # comma-separated list, e.g., "us,ca,uk"
+    local set_name added=0 member
+
+    set_name="$(_derive_set_name "${combo//,/_}")"
+
+    if _ipset_exists "$set_name"; then
+        log "Combo ipset '$set_name' already exists; skipping"
+        return 0
+    fi
+
+    ipset create "$set_name" list:set
+
+    local -a keys_array
+    read -ra keys_array <<< "${combo//,/ }"
+    for key in "${keys_array[@]}"; do
+        member="$(_derive_set_name "$key")"
+
+        if ! _ipset_exists "$member"; then
+            log -l WARN "Combo '$set_name': member '$member' not found; skipping"
+            continue
+        fi
+
+        if ipset add "$set_name" "$member" 2>/dev/null; then
+            added=$((added + 1))
+        fi
+    done
+
+    if [[ $added -eq 0 ]]; then
+        ipset destroy "$set_name" 2>/dev/null || true
+        log -l WARN "Combo '$set_name' had no valid members; not created"
+        return 1
+    fi
+
+    log "Created combo ipset '$set_name' ($added members)"
+    return 0
+}
+
+###################################################################################################
+# Public API
+###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# ipset_status - show ipset information
+# -------------------------------------------------------------------------------------------------
+ipset_status() {
+    local ipsets
+
+    printf '%s\n' "=== IPSet Status ==="
+    printf '\n'
+
+    # List all ipsets
+    ipsets=$(ipset list -n 2>/dev/null | sort)
+
+    if [[ -z $ipsets ]]; then
+        printf '%s\n' "No ipsets loaded."
+        return 0
+    fi
+
+    printf '%-24s %10s %s\n' "Name" "Entries" "Type"
+    printf '%-24s %10s %s\n' "----" "-------" "----"
+
+    while IFS= read -r name; do
+        local info type entries
+        # Guard against concurrent set removal: if lookup fails, skip this set
+        if ! info=$(ipset list "$name" 2>/dev/null); then
+            continue
+        fi
+        type=$(printf '%s\n' "$info" | awk '/^Type:/ { print $2 }')
+        entries=$(printf '%s\n' "$info" | awk '/Number of entries:/ { print $4 }')
+        printf '%-24s %10s %s\n' "$name" "${entries:-0}" "${type:-unknown}"
+    done <<< "$ipsets"
+
+    printf '\n'
+    return 0
+}
+
+# -------------------------------------------------------------------------------------------------
+# ipset_ensure - ensure ipsets exist (load from cache or download)
+# -------------------------------------------------------------------------------------------------
+# Usage:
+#   ipset_ensure "ru"           # ensure country ipset 'ru' exists
+#   ipset_ensure "us,ca"        # ensure combo ipset 'us_ca' exists (and members)
+#
+# For combo sets, this also ensures all member country sets exist.
+# Input is normalized and validated (trim, lowercase, valid ISO codes).
+# -------------------------------------------------------------------------------------------------
+ipset_ensure() {
+    local raw_spec="$1" spec
+    local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+
+    # Normalize and validate input
+    if ! spec=$(_normalize_spec "$raw_spec"); then
+        log -l ERROR "ipset_ensure: invalid spec '$raw_spec'"
+        return 1
+    fi
+
+    mkdir -p "$dump_dir"
+
+    # Check if this is a combo set (contains comma)
+    if [[ $spec == *,* ]]; then
+        # It's a combo - first ensure all members exist
+        local -a members
+        read -ra members <<< "${spec//,/ }"
+        for cc in "${members[@]}"; do
+            ipset_ensure "$cc" || return 1
+        done
+        # Then build the combo
+        _build_combo_ipset "$spec"
+    else
+        # Single country set
+        local set_name="$spec"
+        local dump="${dump_dir}/${set_name}-ipdeny.dump"
+
+        # Try restore from cache first (skip if IPSET_FORCE_UPDATE is set)
+        if _restore_from_cache "$set_name" "$dump" "${IPSET_FORCE_UPDATE:-0}"; then
+            return 0
+        fi
+
+        # Need to download and build
+        _build_country_ipset "$spec" "$dump_dir"
+    fi
+}
+
+# -------------------------------------------------------------------------------------------------
+# ipset_update - force fresh download of ipsets
+# -------------------------------------------------------------------------------------------------
+# Usage:
+#   ipset_update "ru"           # force update country ipset 'ru'
+#   ipset_update "us,ca"        # force update combo ipset and all members
+#
+# Input is normalized and validated (trim, lowercase, valid ISO codes).
+# -------------------------------------------------------------------------------------------------
+ipset_update() {
+    local raw_spec="$1" spec
+    local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+
+    # Normalize and validate input
+    if ! spec=$(_normalize_spec "$raw_spec"); then
+        log -l ERROR "ipset_update: invalid spec '$raw_spec'"
+        return 1
+    fi
+
+    mkdir -p "$dump_dir"
+
+    # Check if this is a combo set (contains comma)
+    if [[ $spec == *,* ]]; then
+        # It's a combo - first update all members
+        local -a members
+        read -ra members <<< "${spec//,/ }"
+        for cc in "${members[@]}"; do
+            ipset_update "$cc" || return 1
+        done
+        # Recreate the combo
+        local set_name
+        set_name="$(_derive_set_name "${spec//,/_}")"
+        ipset destroy "$set_name" 2>/dev/null || true
+        _build_combo_ipset "$spec"
+    else
+        # Single country set - force rebuild
+        _build_country_ipset "$spec" "$dump_dir"
+    fi
+}
+
+# -------------------------------------------------------------------------------------------------
+# ipset_cleanup - remove orphaned ipsets (placeholder for future implementation)
+# -------------------------------------------------------------------------------------------------
+ipset_cleanup() {
+    log -l WARN "ipset_cleanup: not yet implemented"
+    # TODO: Compare loaded ipsets with rules and remove orphans
+    return 0
+}
+
+###################################################################################################
+# Allow sourcing for testing
+###################################################################################################
+if [[ ${1:-} == "--source-only" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi

@@ -71,7 +71,7 @@ load 'test_helper'
 
 @test "config.sh: fails on missing config file" {
     export VPD_CONFIG_FILE="/nonexistent/config.json"
-    run source "$UTILS_DIR/config.sh"
+    run source "$LIB_DIR/config.sh"
     assert_failure
     assert_output --partial "ERROR"
     assert_output --partial "Config not found"
@@ -81,7 +81,7 @@ load 'test_helper'
     local tmp_invalid="/tmp/bats_invalid_config.json"
     echo "not valid json {" > "$tmp_invalid"
     export VPD_CONFIG_FILE="$tmp_invalid"
-    run source "$UTILS_DIR/config.sh"
+    run source "$LIB_DIR/config.sh"
     assert_failure
     assert_output --partial "ERROR"
     assert_output --partial "Invalid JSON"

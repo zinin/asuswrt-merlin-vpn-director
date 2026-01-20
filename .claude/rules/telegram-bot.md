@@ -32,7 +32,7 @@ telegram-bot/
 | Command | Handler | Description |
 |---------|---------|-------------|
 | `/start` | `handleStart` | Show help |
-| `/status` | `handleStatus` | Xray status via xray_tproxy.sh |
+| `/status` | `handleStatus` | Xray status via vpn-director.sh |
 | `/servers` | `handleServers` | List imported servers |
 | `/import <url>` | `handleImport` | Import VLESS subscription |
 | `/configure` | `handleConfigure` | Start config wizard |
@@ -53,7 +53,7 @@ telegram-bot/
 On apply:
 - Updates vpn-director.json (clients, exclusions, rules)
 - Generates /opt/etc/xray/config.json from template
-- Runs `ipset_builder.sh -t -x`
+- Runs `vpn-director.sh update`
 - Restarts Xray
 
 ## Config File

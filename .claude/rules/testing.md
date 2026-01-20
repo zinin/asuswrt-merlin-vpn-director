@@ -11,34 +11,39 @@ Uses [Bats](https://bats-core.readthedocs.io/) (Bash Automated Testing System) w
 ## Running Tests
 
 ```bash
-npx bats test/              # Run all tests
+npx bats test/              # Run all tests (recursive)
+npx bats test/unit/         # Run unit tests only
+npx bats test/integration/  # Run integration tests only
 npx bats test/common.bats   # Run specific test file
-npx bats test/*.bats        # Run all .bats files
 ```
 
 ## Test Structure
 
 ```
 test/
-├── test_helper.bash    # Shared setup, helpers, paths
-├── fixtures/           # Test data files
-│   ├── hosts           # Mock /etc/hosts
+├── test_helper.bash         # Shared setup, helpers, paths
+├── fixtures/                # Test data files
+│   ├── hosts                # Mock /etc/hosts
 │   ├── vpn-director.json
 │   └── vless_servers.b64
-├── mocks/              # Mock executables
-│   ├── nvram           # Mock nvram command
-│   ├── iptables        # Mock iptables
-│   ├── ip6tables       # Mock ip6tables
-│   ├── ipset           # Mock ipset
-│   ├── nslookup        # Mock DNS resolution
-│   ├── logger          # Mock syslog
-│   └── ip              # Mock ip command
-├── common.bats         # Tests for common.sh utilities
-├── firewall.bats       # Tests for firewall.sh
-├── config.bats         # Tests for config.sh
-├── ipset_builder.bats  # Tests for ipset_builder.sh
-├── tunnel_director.bats # Tests for tunnel_director.sh
-└── import_server_list.bats # Tests for import_server_list.sh
+├── mocks/                   # Mock executables
+│   ├── nvram                # Mock nvram command
+│   ├── iptables             # Mock iptables
+│   ├── ip6tables            # Mock ip6tables
+│   ├── ipset                # Mock ipset
+│   ├── nslookup             # Mock DNS resolution
+│   ├── logger               # Mock syslog
+│   └── ip                   # Mock ip command
+├── unit/                    # Unit tests for lib/ modules
+│   ├── ipset.bats           # Tests for lib/ipset.sh
+│   ├── tunnel.bats          # Tests for lib/tunnel.sh
+│   └── tproxy.bats          # Tests for lib/tproxy.sh
+├── integration/             # Integration tests
+│   └── vpn_director.bats    # Tests for vpn-director.sh CLI
+├── common.bats              # Tests for lib/common.sh
+├── firewall.bats            # Tests for lib/firewall.sh
+├── config.bats              # Tests for lib/config.sh
+└── import_server_list.bats  # Tests for import_server_list.sh
 ```
 
 ## Writing Tests
@@ -58,9 +63,12 @@ test/
 
 | Helper | Purpose |
 |--------|---------|
-| `load_common` | Source common.sh with mocks in PATH |
-| `load_firewall` | Source firewall.sh (includes common.sh) |
-| `load_config` | Source config.sh with test fixture |
+| `load_common` | Source lib/common.sh with mocks in PATH |
+| `load_firewall` | Source lib/firewall.sh (includes common.sh) |
+| `load_config` | Source lib/config.sh with test fixture |
+| `load_ipset_module` | Source lib/ipset.sh module |
+| `load_tunnel_module` | Source lib/tunnel.sh module |
+| `load_tproxy_module` | Source lib/tproxy.sh module |
 
 ### Assertions (bats-assert)
 
@@ -100,8 +108,11 @@ Mocks are added to PATH before real commands via `setup()`.
 
 ## Adding New Tests
 
-1. Create `test/new_feature.bats`
-2. Add `load 'test_helper'` at top
+1. Create test file in appropriate directory:
+   - `test/unit/` for module unit tests
+   - `test/integration/` for CLI integration tests
+   - `test/` for utility tests (common, firewall, config)
+2. Add `load 'test_helper'` at top (use relative path: `load '../test_helper'` from subdirs)
 3. Use appropriate `load_*` helper to source scripts
 4. Add mocks to `test/mocks/` if needed
-5. Run: `npx bats test/new_feature.bats`
+5. Run: `npx bats test/unit/new_module.bats`

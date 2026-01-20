@@ -13,3 +13,6 @@ Thumbs.db
 # Temporary
 *.tmp
 *.bak
+
+# Plans (local only)
+docs/plans/

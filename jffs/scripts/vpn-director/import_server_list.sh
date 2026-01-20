@@ -14,8 +14,8 @@ fi
 
 # Source common utilities (use BASH_SOURCE for correct path when sourced)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=utils/common.sh
-. "$SCRIPT_DIR/utils/common.sh"
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
 
 # Paths
 JFFS_DIR="/jffs/scripts/vpn-director"

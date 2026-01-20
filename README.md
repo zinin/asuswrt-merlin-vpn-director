@@ -64,18 +64,24 @@ After installation, configs are located at:
 ## Commands
 
 ```bash
-# Xray TPROXY
-/jffs/scripts/vpn-director/xray_tproxy.sh status|start|stop|restart
+# VPN Director CLI
+/jffs/scripts/vpn-director/vpn-director.sh status              # Show all status
+/jffs/scripts/vpn-director/vpn-director.sh apply               # Apply configuration
+/jffs/scripts/vpn-director/vpn-director.sh stop                # Stop all components
+/jffs/scripts/vpn-director/vpn-director.sh restart             # Restart all
+/jffs/scripts/vpn-director/vpn-director.sh update              # Update ipsets + reapply
 
-# IPSet Builder
-/jffs/scripts/vpn-director/ipset_builder.sh       # Restore from cache
-/jffs/scripts/vpn-director/ipset_builder.sh -u    # Force rebuild
-
-# Tunnel Director
-/jffs/scripts/vpn-director/tunnel_director.sh
+# Component-specific
+/jffs/scripts/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
+/jffs/scripts/vpn-director/vpn-director.sh restart xray        # Restart Xray TPROXY only
 
 # Import servers
 /jffs/scripts/vpn-director/import_server_list.sh
+
+# Shell aliases (after install)
+vpd status
+vpd apply
+ipt           # Legacy alias (runs: vpd update)
 ```
 
 ## Telegram Bot
@@ -128,8 +134,9 @@ This project uses Entware init.d for automatic startup:
 
 | Script | When Called | Purpose |
 |--------|-------------|---------|
-| `/opt/etc/init.d/S99vpn-director` | After Entware initialized | Builds ipsets, starts Xray TPROXY, sets up cron |
-| `/jffs/scripts/firewall-start` | After firewall rules applied | Applies Tunnel Director rules (runtime reload) |
+| `/opt/etc/init.d/S99vpn-director` | After Entware initialized | Runs `vpn-director.sh apply` to initialize all components |
+| `/jffs/scripts/firewall-start` | After firewall rules applied | Reapplies configuration after firewall reload |
+| `/jffs/scripts/wan-event` | On WAN events | Handles WAN connection changes |
 
 **Note:** The init.d script ensures Entware bash is available before running vpn-director scripts.
 

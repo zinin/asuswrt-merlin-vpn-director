@@ -6,14 +6,13 @@ paths: "jffs/scripts/vpn-director/**"
 
 Builds country and combo ipsets for Tunnel Director and Xray TPROXY.
 
-## Usage
+Module location: `lib/ipset.sh`
+
+## Usage via CLI
 
 ```bash
-ipset_builder.sh           # Restore from cache
-ipset_builder.sh -u        # Force full rebuild
-ipset_builder.sh -t        # Run tunnel_director.sh after
-ipset_builder.sh -x        # Run xray_tproxy.sh after
-ipset_builder.sh -c ru,ua  # Add extra countries
+vpn-director.sh update              # Update ipsets + reapply all
+vpn-director.sh apply               # Restore ipsets from cache + apply
 ```
 
 ## Data Sources
@@ -47,7 +46,7 @@ us-ipdeny.dump
 
 **Restore flow**:
 1. Try restore from dump
-2. If missing or `-u` flag: download and rebuild
+2. If missing or forced (via `vpn-director.sh update`): download and rebuild
 3. Atomic swap: `create tmp → swap → destroy tmp`
 
 ## Long Set Names
@@ -62,8 +61,8 @@ derive_set_name "very_long_set_name..."
 
 | Path | Purpose |
 |------|---------|
-| `/tmp/ipset_builder/` | Runtime state directory (`IPS_BUILDER_DIR` in shared.sh) |
-| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Rules hash after build (for tunnel_director sync) |
+| `/tmp/ipset_builder/` | Runtime state directory (`IPS_BUILDER_DIR` in lib/ipset.sh) |
+| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Rules hash after build (for tunnel module sync) |
 | `$IPS_BDR_DIR/ipsets/` | Persistent dump storage (from `data_dir`) |
 
 ## Boot Delay
@@ -84,12 +83,11 @@ Config options in `vpn-director.json` (`advanced.boot`):
 | `save_hashes()` | Save rules hash for tunnel_director sync |
 | `parse_country_codes()` | Extract CCs from rules (field 4 & 5) |
 | `parse_combo_from_rules()` | Extract comma-separated combos |
-| `derive_set_name()` | Handle long names (from `shared.sh`) |
+| `derive_set_name()` | Handle long names (from `lib/ipset.sh`) |
 | `_calc_ipset_size()` | Calculate hashsize from entry count |
 
 ## Build Steps
 
 1. **Country ipsets**: Parse rules → download from IPdeny → create
 2. **Combo ipsets**: Find multi-country refs → create `list:set`
-3. **Save hash**: Write `TUN_DIR_IPSETS_HASH` for tunnel_director.sh
-4. **Trigger scripts**: Run `-t` / `-x` if requested
+3. **Save hash**: Write `TUN_DIR_IPSETS_HASH` for tunnel module sync

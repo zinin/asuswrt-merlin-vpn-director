@@ -1,1 +1,2 @@
-alias ipt="/jffs/scripts/vpn-director/ipset_builder.sh -t"
+alias vpd='/jffs/scripts/vpn-director/vpn-director.sh'
+alias ipt='/jffs/scripts/vpn-director/vpn-director.sh apply'  # Backward compatibility
