@@ -376,24 +376,16 @@ _print_swap_and_destroy() {
 _download_zone() {
     local cc="$1" dest="$2"
     local url="${IPDENY_BASE_URL}/${cc}${IPDENY_FILE_SUFFIX}"
-    local http_code
 
     log "Downloading zone file for '$cc'..."
 
-    if ! http_code=$(curl -sS -o "$dest" -w "%{http_code}" "$url"); then
-        http_code=000
-    fi
-
-    [[ -n $http_code ]] || http_code=000
-
-    if [[ $http_code -ge 200 ]] && [[ $http_code -lt 300 ]]; then
-        log "Successfully downloaded zone for '$cc'"
-        return 0
-    else
-        rm -f "$dest"
-        log -l ERROR "Failed to download zone for '$cc' (HTTP $http_code)"
+    if ! download_file "$url" "$dest"; then
+        log -l ERROR "Failed to download zone for '$cc'"
         return 1
     fi
+
+    log "Successfully downloaded zone for '$cc'"
+    return 0
 }
 
 # -------------------------------------------------------------------------------------------------

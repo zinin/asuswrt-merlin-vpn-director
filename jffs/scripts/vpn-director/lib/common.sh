@@ -793,3 +793,48 @@ is_pos_int() {
 
     [ "$v" -ge 1 ] 2>/dev/null
 }
+
+###################################################################################################
+# download_file - download a file with retry and timeouts
+# -------------------------------------------------------------------------------------------------
+# Usage:
+#   download_file <url> <dest>
+#
+# Behavior:
+#   * Prefers wget if available (better retry handling, resume support).
+#   * Falls back to curl with timeouts if wget is not installed.
+#   * Timeout: 180 seconds (3 minutes) for both tools.
+#   * wget: 3 retry attempts.
+#   * Removes partial files on failure.
+#   * Returns 0 on success, 1 on failure.
+#
+# Examples:
+#   download_file "https://example.com/file.txt" "/tmp/file.txt"
+###################################################################################################
+download_file() {
+    local url="$1" dest="$2"
+    local timeout=180
+    local rc=0
+
+    if command -v wget >/dev/null 2>&1; then
+        # wget available: use with timeout and retries
+        log -l DEBUG "Downloading with wget: $url"
+        if ! wget -q -T "$timeout" -t 3 -O "$dest" "$url" 2>/dev/null; then
+            rc=1
+        fi
+    else
+        # Fallback to curl with timeouts
+        log -l DEBUG "Downloading with curl: $url"
+        if ! curl -sS --connect-timeout 30 --max-time "$timeout" -o "$dest" "$url" 2>/dev/null; then
+            rc=1
+        fi
+    fi
+
+    if [[ $rc -ne 0 ]]; then
+        rm -f "$dest"
+        log -l ERROR "Failed to download: $url"
+        return 1
+    fi
+
+    return 0
+}
