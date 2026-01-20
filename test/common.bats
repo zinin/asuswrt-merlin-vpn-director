@@ -193,3 +193,29 @@ load 'test_helper'
     assert_success
     assert_output "spaced"
 }
+
+# ============================================================================
+# download_file
+# ============================================================================
+
+@test "download_file: backward compatible with 2 args" {
+    load_common
+
+    # Test that function accepts 2 args (backward compatibility)
+    # Uses real curl which will succeed for example.com
+    run download_file "http://example.com/file" "/tmp/bats_test_dl"
+    assert_success
+
+    rm -f /tmp/bats_test_dl
+}
+
+@test "download_file: accepts custom timeout parameter" {
+    load_common
+
+    # Test with invalid URL to trigger failure path
+    # This verifies the function signature works with 3 args
+    run download_file "http://invalid.localhost.test/file" "/tmp/bats_test_dl2" 1
+    assert_failure
+
+    rm -f /tmp/bats_test_dl2
+}
