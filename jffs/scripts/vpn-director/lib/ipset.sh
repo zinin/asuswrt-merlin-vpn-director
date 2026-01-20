@@ -131,6 +131,63 @@ _derive_set_name() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _is_valid_country_code - check if string is a valid 2-letter ISO country code
+# -------------------------------------------------------------------------------------------------
+_is_valid_country_code() {
+    local code="$1"
+    [[ $code =~ ^[a-z]{2}$ ]] && [[ " $ALL_COUNTRY_CODES " == *" $code "* ]]
+}
+
+# -------------------------------------------------------------------------------------------------
+# _normalize_spec - normalize ipset spec (trim, lowercase, validate)
+# -------------------------------------------------------------------------------------------------
+# Input: raw spec (single country code or comma-separated list)
+# Output: normalized spec or empty string if invalid
+# Filters: trims whitespace, lowercases, drops empty tokens, validates country codes
+# -------------------------------------------------------------------------------------------------
+_normalize_spec() {
+    local raw="$1" normalized="" token lc_token
+    local -a tokens result_tokens
+
+    # Remove leading/trailing whitespace and convert to lowercase
+    raw=$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Empty after trim?
+    if [[ -z $raw ]]; then
+        return 1
+    fi
+
+    # Split on comma
+    IFS=',' read -ra tokens <<< "$raw"
+
+    for token in "${tokens[@]}"; do
+        # Trim whitespace from each token
+        lc_token=$(printf '%s' "$token" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+        # Skip empty tokens
+        [[ -z $lc_token ]] && continue
+
+        # Validate as country code
+        if ! _is_valid_country_code "$lc_token"; then
+            log -l WARN "Invalid country code '$lc_token'; skipping"
+            continue
+        fi
+
+        result_tokens+=("$lc_token")
+    done
+
+    # No valid tokens?
+    if [[ ${#result_tokens[@]} -eq 0 ]]; then
+        log -l ERROR "No valid country codes found in spec '$1'"
+        return 1
+    fi
+
+    # Join with comma
+    normalized=$(IFS=','; printf '%s' "${result_tokens[*]}")
+    printf '%s\n' "$normalized"
+}
+
+# -------------------------------------------------------------------------------------------------
 # parse_country_codes - extract country codes from tunnel director rules
 # -------------------------------------------------------------------------------------------------
 # Accepts rules via stdin in format: table:src[%iface][:src_excl]:set[:set_excl]
@@ -479,7 +536,10 @@ ipset_status() {
 
     while IFS= read -r name; do
         local info type entries
-        info=$(ipset list "$name" 2>/dev/null)
+        # Guard against concurrent set removal: if lookup fails, skip this set
+        if ! info=$(ipset list "$name" 2>/dev/null); then
+            continue
+        fi
         type=$(printf '%s\n' "$info" | awk '/^Type:/ { print $2 }')
         entries=$(printf '%s\n' "$info" | awk '/Number of entries:/ { print $4 }')
         printf '%-24s %10s %s\n' "$name" "${entries:-0}" "${type:-unknown}"
@@ -497,10 +557,17 @@ ipset_status() {
 #   ipset_ensure "us,ca"        # ensure combo ipset 'us_ca' exists (and members)
 #
 # For combo sets, this also ensures all member country sets exist.
+# Input is normalized and validated (trim, lowercase, valid ISO codes).
 # -------------------------------------------------------------------------------------------------
 ipset_ensure() {
-    local spec="$1"
+    local raw_spec="$1" spec
     local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+
+    # Normalize and validate input
+    if ! spec=$(_normalize_spec "$raw_spec"); then
+        log -l ERROR "ipset_ensure: invalid spec '$raw_spec'"
+        return 1
+    fi
 
     mkdir -p "$dump_dir"
 
@@ -535,10 +602,18 @@ ipset_ensure() {
 # Usage:
 #   ipset_update "ru"           # force update country ipset 'ru'
 #   ipset_update "us,ca"        # force update combo ipset and all members
+#
+# Input is normalized and validated (trim, lowercase, valid ISO codes).
 # -------------------------------------------------------------------------------------------------
 ipset_update() {
-    local spec="$1"
+    local raw_spec="$1" spec
     local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+
+    # Normalize and validate input
+    if ! spec=$(_normalize_spec "$raw_spec"); then
+        log -l ERROR "ipset_update: invalid spec '$raw_spec'"
+        return 1
+    fi
 
     mkdir -p "$dump_dir"
 

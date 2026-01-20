@@ -223,6 +223,87 @@ load_ipset_module() {
 }
 
 # ============================================================================
+# _is_valid_country_code - validate country codes
+# ============================================================================
+
+@test "_is_valid_country_code: returns success for valid code" {
+    load_ipset_module
+    _is_valid_country_code "ru"
+}
+
+@test "_is_valid_country_code: returns failure for invalid code" {
+    load_ipset_module
+    ! _is_valid_country_code "zz"
+}
+
+@test "_is_valid_country_code: returns failure for uppercase" {
+    load_ipset_module
+    ! _is_valid_country_code "RU"
+}
+
+@test "_is_valid_country_code: returns failure for 3-letter code" {
+    load_ipset_module
+    ! _is_valid_country_code "usa"
+}
+
+# ============================================================================
+# _normalize_spec - normalize and validate ipset specs
+# ============================================================================
+
+@test "_normalize_spec: returns lowercase for uppercase input" {
+    load_ipset_module
+    run _normalize_spec "RU"
+    assert_success
+    assert_output "ru"
+}
+
+@test "_normalize_spec: trims leading/trailing whitespace" {
+    load_ipset_module
+    run _normalize_spec "  ru  "
+    assert_success
+    assert_output "ru"
+}
+
+@test "_normalize_spec: handles combo sets with mixed case" {
+    load_ipset_module
+    run _normalize_spec "US,CA"
+    assert_success
+    assert_output "us,ca"
+}
+
+@test "_normalize_spec: skips empty tokens in combo" {
+    load_ipset_module
+    run _normalize_spec "us,,ca"
+    assert_success
+    assert_output "us,ca"
+}
+
+@test "_normalize_spec: skips invalid codes in combo" {
+    load_ipset_module
+    run _normalize_spec "us,invalid,ca"
+    assert_success
+    assert_output --partial "us,ca"
+}
+
+@test "_normalize_spec: returns failure for all invalid codes" {
+    load_ipset_module
+    run _normalize_spec "invalid,xyz"
+    assert_failure
+}
+
+@test "_normalize_spec: returns failure for empty input" {
+    load_ipset_module
+    run _normalize_spec ""
+    assert_failure
+}
+
+@test "_normalize_spec: returns failure for whitespace-only input" {
+    load_ipset_module
+    run _normalize_spec "   "
+    assert_failure
+}
+
+# ============================================================================
 # ipset_ensure - ensure ipsets exist
 # ============================================================================
 
@@ -230,4 +311,38 @@ load_ipset_module() {
     load_ipset_module
     run ipset_ensure "ru"
     assert_success
+}
+
+@test "ipset_ensure: normalizes uppercase input" {
+    load_ipset_module
+    run ipset_ensure "RU"
+    assert_success
+}
+
+@test "ipset_ensure: rejects invalid country code" {
+    load_ipset_module
+    run ipset_ensure "invalid"
+    assert_failure
+}
+
+@test "ipset_ensure: rejects empty input" {
+    load_ipset_module
+    run ipset_ensure ""
+    assert_failure
+}
+
+# ============================================================================
+# ipset_update - force update ipsets
+# ============================================================================
+
+@test "ipset_update: rejects invalid country code" {
+    load_ipset_module
+    run ipset_update "invalid"
+    assert_failure
+}
+
+@test "ipset_update: rejects empty input" {
+    load_ipset_module
+    run ipset_update ""
+    assert_failure
 }
