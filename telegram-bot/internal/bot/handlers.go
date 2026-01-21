@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,38 @@ import (
 
 const scriptsDir = "/jffs/scripts/vpn-director"
 const maxMessageLength = 4000 // Telegram limit is 4096, leave margin
+
+const (
+	botLogPath      = "/tmp/telegram-bot.log"
+	vpnLogPath      = "/tmp/vpn-director.log"
+	maxLogSize      = 200 * 1024 // 200KB
+	defaultLogLines = 20
+)
+
+// escapeMarkdownV2 escapes special characters for Telegram MarkdownV2
+func escapeMarkdownV2(text string) string {
+	replacer := strings.NewReplacer(
+		"_", "\\_",
+		"*", "\\*",
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		"`", "\\`",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"-", "\\-",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		".", "\\.",
+		"!", "\\!",
+	)
+	return replacer.Replace(text)
+}
 
 func (b *Bot) handleStart(msg *tgbotapi.Message) {
 	text := `VPN Director Bot
