@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/bot"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
@@ -25,6 +26,42 @@ func versionString() string {
 }
 
 const configPath = "/jffs/scripts/vpn-director/telegram-bot.json"
+
+const (
+	botLogPath = "/tmp/telegram-bot.log"
+	vpnLogPath = "/tmp/vpn-director.log"
+	maxLogSize = 200 * 1024 // 200KB
+)
+
+func truncateLogIfNeeded(path string, maxSize int64) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return // File doesn't exist, ignore
+	}
+	if info.Size() > maxSize {
+		if err := os.Truncate(path, 0); err != nil {
+			log.Printf("[WARN] Failed to truncate %s: %v", path, err)
+		} else {
+			log.Printf("[INFO] Truncated log file %s (was %d bytes)", path, info.Size())
+		}
+	}
+}
+
+func startLogRotation(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				truncateLogIfNeeded(botLogPath, maxLogSize)
+				truncateLogIfNeeded(vpnLogPath, maxLogSize)
+			}
+		}
+	}()
+}
 
 func main() {
 	// Initialize logging to file + stdout
@@ -53,6 +90,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	startLogRotation(ctx)
 
 	b, err := bot.New(cfg, versionString())
 	if err != nil {
