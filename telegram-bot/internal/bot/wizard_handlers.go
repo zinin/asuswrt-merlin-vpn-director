@@ -29,7 +29,7 @@ func (b *Bot) handleWizardInput(msg *tgbotapi.Message) {
 	if state.GetStep() == wizard.StepClientIP {
 		ip := strings.TrimSpace(msg.Text)
 		if !isValidLANIP(ip) {
-			b.sendMessage(msg.Chat.ID, "Invalid IP. Enter IP from range 192.168.x.x, 10.x.x.x or 172.16-31.x.x")
+			b.sendMessage(msg.Chat.ID, escapeMarkdownV2("Invalid IP. Enter IP from range 192.168.x.x, 10.x.x.x or 172.16-31.x.x"))
 			return
 		}
 		state.SetPendingIP(ip)
