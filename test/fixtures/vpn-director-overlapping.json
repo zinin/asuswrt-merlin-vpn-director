@@ -1,0 +1,34 @@
+{
+  "data_dir": "/tmp/bats_test_data",
+  "tunnel_director": {
+    "tunnels": {
+      "wgc1": {
+        "clients": ["192.168.50.0/24"],
+        "exclude": ["ru"]
+      },
+      "ovpnc1": {
+        "clients": ["192.168.50.100"],
+        "exclude": ["cn"]
+      }
+    }
+  },
+  "advanced": {
+    "xray": {
+      "tproxy_port": 12345,
+      "route_table": 100,
+      "rule_pref": 200,
+      "fwmark": "0x100",
+      "fwmark_mask": "0x100",
+      "chain": "XRAY_TPROXY",
+      "clients_ipset": "XRAY_CLIENTS",
+      "servers_ipset": "XRAY_SERVERS"
+    },
+    "tunnel_director": {
+      "chain": "TUN_DIR",
+      "pref_base": 16384,
+      "mark_mask": "0x00ff0000",
+      "mark_shift": 16
+    },
+    "boot": { "min_time": 120, "wait_delay": 30 }
+  }
+}
