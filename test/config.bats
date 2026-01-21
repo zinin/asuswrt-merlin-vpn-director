@@ -16,9 +16,19 @@ load 'test_helper'
 # config.sh: Tunnel Director variables
 # ============================================================================
 
-@test "config.sh: sets TUN_DIR_RULES" {
+@test "config.sh: exports TUN_DIR_TUNNELS_JSON" {
     load_config
-    [[ -n $TUN_DIR_RULES ]]
+    [ -n "$TUN_DIR_TUNNELS_JSON" ]
+}
+
+@test "config.sh: TUN_DIR_TUNNELS_JSON contains tunnel data" {
+    load_config
+    echo "$TUN_DIR_TUNNELS_JSON" | jq -e '.wgc1.clients[0]' >/dev/null
+}
+
+@test "config.sh: exports TUN_DIR_CHAIN (not prefix)" {
+    load_config
+    [ "$TUN_DIR_CHAIN" = "TUN_DIR" ]
 }
 
 @test "config.sh: sets IPS_BDR_DIR" {
@@ -54,11 +64,6 @@ load 'test_helper'
 # ============================================================================
 # config.sh: Advanced Tunnel Director variables
 # ============================================================================
-
-@test "config.sh: sets TUN_DIR_CHAIN_PREFIX" {
-    load_config
-    [[ $TUN_DIR_CHAIN_PREFIX == "TUN_DIR_" ]]
-}
 
 @test "config.sh: sets TUN_DIR_PREF_BASE" {
     load_config
