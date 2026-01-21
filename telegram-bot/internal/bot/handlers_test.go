@@ -44,6 +44,11 @@ func TestEscapeMarkdownV2(t *testing.T) {
 			input:    "_*[]()~`>#+-=|{}.!",
 			expected: "\\_\\*\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!",
 		},
+		{
+			name:     "backslash",
+			input:    "path\\to\\file",
+			expected: "path\\\\to\\\\file",
+		},
 	}
 
 	for _, tt := range tests {

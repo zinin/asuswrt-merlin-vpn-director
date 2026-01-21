@@ -31,6 +31,7 @@ const (
 // escapeMarkdownV2 escapes special characters for Telegram MarkdownV2
 func escapeMarkdownV2(text string) string {
 	replacer := strings.NewReplacer(
+		"\\", "\\\\", // backslash must be first
 		"_", "\\_",
 		"*", "\\*",
 		"[", "\\[",
@@ -186,7 +187,7 @@ func (b *Bot) handleStart(msg *tgbotapi.Message) {
 Commands:
 /status \- Xray status
 /servers \- server list
-/import <url> \- import servers
+/import \<url\> \- import servers
 /configure \- configuration
 /restart \- restart Xray
 /stop \- stop Xray
