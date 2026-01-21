@@ -102,11 +102,11 @@ load '../test_helper'
     assert_output --partial "Tunnel Director Status"
 }
 
-@test "tunnel_status: shows chain info section" {
+@test "tunnel_status: shows chain section with TUN_DIR name" {
     load_tunnel_module
     run tunnel_status
     assert_success
-    assert_output --partial "Chains"
+    assert_output --partial "Chain: TUN_DIR"
 }
 
 @test "tunnel_status: shows ip rules section" {
@@ -114,6 +114,13 @@ load '../test_helper'
     run tunnel_status
     assert_success
     assert_output --partial "IP Rules"
+}
+
+@test "tunnel_status: shows configured tunnels section" {
+    load_tunnel_module
+    run tunnel_status
+    assert_success
+    assert_output --partial "Configured Tunnels"
 }
 
 # ============================================================================

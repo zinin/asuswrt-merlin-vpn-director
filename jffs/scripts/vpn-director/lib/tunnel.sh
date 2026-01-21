@@ -173,7 +173,7 @@ _tunnel_get_prerouting_base_pos() {
 # -------------------------------------------------------------------------------------------------
 # tunnel_status - show tunnel director status
 # -------------------------------------------------------------------------------------------------
-# Displays TUN_DIR_* chains, ip rules, and fwmark configuration.
+# Displays TUN_DIR chain rules, ip rules, and configured tunnels.
 # -------------------------------------------------------------------------------------------------
 tunnel_status() {
     _tunnel_init
@@ -181,27 +181,19 @@ tunnel_status() {
     printf '%s\n' "=== Tunnel Director Status ==="
     printf '\n'
 
-    # Show chains
-    printf '%s\n' "--- Chains ---"
-    local chains
-    chains="$(
-        iptables -t mangle -S 2>/dev/null |
-        awk -v pre="${TUN_DIR_CHAIN_PREFIX:-TUN_DIR_}" '
-            $1 == "-N" && $2 ~ ("^" pre "[0-9]+$") { print $2 }
-        ' | sort -t'_' -k3,3n
-    )"
-
-    if [[ -z $chains ]]; then
-        printf '%s\n' "No TUN_DIR_* chains found."
+    # Show chain rules
+    printf '%s\n' "--- Chain: $TUN_DIR_CHAIN ---"
+    if fw_chain_exists mangle "$TUN_DIR_CHAIN"; then
+        iptables -t mangle -S "$TUN_DIR_CHAIN" 2>/dev/null | tail -n +2
     else
-        printf '%s\n' "$chains"
+        printf '%s\n' "Chain not found (not applied)"
     fi
     printf '\n'
 
     # Show IP rules
     printf '%s\n' "--- IP Rules (fwmark-based) ---"
     local ip_rules
-    ip_rules="$(ip rule show 2>/dev/null | grep -E "fwmark.*lookup" || true)"
+    ip_rules=$(ip rule show 2>/dev/null | grep -E "fwmark.*lookup" || true)
 
     if [[ -z $ip_rules ]]; then
         printf '%s\n' "No fwmark-based ip rules found."
@@ -210,11 +202,16 @@ tunnel_status() {
     fi
     printf '\n'
 
-    # Show fwmark configuration
-    printf '%s\n' "--- Fwmark Configuration ---"
-    printf 'Mask: %s\n' "$_tunnel_mark_mask_hex"
-    printf 'Shift: %s\n' "$_tunnel_mark_shift_val"
-    printf 'Max rules: %s\n' "$_tunnel_mark_field_max"
+    # Show configured tunnels
+    printf '%s\n' "--- Configured Tunnels ---"
+    if [[ -z $TUN_DIR_TUNNELS_JSON ]] || [[ $TUN_DIR_TUNNELS_JSON == "{}" ]]; then
+        printf '%s\n' "No tunnels configured."
+    else
+        printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '
+            to_entries[] |
+            "Tunnel: \(.key)\n  Clients: \(.value.clients | join(", "))\n  Exclude: \(.value.exclude // [] | join(", "))"
+        '
+    fi
     printf '\n'
 
     return 0
