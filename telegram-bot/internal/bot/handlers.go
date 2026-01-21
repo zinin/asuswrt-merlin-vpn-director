@@ -255,24 +255,24 @@ func (b *Bot) sendLongMessage(chatID int64, text string) {
 func (b *Bot) handleImport(msg *tgbotapi.Message) {
 	args := msg.CommandArguments()
 	if args == "" {
-		b.sendMessage(msg.Chat.ID, "Usage: /import <url>")
+		b.sendMessage(msg.Chat.ID, "Usage: `/import <url>`")
 		return
 	}
 
 	// Validate URL scheme
 	parsedURL, err := url.Parse(args)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		b.sendMessage(msg.Chat.ID, "Invalid URL. Use http:// or https://")
+		b.sendMessage(msg.Chat.ID, "Invalid URL\\. Use http:// or https://")
 		return
 	}
 
-	b.sendMessage(msg.Chat.ID, "Loading server list...")
+	b.sendMessage(msg.Chat.ID, "Loading server list\\.\\.\\.")
 
 	// HTTP client with timeout
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(args)
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Download error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Download error: %v", err)))
 		return
 	}
 	defer resp.Body.Close()
@@ -286,7 +286,7 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 	// Limit body size (1MB max)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Read error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Read error: %v", err)))
 		return
 	}
 
@@ -296,7 +296,7 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 		if len(parseErrors) > 0 {
 			errMsg += fmt.Sprintf("\nErrors: %v", parseErrors)
 		}
-		b.sendMessage(msg.Chat.ID, errMsg)
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(errMsg))
 		return
 	}
 
@@ -332,28 +332,28 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 
 	// Ensure data dir exists
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Directory creation error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Directory creation error: %v", err)))
 		return
 	}
 
 	if err := vpnconfig.SaveServers(dataDir+"/servers.json", resolved); err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Save error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Save error: %v", err)))
 		return
 	}
 
 	// Response with full stats
 	var sb strings.Builder
 	if resolveErrors > 0 {
-		sb.WriteString(fmt.Sprintf("⚠️ Imported %d of %d (%d DNS errors):\n",
+		sb.WriteString(fmt.Sprintf("⚠️ Imported %d of %d \\(%d DNS errors\\):\n",
 			len(resolved), totalParsed, resolveErrors))
 	} else {
-		sb.WriteString(fmt.Sprintf("✓ Imported %d servers:\n", len(resolved)))
+		sb.WriteString(fmt.Sprintf("✅ Imported %d servers:\n", len(resolved)))
 	}
 	for i, s := range resolved {
-		sb.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, s.Name, s.Address))
+		sb.WriteString(fmt.Sprintf("%d\\. %s — %s\n", i+1, escapeMarkdownV2(s.Name), escapeMarkdownV2(s.Address)))
 	}
 	if len(parseErrors) > 0 {
-		sb.WriteString(fmt.Sprintf("\n(%d with errors)", len(parseErrors)))
+		sb.WriteString(fmt.Sprintf("\n\\(%d with errors\\)", len(parseErrors)))
 	}
 	b.sendLongMessage(msg.Chat.ID, sb.String())
 }
