@@ -72,10 +72,11 @@ Commands:
 func (b *Bot) handleStatus(msg *tgbotapi.Message) {
 	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "status")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, result.Output)
+	text := fmt.Sprintf("📊 *VPN Director Status*:\n```\n%s```", result.Output)
+	b.sendLongMessage(msg.Chat.ID, text)
 }
 
 func (b *Bot) handleServers(msg *tgbotapi.Message) {
