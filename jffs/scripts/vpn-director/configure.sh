@@ -384,29 +384,17 @@ step_generate_configs() {
 step_apply_rules() {
     print_header "Step 6: Applying Rules"
 
-    # Load TPROXY module
-    print_info "Loading TPROXY kernel module..."
-    modprobe xt_TPROXY 2>/dev/null || true
-
-    # Restart Xray
-    print_info "Restarting Xray..."
-    XRAY_INIT=$(find /opt/etc/init.d -maxdepth 1 -name 'S*xray' 2>/dev/null | head -1)
-    if [[ -n $XRAY_INIT ]] && [[ -x $XRAY_INIT ]]; then
-        "$XRAY_INIT" restart
-        print_success "Xray restarted"
-    else
-        print_warning "Xray init script not found, skipping restart"
-    fi
-
-    # Apply VPN Director rules (ipsets, tunnel, xray)
-    print_info "Applying VPN Director rules (this may take a while)..."
+    print_info "Applying configuration (this may take a while)..."
     if [[ -x $JFFS_DIR/vpn-director.sh ]]; then
-        "$JFFS_DIR/vpn-director.sh" apply || {
-            print_warning "vpn-director.sh apply failed"
+        "$JFFS_DIR/vpn-director.sh" restart || {
+            print_warning "vpn-director.sh restart failed"
+            return 1
         }
+        print_success "Configuration applied"
+    else
+        print_error "vpn-director.sh not found"
+        return 1
     fi
-
-    print_success "Rules applied"
 }
 
 ###############################################################################

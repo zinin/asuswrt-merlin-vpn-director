@@ -259,8 +259,10 @@ cmd_stop() {
 }
 
 cmd_restart() {
+    _load_modules
     case "$COMPONENT" in
         ""|all)
+            tproxy_restart_process
             cmd_stop
             cmd_apply
             ;;
@@ -269,6 +271,7 @@ cmd_restart() {
             COMPONENT=tunnel cmd_apply
             ;;
         xray|tproxy)
+            tproxy_restart_process
             COMPONENT=xray cmd_stop
             COMPONENT=xray cmd_apply
             ;;

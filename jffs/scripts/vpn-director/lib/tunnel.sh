@@ -188,7 +188,7 @@ tunnel_status() {
         iptables -t mangle -S 2>/dev/null |
         awk -v pre="${TUN_DIR_CHAIN_PREFIX:-TUN_DIR_}" '
             $1 == "-N" && $2 ~ ("^" pre "[0-9]+$") { print $2 }
-        ' | sort -V
+        ' | sort -t'_' -k3,3n
     )"
 
     if [[ -z $chains ]]; then

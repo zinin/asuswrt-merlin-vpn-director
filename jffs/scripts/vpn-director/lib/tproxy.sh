@@ -16,6 +16,7 @@
 #   tproxy_status()              - show XRAY_TPROXY chain, routing, xray process
 #   tproxy_apply()               - apply TPROXY rules (idempotent), soft-fail if unavailable
 #   tproxy_stop()                - remove chain and routing
+#   tproxy_restart_process()     - restart Xray process via Entware init script
 #   tproxy_get_required_ipsets() - return list of exclude ipsets
 #
 # Internal functions (for testing):
@@ -335,6 +336,25 @@ _tproxy_teardown_iptables() {
 ###################################################################################################
 # Public API (defined before --source-only for testability)
 ###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# tproxy_restart_process - restart Xray process via Entware init script
+# -------------------------------------------------------------------------------------------------
+# Finds and executes the S*xray init script in /opt/etc/init.d/ to restart the Xray process.
+# This is needed when xray/config.json is changed and Xray needs to reload its configuration.
+# -------------------------------------------------------------------------------------------------
+tproxy_restart_process() {
+    local xray_init
+    xray_init=$(find /opt/etc/init.d -maxdepth 1 -name 'S*xray' 2>/dev/null | head -1)
+
+    if [[ -n $xray_init ]] && [[ -x $xray_init ]]; then
+        log "Restarting Xray process..."
+        "$xray_init" restart
+        log "Xray process restarted"
+    else
+        log -l WARN "Xray init script not found in /opt/etc/init.d/"
+    fi
+}
 
 # -------------------------------------------------------------------------------------------------
 # tproxy_status - show TPROXY status
