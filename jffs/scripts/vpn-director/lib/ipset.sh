@@ -445,6 +445,63 @@ _try_manual_fallback() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _download_zone_multi_source - download zone file trying multiple sources
+# -------------------------------------------------------------------------------------------------
+# Tries sources in priority order:
+#   1. GeoLite2 via GitHub (most accurate)
+#   2. IPDeny via GitHub (mirror)
+#   3. IPDeny direct (may be blocked)
+#   4. Manual fallback (interactive only)
+#
+# Args:
+#   $1 - country code (2-letter ISO)
+#   $2 - destination file path
+# Returns:
+#   0 on success, 1 if all sources failed
+# -------------------------------------------------------------------------------------------------
+_download_zone_multi_source() {
+    local cc="$1" dest="$2"
+    local url tmp_file
+
+    tmp_file=$(tmp_file)
+
+    # Source 1: GeoLite2 via GitHub
+    url="${GEOLITE2_GITHUB_URL}/country_${cc}.netset"
+    log "Trying geolite2-github for '$cc'..."
+    if _try_download_zone "$url" "$tmp_file" "$dest"; then
+        log "Downloaded zone for '$cc' from geolite2-github"
+        return 0
+    fi
+    log -l ERROR "geolite2-github failed for '$cc'"
+
+    # Source 2: IPDeny via GitHub
+    url="${IPDENY_GITHUB_URL}/id_country_${cc}.netset"
+    log "Trying ipdeny-github for '$cc'..."
+    if _try_download_zone "$url" "$tmp_file" "$dest"; then
+        log "Downloaded zone for '$cc' from ipdeny-github"
+        return 0
+    fi
+    log -l ERROR "ipdeny-github failed for '$cc'"
+
+    # Source 3: IPDeny direct
+    url="${IPDENY_DIRECT_URL}/${cc}-aggregated.zone"
+    log "Trying ipdeny-direct for '$cc'..."
+    if _try_download_zone "$url" "$tmp_file" "$dest"; then
+        log "Downloaded zone for '$cc' from ipdeny-direct"
+        return 0
+    fi
+    log -l ERROR "ipdeny-direct failed for '$cc'"
+
+    # Source 4: Manual fallback (interactive only)
+    if _try_manual_fallback "$cc" "$dest"; then
+        return 0
+    fi
+
+    rm -f "$tmp_file"
+    return 1
+}
+
+# -------------------------------------------------------------------------------------------------
 # _download_zone - download a zone file from IPdeny with interactive fallback
 # -------------------------------------------------------------------------------------------------
 # If download fails and stdin is a tty, prompts user to manually download

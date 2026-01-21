@@ -557,3 +557,69 @@ EOF
 
     rm -f "$fallback" "$dest"
 }
+
+# ============================================================================
+# _download_zone_multi_source - try multiple sources in order
+# ============================================================================
+
+@test "_download_zone_multi_source: tries sources in priority order" {
+    load_ipset_module
+
+    local call_count=0
+    local dest="/tmp/bats_multi_dest.txt"
+
+    # Mock _try_download_zone: fail first, succeed second
+    _try_download_zone() {
+        call_count=$((call_count + 1))
+        if [[ $call_count -eq 1 ]]; then
+            return 1  # geolite2 fails
+        fi
+        # ipdeny-github succeeds
+        echo "1.0.0.0/24" > "$3"
+        return 0
+    }
+
+    _try_manual_fallback() {
+        return 1
+    }
+
+    run _download_zone_multi_source "ru" "$dest"
+    assert_success
+
+    rm -f "$dest"
+}
+
+@test "_download_zone_multi_source: all sources fail returns error" {
+    load_ipset_module
+
+    _try_download_zone() {
+        return 1
+    }
+
+    _try_manual_fallback() {
+        return 1
+    }
+
+    run _download_zone_multi_source "ru" "/tmp/bats_dest.txt"
+    assert_failure
+}
+
+@test "_download_zone_multi_source: logs ERROR for each failed source" {
+    load_ipset_module
+
+    _try_download_zone() {
+        return 1
+    }
+
+    _try_manual_fallback() {
+        return 1
+    }
+
+    run _download_zone_multi_source "ru" "/tmp/bats_dest.txt"
+    assert_failure
+
+    # Check log file for ERROR entries
+    run grep -c "ERROR" "$LOG_FILE"
+    # Should have at least 3 ERROR logs (one per source)
+    [[ "$output" -ge 3 ]]
+}
