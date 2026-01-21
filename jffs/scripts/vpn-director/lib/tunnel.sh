@@ -125,28 +125,6 @@ _tunnel_table_allowed() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _tunnel_resolve_set - resolve ipset name from keys
-# -------------------------------------------------------------------------------------------------
-# Input: comma-separated keys (countries/custom/combos)
-# Output: resolved ipset name if exists, empty string otherwise
-# -------------------------------------------------------------------------------------------------
-_tunnel_resolve_set() {
-    local keys_csv="$1" set_name
-
-    # Derive the set name (handles combo names like us,ca -> us_ca)
-    set_name="$(_derive_set_name "${keys_csv//,/_}")"
-
-    # Check if ipset exists
-    if ipset list "$set_name" >/dev/null 2>&1; then
-        printf '%s\n' "$set_name"
-        return 0
-    fi
-
-    # ipset not found - return empty
-    return 0
-}
-
-# -------------------------------------------------------------------------------------------------
 # _tunnel_get_prerouting_base_pos - find insert position after system rules
 # -------------------------------------------------------------------------------------------------
 # Returns the 1-based insert position in mangle/PREROUTING immediately

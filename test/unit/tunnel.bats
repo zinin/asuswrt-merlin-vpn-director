@@ -45,30 +45,6 @@ load '../test_helper'
 }
 
 # ============================================================================
-# _tunnel_resolve_set - resolve ipset name
-# ============================================================================
-
-@test "_tunnel_resolve_set: returns set name for existing single country" {
-    load_tunnel_module
-    result=$(_tunnel_resolve_set "ru")
-    [ "$result" = "ru" ]
-}
-
-@test "_tunnel_resolve_set: returns empty for non-existing set" {
-    load_tunnel_module
-    result=$(_tunnel_resolve_set "nonexistent_xyz")
-    [ -z "$result" ]
-}
-
-@test "_tunnel_resolve_set: returns derived name for combo set" {
-    load_tunnel_module
-    # For combo "us,ca", the derived name would be "us_ca" (if it exists)
-    result=$(_tunnel_resolve_set "us,ca")
-    # Should return us_ca if the ipset exists (mock returns true)
-    [ "$result" = "us_ca" ]
-}
-
-# ============================================================================
 # tunnel_get_required_ipsets - parse tunnels JSON and return required ipsets
 # ============================================================================
 
