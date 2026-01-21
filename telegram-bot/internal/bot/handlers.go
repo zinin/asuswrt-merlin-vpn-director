@@ -23,7 +23,6 @@ const maxMessageLength = 4000 // Telegram limit is 4096, leave margin
 const (
 	botLogPath      = "/tmp/telegram-bot.log"
 	vpnLogPath      = "/tmp/vpn-director.log"
-	maxLogSize      = 200 * 1024 // 200KB
 	defaultLogLines = 20
 )
 
@@ -204,7 +203,7 @@ func (b *Bot) handleIP(msg *tgbotapi.Message) {
 		return
 	}
 	ip := strings.TrimSpace(result.Output)
-	b.sendMessage(msg.Chat.ID, fmt.Sprintf("🌐 External IP: `%s`", escapeMarkdownV2(ip)))
+	b.sendMessage(msg.Chat.ID, fmt.Sprintf("🌐 External IP: `%s`", ip))
 }
 
 func (b *Bot) handleVersion(msg *tgbotapi.Message) {
