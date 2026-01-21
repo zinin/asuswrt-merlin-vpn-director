@@ -82,7 +82,7 @@ func (b *Bot) handleStatus(msg *tgbotapi.Message) {
 func (b *Bot) handleServers(msg *tgbotapi.Message) {
 	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(scriptsDir + "/vpn-director.json")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Config load error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Config load error: %v", err)))
 		return
 	}
 
@@ -93,19 +93,23 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 
 	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
 
 	if len(servers) == 0 {
-		b.sendMessage(msg.Chat.ID, "No servers. Use /import to add servers.")
+		b.sendMessage(msg.Chat.ID, "No servers\\. Use /import to add servers\\.")
 		return
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Servers (%d):\n", len(servers)))
+	sb.WriteString(fmt.Sprintf("🖥 *Servers* \\(%d\\):\n", len(servers)))
 	for i, s := range servers {
-		sb.WriteString(fmt.Sprintf("%d. %s — %s (%s)\n", i+1, s.Name, s.Address, s.IP))
+		sb.WriteString(fmt.Sprintf("%d\\. %s — %s \\(%s\\)\n",
+			i+1,
+			escapeMarkdownV2(s.Name),
+			escapeMarkdownV2(s.Address),
+			escapeMarkdownV2(s.IP)))
 	}
 	b.sendLongMessage(msg.Chat.ID, sb.String())
 }
