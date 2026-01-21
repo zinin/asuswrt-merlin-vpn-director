@@ -82,3 +82,71 @@ TEST_URI_CYRILLIC='vless://11111111-2222-3333-4444-555555555555@server5.test.exa
     name=$(printf '%s' "$result" | cut -d'|' -f4)
     [ "$name" = "Казахстан, Алматы" ]
 }
+
+# ============================================================================
+# decode_vless_content: Format detection
+# ============================================================================
+
+@test "decode_vless_content: detects plaintext format (single URI)" {
+    load_import_server_list
+    content="vless://uuid@server:443?type=tcp#Name"
+    result=$(decode_vless_content "$content")
+    [ "$result" = "$content" ]
+}
+
+@test "decode_vless_content: detects plaintext format (multiple URIs)" {
+    load_import_server_list
+    content="vless://uuid1@server1:443?type=tcp#Name1
+vless://uuid2@server2:443?type=tcp#Name2"
+    result=$(decode_vless_content "$content")
+    [ "$result" = "$content" ]
+}
+
+@test "decode_vless_content: handles plaintext with leading empty lines" {
+    load_import_server_list
+    content="
+
+vless://uuid@server:443?type=tcp#Name"
+    result=$(decode_vless_content "$content")
+    [ "$result" = "$content" ]
+}
+
+@test "decode_vless_content: decodes base64 format" {
+    load_import_server_list
+    plaintext="vless://uuid@server:443?type=tcp#Name"
+    encoded=$(printf '%s' "$plaintext" | base64)
+    result=$(decode_vless_content "$encoded")
+    [ "$result" = "$plaintext" ]
+}
+
+@test "decode_vless_content: decodes base64 with multiple URIs" {
+    load_import_server_list
+    plaintext="vless://uuid1@server1:443#Name1
+vless://uuid2@server2:443#Name2"
+    encoded=$(printf '%s' "$plaintext" | base64)
+    result=$(decode_vless_content "$encoded")
+    [ "$result" = "$plaintext" ]
+}
+
+@test "decode_vless_content: fails on invalid content" {
+    load_import_server_list
+    run decode_vless_content "not-base64-and-not-vless!!!"
+    assert_failure
+}
+
+@test "decode_vless_content: fails on whitespace-only content" {
+    load_import_server_list
+    run decode_vless_content "
+
+    "
+    assert_failure
+}
+
+@test "decode_vless_content: decodes valid base64 even if not VLESS (validation is downstream)" {
+    load_import_server_list
+    plaintext="just some random text"
+    encoded=$(printf '%s' "$plaintext" | base64)
+    result=$(decode_vless_content "$encoded")
+    # Function succeeds - content validation is handled downstream
+    [ "$result" = "$plaintext" ]
+}

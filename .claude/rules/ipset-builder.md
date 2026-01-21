@@ -17,11 +17,16 @@ vpn-director.sh apply               # Restore ipsets from cache + apply
 
 ## Data Sources
 
-| Type | Source | Format |
-|------|--------|--------|
-| Country | IPdeny | `{cc}-aggregated.zone` |
+Sources are tried in priority order with automatic fallback:
 
-**URL pattern**: `https://www.ipdeny.com/ipblocks/data/aggregated/{cc}-aggregated.zone`
+| Priority | Source | URL Pattern | Notes |
+|----------|--------|-------------|-------|
+| 1 | GeoLite2 (GitHub) | `firehol/blocklist-ipsets/.../country_{cc}.netset` | Most accurate |
+| 2 | IPDeny (GitHub) | `firehol/blocklist-ipsets/.../id_country_{cc}.netset` | Mirror, not blocked |
+| 3 | IPDeny (direct) | `ipdeny.com/.../aggregated/{cc}-aggregated.zone` | May be blocked |
+| 4 | Manual | `/tmp/{cc}.zone` | Interactive mode only |
+
+Files from GitHub sources contain comment lines (`#`) which are filtered automatically.
 
 ## IPSet Types
 
@@ -37,10 +42,10 @@ vpn-director.sh apply               # Restore ipsets from cache + apply
 
 ## Dump/Restore
 
-Cached dumps stored in `$IPS_BDR_DIR/ipsets/` (configurable via `data_dir` in vpn-director.json, default: `/jffs/scripts/vpn-director/data`):
+Cached dumps stored in `$IPS_BDR_DIR/ipsets/`:
 ```
-ru-ipdeny.dump
-us-ipdeny.dump
+ru.dump
+us.dump
 ...
 ```
 

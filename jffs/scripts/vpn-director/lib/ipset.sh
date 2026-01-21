@@ -83,9 +83,13 @@ sh si sj sk sl sm sn so sr ss st sv sx sy sz tc td tf tg th tj tk tl tm tn to tr
 um us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw
 '
 
-# IPdeny base URL for country zone files
-IPDENY_BASE_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
-IPDENY_FILE_SUFFIX='-aggregated.zone'
+# Source URLs for country zone files (priority order)
+# 1. GeoLite2 via FireHOL GitHub (most accurate)
+GEOLITE2_GITHUB_URL='https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/geolite2_country'
+# 2. IPDeny via FireHOL GitHub (mirror, not blocked)
+IPDENY_GITHUB_URL='https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/ipdeny_country'
+# 3. IPDeny direct (may be blocked in some regions)
+IPDENY_DIRECT_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
 
 ###################################################################################################
 # Pure helper functions (defined before --source-only for testability)
@@ -371,44 +375,129 @@ _print_swap_and_destroy() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _download_zone - download a zone file from IPdeny with interactive fallback
+# _try_download_zone - download zone file from URL, filter comments, validate CIDR format
 # -------------------------------------------------------------------------------------------------
-# If download fails and stdin is a tty, prompts user to manually download
-# the file to /tmp/ and press Enter to continue.
+# Args:
+#   $1 - URL to download from
+#   $2 - temporary file path for download
+#   $3 - destination file path
+# Returns:
+#   0 on success, 1 on failure (download error, invalid format)
 # -------------------------------------------------------------------------------------------------
-_download_zone() {
-    local cc="$1" dest="$2"
-    local url="${IPDENY_BASE_URL}/${cc}${IPDENY_FILE_SUFFIX}"
-    local fallback_path="/tmp/${cc}${IPDENY_FILE_SUFFIX}"
+_try_download_zone() {
+    local url="$1" tmp_file="$2" dest="$3"
 
-    log "Downloading zone file for '$cc'..."
-
-    # Try download with 30 sec timeout
-    if download_file "$url" "$dest" 30; then
-        log "Successfully downloaded zone for '$cc'"
-        return 0
-    fi
-
-    # Download failed — check interactive mode
-    if [[ ! -t 0 ]]; then
-        log -l ERROR "Failed to download zone for '$cc'"
+    # Download with 30 sec timeout
+    if ! download_file "$url" "$tmp_file" 30; then
+        rm -f "$tmp_file"
         return 1
     fi
 
-    # Interactive fallback
+    # Filter comments and empty lines (|| true prevents exit under set -e if all lines filtered)
+    grep -v '^#' "$tmp_file" 2>/dev/null | grep -v '^[[:space:]]*$' > "${tmp_file}.filtered" || true
+    mv "${tmp_file}.filtered" "$tmp_file"
+
+    # Validate: file must be non-empty and first line must be CIDR format
+    if [[ ! -s "$tmp_file" ]] || ! head -1 "$tmp_file" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
+        log -l DEBUG "Invalid CIDR format from $url"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    mv "$tmp_file" "$dest"
+    return 0
+}
+
+# -------------------------------------------------------------------------------------------------
+# _try_manual_fallback - prompt user to manually download zone file (interactive only)
+# -------------------------------------------------------------------------------------------------
+# Args:
+#   $1 - country code
+#   $2 - destination file path
+# Returns:
+#   0 on success, 1 on failure or non-interactive mode
+# -------------------------------------------------------------------------------------------------
+_try_manual_fallback() {
+    local cc="$1" dest="$2"
+    local fallback_path="/tmp/${cc}.zone"
+
+    # Only in interactive mode
+    [[ ! -t 0 ]] && return 1
+
     printf '\n'
-    printf 'Failed to download: %s\n' "$url"
-    printf 'Please download the file manually and place it at: %s\n' "$fallback_path"
+    printf 'All automatic sources failed for: %s\n' "$cc"
+    printf 'Please download manually and place at: %s\n' "$fallback_path"
     printf 'Press Enter when ready (or Ctrl+C to cancel): '
     read -r
 
     if [[ -f "$fallback_path" ]]; then
-        cp "$fallback_path" "$dest"
-        log "Using manually downloaded zone for '$cc'"
+        # Filter comments and validate (|| true prevents exit under set -e)
+        grep -v '^#' "$fallback_path" 2>/dev/null | grep -v '^[[:space:]]*$' > "$dest" || true
+        if [[ -s "$dest" ]] && head -1 "$dest" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
+            log "Using manually provided zone for '$cc'"
+            return 0
+        fi
+        rm -f "$dest"
+    fi
+
+    log -l ERROR "Manual fallback failed for '$cc'"
+    return 1
+}
+
+# -------------------------------------------------------------------------------------------------
+# _download_zone_multi_source - download zone file trying multiple sources
+# -------------------------------------------------------------------------------------------------
+# Tries sources in priority order:
+#   1. GeoLite2 via GitHub (most accurate)
+#   2. IPDeny via GitHub (mirror)
+#   3. IPDeny direct (may be blocked)
+#   4. Manual fallback (interactive only)
+#
+# Args:
+#   $1 - country code (2-letter ISO)
+#   $2 - destination file path
+# Returns:
+#   0 on success, 1 if all sources failed
+# -------------------------------------------------------------------------------------------------
+_download_zone_multi_source() {
+    local cc="$1" dest="$2"
+    local url tmp_file
+
+    tmp_file=$(tmp_file)
+
+    # Source 1: GeoLite2 via GitHub
+    url="${GEOLITE2_GITHUB_URL}/country_${cc}.netset"
+    log "Trying geolite2-github for '$cc'..."
+    if _try_download_zone "$url" "$tmp_file" "$dest"; then
+        log "Downloaded zone for '$cc' from geolite2-github"
+        return 0
+    fi
+    log -l ERROR "geolite2-github failed for '$cc'"
+
+    # Source 2: IPDeny via GitHub
+    url="${IPDENY_GITHUB_URL}/id_country_${cc}.netset"
+    log "Trying ipdeny-github for '$cc'..."
+    if _try_download_zone "$url" "$tmp_file" "$dest"; then
+        log "Downloaded zone for '$cc' from ipdeny-github"
+        return 0
+    fi
+    log -l ERROR "ipdeny-github failed for '$cc'"
+
+    # Source 3: IPDeny direct
+    url="${IPDENY_DIRECT_URL}/${cc}-aggregated.zone"
+    log "Trying ipdeny-direct for '$cc'..."
+    if _try_download_zone "$url" "$tmp_file" "$dest"; then
+        log "Downloaded zone for '$cc' from ipdeny-direct"
+        return 0
+    fi
+    log -l ERROR "ipdeny-direct failed for '$cc'"
+
+    # Source 4: Manual fallback (interactive only)
+    if _try_manual_fallback "$cc" "$dest"; then
         return 0
     fi
 
-    log -l ERROR "File not found: $fallback_path"
+    rm -f "$tmp_file"
     return 1
 }
 
@@ -463,7 +552,7 @@ _restore_from_cache() {
 _build_country_ipset() {
     local cc="$1" dump_dir="$2"
     local set_name="$cc"
-    local dump="${dump_dir}/${set_name}-ipdeny.dump"
+    local dump="${dump_dir}/${set_name}.dump"
     local target_set cidr_list restore_script
     local cnt=0 rc=0
 
@@ -479,7 +568,7 @@ _build_country_ipset() {
 
     # Download CIDR list
     cidr_list=$(tmp_file)
-    if ! _download_zone "$cc" "$cidr_list"; then
+    if ! _download_zone_multi_source "$cc" "$cidr_list"; then
         rm -f "$cidr_list"
         return 1
     fi
@@ -644,7 +733,7 @@ ipset_ensure() {
     else
         # Single country set
         local set_name="$spec"
-        local dump="${dump_dir}/${set_name}-ipdeny.dump"
+        local dump="${dump_dir}/${set_name}.dump"
 
         # Try restore from cache first (skip if IPSET_FORCE_UPDATE is set)
         if _restore_from_cache "$set_name" "$dump" "${IPSET_FORCE_UPDATE:-0}"; then

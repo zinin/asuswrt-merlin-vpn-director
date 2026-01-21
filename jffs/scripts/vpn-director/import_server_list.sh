@@ -8,7 +8,8 @@ if [[ ${DEBUG:-0} == 1 ]]; then
 fi
 
 ###############################################################################
-# import_server_list.sh - Import VLESS servers from base64-encoded file/URL
+# import_server_list.sh - Import VLESS servers from file/URL
+# Supports both plaintext and base64-encoded VLESS URI lists
 # Run after install.sh to download and parse server list
 ###############################################################################
 
@@ -29,6 +30,26 @@ VPD_TEMPLATE="$JFFS_DIR/vpn-director.json.template"
 read_input() {
     printf "%s: " "$1" >&2
     read -r INPUT_RESULT
+}
+
+# Decode VLESS content from base64 or return as-is if plaintext
+# Input: raw content as $1
+# Output: decoded VLESS URIs to stdout
+# Returns: 0 on success, 1 on decode failure
+decode_vless_content() {
+    local content="$1"
+    local first_line
+
+    # Get first non-empty line
+    first_line=$(printf '%s\n' "$content" | grep -v '^[[:space:]]*$' | head -n1)
+
+    if [[ "$first_line" == vless://* ]]; then
+        log "Detected plaintext format"
+        printf '%s' "$content"
+    else
+        log "Detected base64 format, decoding..."
+        printf '%s' "$content" | base64 -d || return 1
+    fi
 }
 
 ###############################################################################
@@ -107,7 +128,7 @@ step_get_vless_file() {
     log -l TRACE "Step 1: VLESS Server List"
 
     printf "Enter path to VLESS file or URL:\n"
-    printf "(File should contain base64-encoded VLESS URIs)\n\n"
+    printf "(Supports plaintext or base64-encoded VLESS URIs)\n\n"
 
     read_input "Path or URL"
     VLESS_INPUT="$INPUT_RESULT"
@@ -135,9 +156,9 @@ step_get_vless_file() {
             ;;
     esac
 
-    # Decode base64
-    VLESS_DECODED=$(printf '%s' "$VLESS_CONTENT" | base64 -d 2>/dev/null) || {
-        log -l ERROR "Failed to decode base64 content"
+    # Decode content (auto-detect format: plaintext or base64)
+    VLESS_DECODED=$(decode_vless_content "$VLESS_CONTENT" 2>/dev/null) || {
+        log -l ERROR "Failed to decode content (not valid base64 or plaintext VLESS URIs)"
         exit 1
     }
 

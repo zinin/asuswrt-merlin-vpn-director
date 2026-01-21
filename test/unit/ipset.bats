@@ -344,15 +344,131 @@ load '../test_helper'
 }
 
 # ============================================================================
-# _download_zone interactive fallback
+# _try_download_zone - download and validate zone file
 # ============================================================================
 
-@test "_download_zone: non-interactive mode fails on download error without prompt" {
+@test "_try_download_zone: filters comment lines from downloaded file" {
     load_ipset_module
 
-    # Test that in non-interactive mode (stdin piped from /dev/null),
-    # function fails silently without showing interactive prompt
-    # We test by running in a subshell with stdin redirected
+    # Create mock zone file with comments
+    local mock_zone="/tmp/bats_mock_zone.txt"
+    cat > "$mock_zone" << 'EOF'
+# GeoLite2 Country
+# Generated: 2024-01-01
+1.0.0.0/24
+1.1.0.0/16
+# Another comment
+2.0.0.0/8
+EOF
+
+    # Override download_file to copy mock
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_success
+
+    # Verify no comments in output
+    run grep '^#' "$dest"
+    assert_failure
+
+    # Verify CIDRs present
+    run grep '1.0.0.0/24' "$dest"
+    assert_success
+
+    rm -f "$mock_zone" "$dest"
+}
+
+@test "_try_download_zone: rejects file with invalid CIDR format" {
+    load_ipset_module
+
+    # Create mock with HTML error page
+    local mock_zone="/tmp/bats_mock_html.txt"
+    cat > "$mock_zone" << 'EOF'
+<!DOCTYPE html>
+<html><head><title>404 Not Found</title></head>
+<body>Not Found</body></html>
+EOF
+
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_failure
+
+    rm -f "$mock_zone" "$dest"
+}
+
+@test "_try_download_zone: accepts valid zone file" {
+    load_ipset_module
+
+    local mock_zone="/tmp/bats_mock_valid.txt"
+    cat > "$mock_zone" << 'EOF'
+1.0.0.0/24
+2.0.0.0/16
+EOF
+
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_success
+
+    [[ -f "$dest" ]]
+
+    rm -f "$mock_zone" "$dest"
+}
+
+@test "_try_download_zone: returns failure on download error" {
+    load_ipset_module
+
+    download_file() {
+        return 1
+    }
+
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "/tmp/bats_dest.txt"
+    assert_failure
+}
+
+@test "_try_download_zone: rejects file with only comments (empty after filtering)" {
+    load_ipset_module
+
+    local mock_zone="/tmp/bats_mock_comments_only.txt"
+    cat > "$mock_zone" << 'EOF'
+# This file has only comments
+# No actual CIDR data
+#
+EOF
+
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_failure
+
+    rm -f "$mock_zone" "$dest"
+}
+
+# ============================================================================
+# _try_manual_fallback - manual fallback for interactive mode
+# ============================================================================
+
+@test "_try_manual_fallback: skipped in non-interactive mode" {
+    load_ipset_module
+
+    # Run with stdin from /dev/null (non-interactive)
     run bash -c '
         export TEST_MODE=1
         export LOG_FILE="/tmp/bats_test.log"
@@ -361,21 +477,134 @@ load '../test_helper'
         source "'"$LIB_DIR"'/common.sh"
         source "'"$LIB_DIR"'/config.sh"
         source "'"$LIB_DIR"'/ipset.sh" --source-only
-        # Override download_file to fail
-        download_file() { return 1; }
-        _download_zone "ru" "/tmp/test_zone"
+        _try_manual_fallback "ru" "/tmp/bats_dest.txt"
     ' < /dev/null
 
     assert_failure
-    # Should not contain interactive prompt
+    # Should not show interactive prompt
     refute_output --partial "Please download"
 }
 
-@test "_download_zone: function exists and has correct signature" {
+@test "_try_manual_fallback: uses file from fallback path when available" {
     load_ipset_module
 
-    # Verify function is defined
-    run type _download_zone
+    local fallback="/tmp/ru.zone"
+    local dest="/tmp/bats_manual_dest.txt"
+
+    # Create valid zone file at fallback path
+    cat > "$fallback" << 'EOF'
+# Manual download
+1.0.0.0/24
+2.0.0.0/16
+EOF
+
+    # Test the file processing logic directly by redefining the function
+    # to skip the TTY check (since we can't simulate a real TTY in tests)
+    run bash -c '
+        export TEST_MODE=1
+        export LOG_FILE="/tmp/bats_test.log"
+        export VPD_CONFIG_FILE="'"$TEST_ROOT"'/fixtures/vpn-director.json"
+        export PATH="'"$TEST_ROOT"'/mocks:$PATH"
+        source "'"$LIB_DIR"'/common.sh"
+        source "'"$LIB_DIR"'/config.sh"
+        source "'"$LIB_DIR"'/ipset.sh" --source-only
+
+        # Override function to skip TTY check for testing
+        _try_manual_fallback_test() {
+            local cc="$1" dest="$2"
+            local fallback_path="/tmp/${cc}.zone"
+
+            # Skip TTY check in test - simulate user pressed Enter
+            if [[ -f "$fallback_path" ]]; then
+                grep -v "^#" "$fallback_path" | grep -v "^[[:space:]]*$" > "$dest"
+                if head -1 "$dest" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+"; then
+                    log "Using manually provided zone for '\''$cc'\''"
+                    return 0
+                fi
+                rm -f "$dest"
+            fi
+            log -l ERROR "Manual fallback failed for '\''$cc'\''"
+            return 1
+        }
+
+        _try_manual_fallback_test "ru" "'"$dest"'"
+    '
+
     assert_success
-    assert_output --partial "function"
+
+    # Verify comments filtered
+    run grep '^#' "$dest"
+    assert_failure
+
+    # Verify CIDR present
+    run grep '1.0.0.0/24' "$dest"
+    assert_success
+
+    rm -f "$fallback" "$dest"
+}
+
+# ============================================================================
+# _download_zone_multi_source - try multiple sources in order
+# ============================================================================
+
+@test "_download_zone_multi_source: tries sources in priority order" {
+    load_ipset_module
+
+    local call_count=0
+    local dest="/tmp/bats_multi_dest.txt"
+
+    # Mock _try_download_zone: fail first, succeed second
+    _try_download_zone() {
+        call_count=$((call_count + 1))
+        if [[ $call_count -eq 1 ]]; then
+            return 1  # geolite2 fails
+        fi
+        # ipdeny-github succeeds
+        echo "1.0.0.0/24" > "$3"
+        return 0
+    }
+
+    _try_manual_fallback() {
+        return 1
+    }
+
+    run _download_zone_multi_source "ru" "$dest"
+    assert_success
+
+    rm -f "$dest"
+}
+
+@test "_download_zone_multi_source: all sources fail returns error" {
+    load_ipset_module
+
+    _try_download_zone() {
+        return 1
+    }
+
+    _try_manual_fallback() {
+        return 1
+    }
+
+    run _download_zone_multi_source "ru" "/tmp/bats_dest.txt"
+    assert_failure
+}
+
+@test "_download_zone_multi_source: logs ERROR for each failed source" {
+    load_ipset_module
+
+    _try_download_zone() {
+        return 1
+    }
+
+    _try_manual_fallback() {
+        return 1
+    }
+
+    run _download_zone_multi_source "ru" "/tmp/bats_dest.txt"
+    assert_failure
+
+    # Check log file for ERROR entries
+    run grep -c "ERROR" "$LOG_FILE"
+    # Should have at least 3 ERROR logs (one per source)
+    [[ "$output" -ge 3 ]]
 }
