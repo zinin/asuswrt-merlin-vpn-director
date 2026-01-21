@@ -94,19 +94,33 @@ Default: bits 16-23 (8 bits = 255 rules max)
 
 ## Key Functions
 
+**Public API**:
+
 | Function | Purpose |
 |----------|---------|
-| `table_allowed()` | Validate routing table (wgcN, ovpncN, main) |
-| `resolve_set_name()` | Lookup ipset by key (uses `derive_set_name`) |
-| `get_prerouting_base_pos()` | Find insert position after system iface-mark rules |
+| `tunnel_status()` | Show TUN_DIR_* chains, ip rules, fwmarks |
+| `tunnel_apply()` | Apply rules from config (idempotent) |
+| `tunnel_stop()` | Remove all chains and ip rules |
+| `tunnel_get_required_ipsets()` | Return list of ipsets needed for rules |
 
-**Variables**:
-- `valid_tables` - space-separated list of allowed routing tables
-- `_mark_field_max` - max rules that fit in fwmark field (default: 255)
-- `mark_mask_hex` - hex string of `TUN_DIR_MARK_MASK`
+**Internal functions** (for testing):
 
-## Utilities Used
+| Function | Purpose |
+|----------|---------|
+| `_tunnel_init()` | Initialize module state (valid tables, fwmark helpers) |
+| `_tunnel_table_allowed(table)` | Validate routing table (wgcN, ovpncN, main) |
+| `_tunnel_resolve_set(keys)` | Lookup ipset by key (uses `_derive_set_name`) |
+| `_tunnel_get_prerouting_base_pos()` | Find insert position after system iface-mark rules |
 
-From `lib/common.sh`: `log`, `acquire_lock`, `tmp_file`, `strip_comments`, `compute_hash`, `is_lan_ip`
+**Module state variables**:
+- `_tunnel_valid_tables` - space-separated list of allowed routing tables
+- `_tunnel_mark_field_max` - max rules that fit in fwmark field (default: 255)
+- `_tunnel_mark_mask_hex` - hex string of `TUN_DIR_MARK_MASK`
+
+## Dependencies
+
+From `lib/common.sh`: `log`, `tmp_file`, `compute_hash`, `is_lan_ip`
 
 From `lib/firewall.sh`: `create_fw_chain`, `delete_fw_chain`, `ensure_fw_rule`, `sync_fw_rule`, `purge_fw_rules`
+
+From `lib/ipset.sh`: `_derive_set_name`, `parse_country_codes`, `parse_combo_from_rules`, `TUN_DIR_HASH`

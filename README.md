@@ -44,15 +44,14 @@ After installation:
 - Entware installed
 - Required packages:
   ```bash
-  opkg install curl coreutils-base64 coreutils-sha256sum gawk xray-core procps-ng-pgrep
+  opkg install curl coreutils-base64 coreutils-sha256sum gawk jq xray-core procps-ng-pgrep
   ```
 - OpenVPN client configured in router UI (for Tunnel Director)
 
 ### Optional
 
-- `opkg install wget-ssl` — faster and more reliable downloads for IPdeny zone files (recommended)
+- `opkg install wget-ssl` — faster and more reliable downloads for country zone files (recommended)
 - `opkg install openssl-util` — for email notifications
-- `opkg install jq` — for Telegram bot setup script
 - `opkg install monit` — for automatic Xray restart on crash (see [Process Monitoring](#process-monitoring))
 - `opkg install coreutils-tr` — fixes buggy `tr` command (stock busybox `tr` corrupts characters with certain locales)
 
@@ -103,14 +102,15 @@ Remote management via Telegram with username-based authorization.
 
 | Command | Description |
 |---------|-------------|
-| `/status` | Xray status |
-| `/servers` | List imported servers |
+| `/status` | VPN Director status |
+| `/servers` | Server list |
 | `/import <url>` | Import VLESS subscription |
-| `/configure` | Interactive configuration wizard |
-| `/restart` | Restart Xray |
-| `/stop` | Stop Xray |
-| `/logs` | Recent log entries |
-| `/ip` | Show external IP |
+| `/configure` | Configuration wizard |
+| `/restart` | Restart VPN Director |
+| `/stop` | Stop VPN Director |
+| `/logs [bot\|vpn\|all] [N]` | Recent logs (default: all, 20 lines) |
+| `/ip` | External IP |
+| `/version` | Bot version |
 
 ### Configuration Wizard
 
@@ -128,7 +128,15 @@ Traffic from specified LAN clients is transparently redirected through Xray usin
 
 ### Tunnel Director
 
-Routes traffic from specified LAN clients through OpenVPN tunnels based on destination. By default, excludes Russian IPs to allow direct access to local services.
+Routes traffic from specified LAN clients through OpenVPN/WireGuard tunnels based on destination. By default, excludes Russian IPs to allow direct access to local services.
+
+### Country IPSets
+
+Country IP lists are downloaded automatically from multiple sources with fallback:
+1. GeoLite2 via GitHub (firehol/blocklist-ipsets) — most accurate
+2. IPDeny via GitHub mirror — not blocked in most regions
+3. IPDeny direct — may be blocked in some regions
+4. Manual fallback — interactive prompt if all sources fail
 
 ## Startup Scripts
 

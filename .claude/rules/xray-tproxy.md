@@ -100,15 +100,29 @@ resolve_exclude_set "ru"  # Returns: ru_ext if exists, else ru
 
 ## Key Functions
 
+**Public API**:
+
 | Function | Purpose |
 |----------|---------|
-| `check_tproxy_module()` | Verify/load xt_TPROXY kernel module |
-| `check_required_ipsets()` | Fail-safe: exit if exclusion ipsets missing |
-| `resolve_exclude_set()` | Try `{set}_ext` first, fall back to `{set}` |
-| `setup_routing()` | Create route table + ip rule |
-| `teardown_routing()` | Remove route table + ip rule |
-| `setup_clients_ipset()` | Create and populate client ipset |
-| `setup_servers_ipset()` | Create and populate server ipset |
-| `setup_iptables()` | Build XRAY_TPROXY chain with exclusions |
-| `teardown_iptables()` | Remove chain and ipsets |
-| `show_status()` | Debug output for troubleshooting |
+| `tproxy_status()` | Show XRAY_TPROXY chain, routing, xray process |
+| `tproxy_apply()` | Apply TPROXY rules (idempotent), soft-fail if unavailable |
+| `tproxy_stop()` | Remove chain and routing |
+| `tproxy_restart_process()` | Restart Xray process via Entware init script |
+| `tproxy_get_required_ipsets()` | Return list of exclude ipsets |
+
+**Internal functions** (for testing):
+
+| Function | Purpose |
+|----------|---------|
+| `_tproxy_init()` | Initialize module state |
+| `_tproxy_check_module()` | Verify/load xt_TPROXY kernel module |
+| `_tproxy_check_required_ipsets()` | Fail-safe: exit if exclusion ipsets missing |
+| `_tproxy_resolve_exclude_set(key)` | Try `{set}_ext` first, fall back to `{set}` |
+| `_tproxy_setup_routing()` | Create route table + ip rule |
+| `_tproxy_teardown_routing()` | Remove route table + ip rule |
+| `_tproxy_setup_clients_ipset()` | Create and populate client ipset |
+| `_tproxy_setup_servers_ipset()` | Create and populate server ipset |
+| `_tproxy_setup_iptables()` | Build XRAY_TPROXY chain with exclusions |
+| `_tproxy_teardown_iptables()` | Remove chain and ipsets |
+
+**Soft-fail behavior**: `tproxy_apply()` returns 0 even if xt_TPROXY unavailable or ipsets missing, allowing caller scripts to continue.

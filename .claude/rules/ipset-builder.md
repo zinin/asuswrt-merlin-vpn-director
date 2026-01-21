@@ -21,12 +21,14 @@ Sources are tried in priority order with automatic fallback:
 
 | Priority | Source | URL Pattern | Notes |
 |----------|--------|-------------|-------|
-| 1 | GeoLite2 (GitHub) | `firehol/blocklist-ipsets/.../country_{cc}.netset` | Most accurate |
-| 2 | IPDeny (GitHub) | `firehol/blocklist-ipsets/.../id_country_{cc}.netset` | Mirror, not blocked |
-| 3 | IPDeny (direct) | `ipdeny.com/.../aggregated/{cc}-aggregated.zone` | May be blocked |
+| 1 | GeoLite2 (GitHub) | `raw.githubusercontent.com/firehol/blocklist-ipsets/master/geolite2_country/country_{cc}.netset` | Most accurate |
+| 2 | IPDeny (GitHub) | `raw.githubusercontent.com/firehol/blocklist-ipsets/master/ipdeny_country/id_country_{cc}.netset` | Mirror, not blocked |
+| 3 | IPDeny (direct) | `www.ipdeny.com/ipblocks/data/aggregated/{cc}-aggregated.zone` | May be blocked in some regions |
 | 4 | Manual | `/tmp/{cc}.zone` | Interactive mode only |
 
 Files from GitHub sources contain comment lines (`#`) which are filtered automatically.
+
+**Download timeout**: 30 seconds per source (uses `download_file()` from common.sh).
 
 ## IPSet Types
 
@@ -78,18 +80,32 @@ Config options in `vpn-director.json` (`advanced.boot`):
 
 ## Key Functions
 
+**Public API**:
+
 | Function | Purpose |
 |----------|---------|
-| `download_file()` | Download file with retry and timeout (prefers wget-ssl, fallback curl) |
-| `ipset_exists()` | Check if ipset is loaded |
-| `get_ipset_count()` | Get number of entries in ipset |
-| `build_ipset()` | Download, create, swap, dump |
-| `restore_dump()` | Atomic restore from cache |
-| `save_hashes()` | Save rules hash for tunnel_director sync |
+| `ipset_status()` | Show loaded ipsets, sizes, cache info |
+| `ipset_ensure(spec)` | Ensure ipsets exist (load from cache or download) |
+| `ipset_update(spec)` | Force fresh download of ipsets |
+
+**Internal functions** (for testing):
+
+| Function | Purpose |
+|----------|---------|
+| `_ipset_exists(name)` | Check if ipset is loaded |
+| `_ipset_count(name)` | Get number of entries in ipset |
+| `_build_country_ipset(cc, dump_dir)` | Download, create, swap, dump |
+| `_build_combo_ipset(combo)` | Build list:set from members |
+| `_restore_from_cache(name, dump, force)` | Atomic restore from dump |
+| `_download_zone_multi_source(cc, dest)` | Try all sources with fallback |
+| `_try_download_zone(url, tmp, dest)` | Download and validate single source |
+| `_try_manual_fallback(cc, dest)` | Interactive manual fallback |
 | `parse_country_codes()` | Extract CCs from rules (field 4 & 5) |
 | `parse_combo_from_rules()` | Extract comma-separated combos |
-| `derive_set_name()` | Handle long names (from `lib/ipset.sh`) |
-| `_calc_ipset_size()` | Calculate hashsize from entry count |
+| `_derive_set_name(name)` | Handle long names (>31 chars → SHA-256 prefix) |
+| `_calc_ipset_size(count)` | Calculate hashsize from entry count |
+| `_normalize_spec(spec)` | Validate and normalize ipset spec |
+| `_is_valid_country_code(cc)` | Check 2-letter ISO code validity |
 
 ## Build Steps
 

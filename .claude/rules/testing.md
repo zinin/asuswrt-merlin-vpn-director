@@ -24,8 +24,9 @@ test/
 ├── test_helper.bash         # Shared setup, helpers, paths
 ├── fixtures/                # Test data files
 │   ├── hosts                # Mock /etc/hosts
-│   ├── vpn-director.json
-│   └── vless_servers.b64
+│   ├── vpn-director.json    # Test config
+│   ├── vless_servers.b64    # VLESS subscription mock
+│   └── rt_tables            # Mock routing tables
 ├── mocks/                   # Mock executables
 │   ├── nvram                # Mock nvram command
 │   ├── iptables             # Mock iptables
@@ -33,13 +34,17 @@ test/
 │   ├── ipset                # Mock ipset
 │   ├── nslookup             # Mock DNS resolution
 │   ├── logger               # Mock syslog
-│   └── ip                   # Mock ip command
+│   ├── ip                   # Mock ip command
+│   ├── lsmod                # Mock kernel module list
+│   ├── modprobe             # Mock module loading
+│   └── pgrep                # Mock process lookup
 ├── unit/                    # Unit tests for lib/ modules
 │   ├── ipset.bats           # Tests for lib/ipset.sh
 │   ├── tunnel.bats          # Tests for lib/tunnel.sh
 │   └── tproxy.bats          # Tests for lib/tproxy.sh
 ├── integration/             # Integration tests
-│   └── vpn_director.bats    # Tests for vpn-director.sh CLI
+│   ├── vpn_director.bats    # Tests for vpn-director.sh CLI
+│   └── ipset_sources.bats   # Tests for IPSet download sources
 ├── common.bats              # Tests for lib/common.sh
 ├── firewall.bats            # Tests for lib/firewall.sh
 ├── config.bats              # Tests for lib/config.sh
@@ -66,9 +71,11 @@ test/
 | `load_common` | Source lib/common.sh with mocks in PATH |
 | `load_firewall` | Source lib/firewall.sh (includes common.sh) |
 | `load_config` | Source lib/config.sh with test fixture |
-| `load_ipset_module` | Source lib/ipset.sh module |
-| `load_tunnel_module` | Source lib/tunnel.sh module |
-| `load_tproxy_module` | Source lib/tproxy.sh module |
+| `load_ipset_module` | Source lib/ipset.sh module (uses `--source-only` flag) |
+| `load_tunnel_module` | Source lib/tunnel.sh module (uses `--source-only` flag) |
+| `load_tproxy_module` | Source lib/tproxy.sh module (uses `--source-only` flag) |
+
+**Note:** Modules support `--source-only` flag for test sourcing without executing main logic.
 
 ### Assertions (bats-assert)
 

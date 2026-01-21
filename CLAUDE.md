@@ -34,7 +34,12 @@ ipt           # Legacy alias (runs: vpd update)
 | Path | Purpose |
 |------|---------|
 | `jffs/scripts/vpn-director/vpn-director.sh` | Unified CLI entry point |
-| `jffs/scripts/vpn-director/lib/` | Modules: common, firewall, config, ipset, tunnel, tproxy |
+| `jffs/scripts/vpn-director/lib/common.sh` | Core utilities: log, tmp_file, download_file, resolve_ip |
+| `jffs/scripts/vpn-director/lib/firewall.sh` | Firewall helpers: chain, rule, block/allow host |
+| `jffs/scripts/vpn-director/lib/config.sh` | JSON config loader (vpn-director.json → shell vars) |
+| `jffs/scripts/vpn-director/lib/ipset.sh` | IPSet module: ensure, update, status |
+| `jffs/scripts/vpn-director/lib/tunnel.sh` | Tunnel Director module: apply, stop, status |
+| `jffs/scripts/vpn-director/lib/tproxy.sh` | Xray TPROXY module: apply, stop, status |
 | `opt/etc/init.d/S99vpn-director` | Entware init.d script for startup |
 | `jffs/scripts/firewall-start` | Asuswrt-Merlin hook for firewall reload |
 | `jffs/scripts/wan-event` | Asuswrt-Merlin hook for WAN events |
@@ -44,7 +49,7 @@ ipt           # Legacy alias (runs: vpd update)
 | `config/xray.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
 | `telegram-bot/` | Go-based Telegram bot for remote management |
-| `setup_telegram_bot.sh` | Bot configuration script |
+| `jffs/scripts/vpn-director/setup_telegram_bot.sh` | Bot configuration script |
 
 ## Key Concepts
 
@@ -52,8 +57,14 @@ ipt           # Legacy alias (runs: vpd update)
 - Example: `wgc1:192.168.50.0/24::us,ca` — route US/CA traffic via wgc1
 
 **IPSet Types**:
-- Country sets: 2-letter ISO codes (us, ca, ru) from IPdeny
-- Combo sets: union of multiple sets
+- Country sets: 2-letter ISO codes (us, ca, ru) — multi-source download
+- Combo sets: union of multiple sets (list:set type)
+
+**IPSet Sources** (priority order):
+1. GeoLite2 via GitHub (firehol/blocklist-ipsets)
+2. IPDeny via GitHub (firehol mirror)
+3. IPDeny direct (ipdeny.com)
+4. Manual fallback (interactive)
 
 ## Config Files (after install)
 

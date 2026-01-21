@@ -14,16 +14,29 @@ telegram-bot/
 ├── internal/
 │   ├── bot/                  # Core bot logic
 │   │   ├── bot.go            # Bot struct, Run(), message dispatch
+│   │   ├── bot_test.go       # Bot tests
 │   │   ├── auth.go           # Username-based authorization
 │   │   ├── handlers.go       # Command handlers (/status, /restart, etc.)
-│   │   └── wizard_handlers.go # Configuration wizard (4-step)
-│   ├── config/config.go      # Bot config (token, allowed users)
-│   ├── shell/shell.go        # Command execution wrapper
-│   ├── vless/parser.go       # VLESS URL parser, subscription decoder
-│   ├── vpnconfig/vpnconfig.go # vpn-director.json, servers.json handlers
+│   │   ├── handlers_test.go  # Handler tests
+│   │   ├── wizard_handlers.go # Configuration wizard (4-step)
+│   │   └── wizard_helpers_test.go # Wizard helper tests
+│   ├── config/
+│   │   ├── config.go         # Bot config (token, allowed users)
+│   │   └── config_test.go    # Config tests
+│   ├── shell/
+│   │   ├── shell.go          # Command execution wrapper
+│   │   └── shell_test.go     # Shell tests
+│   ├── vless/
+│   │   ├── parser.go         # VLESS URL parser, subscription decoder
+│   │   └── parser_test.go    # Parser tests
+│   ├── vpnconfig/
+│   │   ├── vpnconfig.go      # vpn-director.json, servers.json handlers
+│   │   └── vpnconfig_test.go # Config handlers tests
 │   └── wizard/               # Wizard state machine
 │       ├── state.go          # Thread-safe state storage
-│       └── wizard.go         # Wizard manager
+│       ├── state_test.go     # State tests
+│       ├── wizard.go         # Wizard manager
+│       └── wizard_test.go    # Wizard tests
 └── Makefile                  # Build targets
 ```
 
@@ -32,14 +45,15 @@ telegram-bot/
 | Command | Handler | Description |
 |---------|---------|-------------|
 | `/start` | `handleStart` | Show help |
-| `/status` | `handleStatus` | Xray status via vpn-director.sh |
-| `/servers` | `handleServers` | List imported servers |
+| `/status` | `handleStatus` | VPN Director status |
+| `/servers` | `handleServers` | Server list (paginated) |
 | `/import <url>` | `handleImport` | Import VLESS subscription |
-| `/configure` | `handleConfigure` | Start config wizard |
-| `/restart` | `handleRestart` | Restart Xray |
-| `/stop` | `handleStop` | Stop Xray |
-| `/logs [bot\|vpn\|all] [N]` | `handleLogs` | Show logs (default: all, 20 lines) |
-| `/ip` | `handleIP` | Show external IP |
+| `/configure` | `handleConfigure` | Configuration wizard |
+| `/restart` | `handleRestart` | Restart VPN Director |
+| `/stop` | `handleStop` | Stop VPN Director |
+| `/logs [bot\|vpn\|all] [N]` | `handleLogs` | Recent logs (default: all, 20 lines) |
+| `/ip` | `handleIP` | External IP |
+| `/version` | `handleVersion` | Bot version |
 
 ## Configuration Wizard
 
@@ -82,9 +96,25 @@ make build-arm     # ARMv7 routers (older models)
 
 # Tests
 make test
+
+# Run tests with coverage
+go test ./... -cover
 ```
 
 Binary: `bin/telegram-bot-{arch}`
+
+## Test Commands
+
+```bash
+# Run all Go tests
+cd telegram-bot && go test ./...
+
+# Run with verbose output
+go test -v ./internal/bot/...
+
+# Run specific test
+go test -run TestHandleStatus ./internal/bot/
+```
 
 ## Deployment
 

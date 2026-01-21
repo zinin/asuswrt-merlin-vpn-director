@@ -1,3 +1,7 @@
+---
+paths: "opt/etc/init.d/**/*"
+---
+
 # Entware Init System: Complete Guide
 
 Documentation for the Entware service initialization system on ASUS routers with Merlin firmware (and other Entware-enabled devices).

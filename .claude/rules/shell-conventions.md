@@ -32,6 +32,8 @@ paths: "**/*.sh, jffs/**/*"
 | `strip_comments [text]` | Remove blank lines and # comments |
 | `get_active_wan_if` | Get active WAN interface name |
 | `get_ipv6_enabled` | Returns 1 if IPv6 enabled, 0 otherwise |
+| `download_file <url> <dest> [timeout]` | Download with retry (wget/curl fallback) |
+| `log_error_trace <msg>` | Log error with bash stack trace |
 
 **Logging**: `LOG_FILE=/tmp/vpn-director.log` with 200KB rotation
 
