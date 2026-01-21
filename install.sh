@@ -82,77 +82,6 @@ create_directories() {
 }
 
 ###############################################################################
-# Create Entware init.d script
-###############################################################################
-
-create_initd_script() {
-    print_info "Creating Entware init script..."
-
-    cat > /opt/etc/init.d/S99vpn-director << 'INITEOF'
-#!/bin/sh
-
-PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# Note: We don't source rc.func because VPN Director manages multiple
-# subsystems (firewall rules, ipsets, xray) that require custom lifecycle management.
-# ENABLED and DESC are kept for consistency with Entware conventions.
-ENABLED=yes
-DESC="VPN Director"
-VPD="/jffs/scripts/vpn-director/vpn-director.sh"
-
-start() {
-    echo "Starting $DESC..."
-    if "$VPD" apply; then
-        # Remove legacy cron job from previous versions
-        cru d update_ipsets 2>/dev/null
-        cru a vpn_director_update "0 3 * * * $VPD update"
-        /jffs/scripts/vpn-director/lib/send-email.sh "Startup" "VPN Director started" 2>/dev/null || true
-    else
-        echo "Failed to start $DESC"
-        return 1
-    fi
-}
-
-stop() {
-    echo "Stopping $DESC..."
-    "$VPD" stop
-    cru d vpn_director_update
-    # Also remove legacy cron job if present
-    cru d update_ipsets 2>/dev/null
-}
-
-case "$1" in
-    start)   start ;;
-    stop)    stop ;;
-    restart) stop; start ;;
-    status)  "$VPD" status ;;
-    *)       echo "Usage: $0 {start|stop|restart|status}" ;;
-esac
-INITEOF
-
-    chmod +x /opt/etc/init.d/S99vpn-director
-    print_success "Created /opt/etc/init.d/S99vpn-director"
-
-    # Create Telegram bot init.d script
-    print_info "Creating Entware init.d script for Telegram bot..."
-    cat > /opt/etc/init.d/S98telegram-bot << 'INITEOF'
-#!/bin/sh
-
-ENABLED=yes
-PROCS=telegram-bot
-ARGS=""
-PREARGS=""
-DESC="Telegram Bot for VPN Director"
-PATH=/jffs/scripts/vpn-director:/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-. /opt/etc/init.d/rc.func
-INITEOF
-
-    chmod +x /opt/etc/init.d/S98telegram-bot
-    print_success "Created /opt/etc/init.d/S98telegram-bot"
-}
-
-###############################################################################
 # Download scripts
 ###############################################################################
 
@@ -174,7 +103,9 @@ download_scripts() {
         "jffs/scripts/vpn-director/setup_telegram_bot.sh" \
         "jffs/scripts/firewall-start" \
         "jffs/scripts/wan-event" \
-        "jffs/configs/profile.add"
+        "jffs/configs/profile.add" \
+        "opt/etc/init.d/S99vpn-director" \
+        "opt/etc/init.d/S98telegram-bot"
     do
         target="/$script"
         curl -fsSL "$REPO_URL/$script" -o "$target" || {
@@ -279,7 +210,6 @@ main() {
     create_directories
     download_scripts
     download_telegram_bot
-    create_initd_script
     print_next_steps
 }
 
