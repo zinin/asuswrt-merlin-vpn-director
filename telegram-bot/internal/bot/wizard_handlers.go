@@ -300,7 +300,8 @@ func (b *Bot) sendClientsSelection(chatID int64, state *wizard.State) {
 }
 
 func (b *Bot) sendClientIPPrompt(chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "Enter client IP address\n(e.g.: 192.168.1.100)")
+	msg := tgbotapi.NewMessage(chatID, escapeMarkdownV2("Enter client IP address\n(e.g.: 192.168.1.100)"))
+	msg.ParseMode = "MarkdownV2"
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send client IP prompt: %v", err)
 	}
