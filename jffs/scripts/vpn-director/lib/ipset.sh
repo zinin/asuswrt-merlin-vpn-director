@@ -5,23 +5,22 @@
 # -------------------------------------------------------------------------------------------------
 # Purpose:
 #   Modular library for ipset operations: status, ensure, update.
-#   Migrated from ipset_builder.sh to provide independent, testable functions.
+#   Builds country ipsets for Tunnel Director and Xray TPROXY.
 #
 # Dependencies:
-#   - common.sh (log, tmp_file, compute_hash)
+#   - common.sh (log, tmp_file, compute_hash, download_file)
 #   - config.sh (IPS_BDR_DIR)
 #
 # Public API:
 #   ipset_status()          - show loaded ipsets, sizes, cache info
-#   ipset_ensure()          - ensure ipsets exist (load from cache or download)
-#   ipset_update()          - force fresh download of ipsets
+#   ipset_ensure()          - ensure ipset exists (load from cache or download)
+#   ipset_update()          - force fresh download of ipset
 #
 # Internal functions (for testing):
 #   _next_pow2()            - round up to next power of 2
 #   _calc_ipset_size()      - calculate hashsize from entry count (min 1024)
 #   _derive_set_name()      - lowercase or hash for long names (>31 chars)
 #   parse_exclude_sets_from_json() - extract exclude codes from tunnels JSON (stdin)
-#   parse_combo_from_rules() - extract combo ipsets from rules (stdin)
 #   _ipset_exists()         - check if ipset exists
 #   _ipset_count()          - get entry count
 #

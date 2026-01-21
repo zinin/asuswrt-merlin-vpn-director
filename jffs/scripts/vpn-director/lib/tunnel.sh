@@ -5,24 +5,24 @@
 # -------------------------------------------------------------------------------------------------
 # Purpose:
 #   Modular library for tunnel director operations: status, apply, stop.
-#   Migrated from tunnel_director.sh to provide independent, testable functions.
+#   Routes LAN client traffic through VPN tunnels with exclusion-based routing.
 #
 # Dependencies:
 #   - common.sh (log, tmp_file, compute_hash, is_lan_ip)
-#   - firewall.sh (create_fw_chain, delete_fw_chain, ensure_fw_rule, sync_fw_rule, purge_fw_rules)
-#   - config.sh (TUN_DIR_RULES, TUN_DIR_CHAIN_PREFIX, TUN_DIR_PREF_BASE, TUN_DIR_MARK_MASK,
-#                TUN_DIR_MARK_SHIFT)
-#   - ipset.sh (_derive_set_name, parse_country_codes, parse_combo_from_rules, TUN_DIR_HASH)
+#   - firewall.sh (create_fw_chain, delete_fw_chain, ensure_fw_rule, sync_fw_rule,
+#                  purge_fw_rules, fw_chain_exists)
+#   - config.sh (TUN_DIR_TUNNELS_JSON, TUN_DIR_CHAIN, TUN_DIR_PREF_BASE,
+#                TUN_DIR_MARK_MASK, TUN_DIR_MARK_SHIFT)
+#   - ipset.sh (_ipset_exists, parse_exclude_sets_from_json, TUN_DIR_HASH)
 #
 # Public API:
-#   tunnel_status()              - show TUN_DIR_* chains, ip rules, fwmarks
+#   tunnel_status()              - show TUN_DIR chain, ip rules, configured tunnels
 #   tunnel_apply()               - apply rules from config (idempotent)
-#   tunnel_stop()                - remove all chains and ip rules
+#   tunnel_stop()                - remove chain and ip rules
 #   tunnel_get_required_ipsets() - return list of ipsets needed for rules
 #
 # Internal functions (for testing):
 #   _tunnel_table_allowed()         - check if routing table is valid (wgcN, ovpncN, main)
-#   _tunnel_resolve_set()           - resolve ipset name using _derive_set_name
 #   _tunnel_get_prerouting_base_pos() - find insert position after system rules
 #   _tunnel_init()                  - initialize module state
 #
