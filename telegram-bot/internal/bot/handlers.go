@@ -142,16 +142,59 @@ func (b *Bot) handleStop(msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleLogs(msg *tgbotapi.Message) {
-	result, err := shell.Exec("tail", "-n", "20", "/tmp/vpn_director.log")
+	args := strings.Fields(msg.CommandArguments())
+
+	source := "all"
+	lines := defaultLogLines
+
+	// Parse arguments: /logs [source] [lines]
+	if len(args) >= 1 {
+		switch args[0] {
+		case "bot", "vpn", "all":
+			source = args[0]
+		default:
+			// Maybe it's a number
+			if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+				lines = n
+			} else {
+				b.sendMessage(msg.Chat.ID, "Usage: `/logs [bot|vpn|all] [lines]`")
+				return
+			}
+		}
+	}
+
+	if len(args) >= 2 {
+		if n, err := strconv.Atoi(args[1]); err == nil && n > 0 {
+			lines = n
+		}
+	}
+
+	linesStr := strconv.Itoa(lines)
+
+	if source == "bot" || source == "all" {
+		b.sendLogFile(msg.Chat.ID, botLogPath, "Bot", linesStr)
+	}
+
+	if source == "vpn" || source == "all" {
+		b.sendLogFile(msg.Chat.ID, vpnLogPath, "VPN Director", linesStr)
+	}
+}
+
+func (b *Bot) sendLogFile(chatID int64, path, name, lines string) {
+	result, err := shell.Exec("tail", "-n", lines, path)
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Error reading %s logs: %v", name, err)))
 		return
 	}
-	if result.Output == "" {
-		b.sendMessage(msg.Chat.ID, "Log is empty")
-		return
+
+	output := result.Output
+	if output == "" {
+		output = "(empty)"
 	}
-	b.sendMessage(msg.Chat.ID, "```\n"+result.Output+"```")
+
+	text := fmt.Sprintf("📋 *%s logs* \\(last %s lines\\):\n```\n%s```",
+		escapeMarkdownV2(name), lines, output)
+	b.sendLongMessage(chatID, text)
 }
 
 func (b *Bot) handleIP(msg *tgbotapi.Message) {
