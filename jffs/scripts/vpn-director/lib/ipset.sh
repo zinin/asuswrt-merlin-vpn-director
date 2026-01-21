@@ -409,6 +409,42 @@ _try_download_zone() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _try_manual_fallback - prompt user to manually download zone file (interactive only)
+# -------------------------------------------------------------------------------------------------
+# Args:
+#   $1 - country code
+#   $2 - destination file path
+# Returns:
+#   0 on success, 1 on failure or non-interactive mode
+# -------------------------------------------------------------------------------------------------
+_try_manual_fallback() {
+    local cc="$1" dest="$2"
+    local fallback_path="/tmp/${cc}.zone"
+
+    # Only in interactive mode
+    [[ ! -t 0 ]] && return 1
+
+    printf '\n'
+    printf 'All automatic sources failed for: %s\n' "$cc"
+    printf 'Please download manually and place at: %s\n' "$fallback_path"
+    printf 'Press Enter when ready (or Ctrl+C to cancel): '
+    read -r
+
+    if [[ -f "$fallback_path" ]]; then
+        # Filter comments and validate
+        grep -v '^#' "$fallback_path" | grep -v '^[[:space:]]*$' > "$dest"
+        if head -1 "$dest" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
+            log "Using manually provided zone for '$cc'"
+            return 0
+        fi
+        rm -f "$dest"
+    fi
+
+    log -l ERROR "Manual fallback failed for '$cc'"
+    return 1
+}
+
+# -------------------------------------------------------------------------------------------------
 # _download_zone - download a zone file from IPdeny with interactive fallback
 # -------------------------------------------------------------------------------------------------
 # If download fails and stdin is a tty, prompts user to manually download

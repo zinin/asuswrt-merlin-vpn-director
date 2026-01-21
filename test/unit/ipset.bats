@@ -475,3 +475,85 @@ EOF
     run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "/tmp/bats_dest.txt"
     assert_failure
 }
+
+# ============================================================================
+# _try_manual_fallback - manual fallback for interactive mode
+# ============================================================================
+
+@test "_try_manual_fallback: skipped in non-interactive mode" {
+    load_ipset_module
+
+    # Run with stdin from /dev/null (non-interactive)
+    run bash -c '
+        export TEST_MODE=1
+        export LOG_FILE="/tmp/bats_test.log"
+        export VPD_CONFIG_FILE="'"$TEST_ROOT"'/fixtures/vpn-director.json"
+        export PATH="'"$TEST_ROOT"'/mocks:$PATH"
+        source "'"$LIB_DIR"'/common.sh"
+        source "'"$LIB_DIR"'/config.sh"
+        source "'"$LIB_DIR"'/ipset.sh" --source-only
+        _try_manual_fallback "ru" "/tmp/bats_dest.txt"
+    ' < /dev/null
+
+    assert_failure
+    # Should not show interactive prompt
+    refute_output --partial "Please download"
+}
+
+@test "_try_manual_fallback: uses file from fallback path when available" {
+    load_ipset_module
+
+    local fallback="/tmp/ru.zone"
+    local dest="/tmp/bats_manual_dest.txt"
+
+    # Create valid zone file at fallback path
+    cat > "$fallback" << 'EOF'
+# Manual download
+1.0.0.0/24
+2.0.0.0/16
+EOF
+
+    # Test the file processing logic directly by redefining the function
+    # to skip the TTY check (since we can't simulate a real TTY in tests)
+    run bash -c '
+        export TEST_MODE=1
+        export LOG_FILE="/tmp/bats_test.log"
+        export VPD_CONFIG_FILE="'"$TEST_ROOT"'/fixtures/vpn-director.json"
+        export PATH="'"$TEST_ROOT"'/mocks:$PATH"
+        source "'"$LIB_DIR"'/common.sh"
+        source "'"$LIB_DIR"'/config.sh"
+        source "'"$LIB_DIR"'/ipset.sh" --source-only
+
+        # Override function to skip TTY check for testing
+        _try_manual_fallback_test() {
+            local cc="$1" dest="$2"
+            local fallback_path="/tmp/${cc}.zone"
+
+            # Skip TTY check in test - simulate user pressed Enter
+            if [[ -f "$fallback_path" ]]; then
+                grep -v "^#" "$fallback_path" | grep -v "^[[:space:]]*$" > "$dest"
+                if head -1 "$dest" | grep -qE "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+"; then
+                    log "Using manually provided zone for '\''$cc'\''"
+                    return 0
+                fi
+                rm -f "$dest"
+            fi
+            log -l ERROR "Manual fallback failed for '\''$cc'\''"
+            return 1
+        }
+
+        _try_manual_fallback_test "ru" "'"$dest"'"
+    '
+
+    assert_success
+
+    # Verify comments filtered
+    run grep '^#' "$dest"
+    assert_failure
+
+    # Verify CIDR present
+    run grep '1.0.0.0/24' "$dest"
+    assert_success
+
+    rm -f "$fallback" "$dest"
+}
