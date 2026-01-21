@@ -221,20 +221,17 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 	}
 
 	if len(servers) == 0 {
-		b.sendMessage(msg.Chat.ID, "No servers\\. Use /import to add servers\\.")
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2("No servers. Use /import to add servers."))
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🖥 *Servers* \\(%d\\):\n", len(servers)))
-	for i, s := range servers {
-		sb.WriteString(fmt.Sprintf("%d\\. %s — %s \\(%s\\)\n",
-			i+1,
-			escapeMarkdownV2(s.Name),
-			escapeMarkdownV2(s.Address),
-			escapeMarkdownV2(s.IP)))
+	text, keyboard := buildServersPage(servers, 0)
+	msgCfg := tgbotapi.NewMessage(msg.Chat.ID, text)
+	msgCfg.ParseMode = "MarkdownV2"
+	msgCfg.ReplyMarkup = keyboard
+	if _, err := b.api.Send(msgCfg); err != nil {
+		log.Printf("[ERROR] Failed to send servers page: %v", err)
 	}
-	b.sendLongMessage(msg.Chat.ID, sb.String())
 }
 
 func (b *Bot) handleRestart(msg *tgbotapi.Message) {
