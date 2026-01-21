@@ -86,6 +86,7 @@ ipt           # Legacy alias (runs: vpd update)
 ## Modular Docs
 
 See `.claude/rules/` for detailed docs:
+- `packet-flow.md` — packet processing order, Xray vs TD priority, fwmark bit layout
 - `tunnel-director.md` — rule format, chain architecture, fwmark layout
 - `ipset-builder.md` — IPdeny sources, dump/restore, combo sets
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe
