@@ -153,34 +153,6 @@ load '../test_helper'
 }
 
 # ============================================================================
-# parse_combo_from_rules - extract combo ipsets from rules
-# ============================================================================
-
-@test "parse_combo_from_rules: extracts combo sets with comma" {
-    load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::us,ca" | parse_combo_from_rules)
-    [ "$result" = "us,ca" ]
-}
-
-@test "parse_combo_from_rules: ignores single country (no combo)" {
-    load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::us" | parse_combo_from_rules)
-    [ -z "$result" ]
-}
-
-@test "parse_combo_from_rules: extracts combo from exclusion field" {
-    load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::any:ru,ua" | parse_combo_from_rules)
-    [ "$result" = "ru,ua" ]
-}
-
-@test "parse_combo_from_rules: deduplicates identical combos" {
-    load_ipset_module
-    result=$(printf "wgc1:192.168.50.0/24::us,ca\nwgc2:192.168.60.0/24::us,ca" | parse_combo_from_rules)
-    [ "$result" = "us,ca" ]
-}
-
-# ============================================================================
 # _ipset_exists - check if ipset exists
 # ============================================================================
 
@@ -260,30 +232,15 @@ load '../test_helper'
     assert_output "ru"
 }
 
-@test "_normalize_spec: handles combo sets with mixed case" {
+@test "_normalize_spec: rejects comma-separated input (no combo support)" {
     load_ipset_module
-    run _normalize_spec "US,CA"
-    assert_success
-    assert_output "us,ca"
+    run _normalize_spec "us,ca"
+    assert_failure
 }
 
-@test "_normalize_spec: skips empty tokens in combo" {
+@test "_normalize_spec: returns failure for invalid country code" {
     load_ipset_module
-    run _normalize_spec "us,,ca"
-    assert_success
-    assert_output "us,ca"
-}
-
-@test "_normalize_spec: skips invalid codes in combo" {
-    load_ipset_module
-    run _normalize_spec "us,invalid,ca"
-    assert_success
-    assert_output --partial "us,ca"
-}
-
-@test "_normalize_spec: returns failure for all invalid codes" {
-    load_ipset_module
-    run _normalize_spec "invalid,xyz"
+    run _normalize_spec "invalid"
     assert_failure
 }
 

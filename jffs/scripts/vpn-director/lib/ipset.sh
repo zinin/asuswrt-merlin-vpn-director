@@ -188,13 +188,13 @@ _is_valid_country_code() {
 # -------------------------------------------------------------------------------------------------
 # _normalize_spec - normalize ipset spec (trim, lowercase, validate)
 # -------------------------------------------------------------------------------------------------
-# Input: raw spec (single country code or comma-separated list)
+# Input: raw spec (single country code only)
 # Output: normalized spec or empty string if invalid
-# Filters: trims whitespace, lowercases, drops empty tokens, validates country codes
+# Filters: trims whitespace, lowercases, validates country code
+# Note: Combo sets (comma-separated) are no longer supported.
 # -------------------------------------------------------------------------------------------------
 _normalize_spec() {
-    local raw="$1" normalized="" token lc_token
-    local -a tokens=() result_tokens=()
+    local raw="$1"
 
     # Remove leading/trailing whitespace and convert to lowercase
     # Note: use 'A-Z' 'a-z' instead of '[:upper:]' '[:lower:]' due to tr bug on some routers
@@ -205,34 +205,19 @@ _normalize_spec() {
         return 1
     fi
 
-    # Split on comma
-    IFS=',' read -ra tokens <<< "$raw"
-
-    for token in "${tokens[@]}"; do
-        # Trim whitespace from each token
-        lc_token=$(printf '%s' "$token" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
-        # Skip empty tokens
-        [[ -z $lc_token ]] && continue
-
-        # Validate as country code
-        if ! _is_valid_country_code "$lc_token"; then
-            log -l WARN "Invalid country code '$lc_token'; skipping"
-            continue
-        fi
-
-        result_tokens+=("$lc_token")
-    done
-
-    # No valid tokens?
-    if [[ ${#result_tokens[@]} -eq 0 ]]; then
-        log -l ERROR "No valid country codes found in spec '$1'"
+    # Reject comma-separated specs (combo support removed)
+    if [[ $raw == *,* ]]; then
+        log -l ERROR "Combo ipsets not supported: '$raw'"
         return 1
     fi
 
-    # Join with comma
-    normalized=$(IFS=','; printf '%s' "${result_tokens[*]}")
-    printf '%s\n' "$normalized"
+    # Validate as single country code
+    if ! _is_valid_country_code "$raw"; then
+        log -l ERROR "Invalid country code '$raw'"
+        return 1
+    fi
+
+    printf '%s\n' "$raw"
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -280,49 +265,6 @@ parse_country_codes() {
         }
         END { for (c in seen) print c }
     ' | sort
-}
-
-# -------------------------------------------------------------------------------------------------
-# parse_combo_from_rules - extract combo ipsets from tunnel director rules
-# -------------------------------------------------------------------------------------------------
-# Emits only fields that contain a comma (e.g., "us,ca,uk")
-# indicating a combo set that unions multiple country sets.
-# Reads rules from stdin.
-# -------------------------------------------------------------------------------------------------
-parse_combo_from_rules() {
-    awk '
-        function emit_combo(field, f, n, a, i, t, out) {
-            f = field
-            gsub(/[[:space:]]/, "", f)
-            if (f ~ /,/) {
-                n = split(f, a, ",")
-                out = ""
-                for (i = 1; i <= n; i++) {
-                    t = a[i]
-                    out = out (out ? "," : "") t
-                }
-                print out
-            }
-        }
-
-        {
-            # Split on ":" outside [...]
-            depth = 0; tok = ""; nf2 = 0
-            for (i = 1; i <= length($0); i++) {
-                c = substr($0, i, 1)
-                if (c == "[") depth++
-                else if (c == "]" && depth > 0) depth--
-                if (c == ":" && depth == 0) {
-                    F[++nf2] = tok; tok = ""
-                }
-                else tok = tok c
-            }
-            F[++nf2] = tok
-
-            if (nf2 >= 4) emit_combo(F[4])
-            if (nf2 >= 5) emit_combo(F[5])
-        }
-    ' | sort -u
 }
 
 ###################################################################################################
@@ -618,46 +560,6 @@ _build_country_ipset() {
     return 0
 }
 
-# -------------------------------------------------------------------------------------------------
-# _build_combo_ipset - build a combo (list:set) ipset
-# -------------------------------------------------------------------------------------------------
-_build_combo_ipset() {
-    local combo="$1"  # comma-separated list, e.g., "us,ca,uk"
-    local set_name added=0 member
-
-    set_name="$(_derive_set_name "${combo//,/_}")"
-
-    if _ipset_exists "$set_name"; then
-        log "Combo ipset '$set_name' already exists; skipping"
-        return 0
-    fi
-
-    ipset create "$set_name" list:set
-
-    local -a keys_array
-    read -ra keys_array <<< "${combo//,/ }"
-    for key in "${keys_array[@]}"; do
-        member="$(_derive_set_name "$key")"
-
-        if ! _ipset_exists "$member"; then
-            log -l WARN "Combo '$set_name': member '$member' not found; skipping"
-            continue
-        fi
-
-        if ipset add "$set_name" "$member" 2>/dev/null; then
-            added=$((added + 1))
-        fi
-    done
-
-    if [[ $added -eq 0 ]]; then
-        ipset destroy "$set_name" 2>/dev/null || true
-        log -l WARN "Combo '$set_name' had no valid members; not created"
-        return 1
-    fi
-
-    log "Created combo ipset '$set_name' ($added members)"
-    return 0
-}
 
 ###################################################################################################
 # Public API
@@ -699,14 +601,13 @@ ipset_status() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# ipset_ensure - ensure ipsets exist (load from cache or download)
+# ipset_ensure - ensure ipset exists (load from cache or download)
 # -------------------------------------------------------------------------------------------------
 # Usage:
 #   ipset_ensure "ru"           # ensure country ipset 'ru' exists
-#   ipset_ensure "us,ca"        # ensure combo ipset 'us_ca' exists (and members)
 #
-# For combo sets, this also ensures all member country sets exist.
 # Input is normalized and validated (trim, lowercase, valid ISO codes).
+# Combo sets (comma-separated) are no longer supported.
 # -------------------------------------------------------------------------------------------------
 ipset_ensure() {
     local raw_spec="$1" spec
@@ -720,39 +621,27 @@ ipset_ensure() {
 
     mkdir -p "$dump_dir"
 
-    # Check if this is a combo set (contains comma)
-    if [[ $spec == *,* ]]; then
-        # It's a combo - first ensure all members exist
-        local -a members
-        read -ra members <<< "${spec//,/ }"
-        for cc in "${members[@]}"; do
-            ipset_ensure "$cc" || return 1
-        done
-        # Then build the combo
-        _build_combo_ipset "$spec"
-    else
-        # Single country set
-        local set_name="$spec"
-        local dump="${dump_dir}/${set_name}.dump"
+    # Single country set only (combo support removed)
+    local set_name="$spec"
+    local dump="${dump_dir}/${set_name}.dump"
 
-        # Try restore from cache first (skip if IPSET_FORCE_UPDATE is set)
-        if _restore_from_cache "$set_name" "$dump" "${IPSET_FORCE_UPDATE:-0}"; then
-            return 0
-        fi
-
-        # Need to download and build
-        _build_country_ipset "$spec" "$dump_dir"
+    # Try restore from cache first (skip if IPSET_FORCE_UPDATE is set)
+    if _restore_from_cache "$set_name" "$dump" "${IPSET_FORCE_UPDATE:-0}"; then
+        return 0
     fi
+
+    # Need to download and build
+    _build_country_ipset "$spec" "$dump_dir"
 }
 
 # -------------------------------------------------------------------------------------------------
-# ipset_update - force fresh download of ipsets
+# ipset_update - force fresh download of ipset
 # -------------------------------------------------------------------------------------------------
 # Usage:
 #   ipset_update "ru"           # force update country ipset 'ru'
-#   ipset_update "us,ca"        # force update combo ipset and all members
 #
 # Input is normalized and validated (trim, lowercase, valid ISO codes).
+# Combo sets (comma-separated) are no longer supported.
 # -------------------------------------------------------------------------------------------------
 ipset_update() {
     local raw_spec="$1" spec
@@ -766,23 +655,8 @@ ipset_update() {
 
     mkdir -p "$dump_dir"
 
-    # Check if this is a combo set (contains comma)
-    if [[ $spec == *,* ]]; then
-        # It's a combo - first update all members
-        local -a members
-        read -ra members <<< "${spec//,/ }"
-        for cc in "${members[@]}"; do
-            ipset_update "$cc" || return 1
-        done
-        # Recreate the combo
-        local set_name
-        set_name="$(_derive_set_name "${spec//,/_}")"
-        ipset destroy "$set_name" 2>/dev/null || true
-        _build_combo_ipset "$spec"
-    else
-        # Single country set - force rebuild
-        _build_country_ipset "$spec" "$dump_dir"
-    fi
+    # Single country set - force rebuild
+    _build_country_ipset "$spec" "$dump_dir"
 }
 
 # -------------------------------------------------------------------------------------------------
