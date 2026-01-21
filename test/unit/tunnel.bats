@@ -197,10 +197,20 @@ load '../test_helper'
     assert_success
 }
 
-@test "tunnel_apply: logs when rules are applied" {
+@test "tunnel_apply: creates single TUN_DIR chain" {
     load_tunnel_module
     run tunnel_apply
     assert_success
+    # Check that it references TUN_DIR chain and tunnel name in log
+    assert_output --partial "wgc1"
+}
+
+@test "tunnel_apply: logs client routing info" {
+    load_tunnel_module
+    run tunnel_apply
+    assert_success
+    # Should mention the client from fixture (192.168.50.0/24)
+    assert_output --partial "192.168.50.0/24"
 }
 
 # ============================================================================
