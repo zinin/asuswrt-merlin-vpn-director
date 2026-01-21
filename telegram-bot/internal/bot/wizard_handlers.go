@@ -335,7 +335,8 @@ func (b *Bot) sendRouteSelection(chatID int64, ip string) {
 		tgbotapi.NewInlineKeyboardButtonData("Cancel", "cancel"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Where to route traffic for %s?", ip))
+	msg := tgbotapi.NewMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Where to route traffic for %s?", ip)))
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send route selection: %v", err)
