@@ -83,9 +83,13 @@ sh si sj sk sl sm sn so sr ss st sv sx sy sz tc td tf tg th tj tk tl tm tn to tr
 um us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw
 '
 
-# IPdeny base URL for country zone files
-IPDENY_BASE_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
-IPDENY_FILE_SUFFIX='-aggregated.zone'
+# Source URLs for country zone files (priority order)
+# 1. GeoLite2 via FireHOL GitHub (most accurate)
+GEOLITE2_GITHUB_URL='https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/geolite2_country'
+# 2. IPDeny via FireHOL GitHub (mirror, not blocked)
+IPDENY_GITHUB_URL='https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/ipdeny_country'
+# 3. IPDeny direct (may be blocked in some regions)
+IPDENY_DIRECT_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
 
 ###################################################################################################
 # Pure helper functions (defined before --source-only for testability)
