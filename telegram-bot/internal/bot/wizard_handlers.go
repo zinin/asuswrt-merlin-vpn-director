@@ -424,27 +424,40 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 	exclusions := state.GetExclusions()
 	serverIndex := state.GetServerIndex()
 
+	// Build exclusion list
+	var excl []string
+	for k, v := range exclusions {
+		if v {
+			excl = append(excl, k)
+		}
+	}
+	if len(excl) == 0 {
+		excl = []string{"ru"}
+	}
+
 	// Build new configuration
 	var xrayClients []string
-	var tunDirRules []string
+	tunnels := make(map[string]vpnconfig.TunnelConfig)
 
 	for _, c := range clients {
 		if c.Route == "xray" {
 			xrayClients = append(xrayClients, c.IP)
 		} else {
-			// Tunnel Director rule: table:ip/32::any:exclusions
-			var excl []string
-			for k, v := range exclusions {
-				if v {
-					excl = append(excl, k)
+			// Add /32 suffix if not present
+			ip := c.IP
+			if !strings.Contains(ip, "/") {
+				ip = ip + "/32"
+			}
+			// Add client to tunnel
+			if existing, ok := tunnels[c.Route]; ok {
+				existing.Clients = append(existing.Clients, ip)
+				tunnels[c.Route] = existing
+			} else {
+				tunnels[c.Route] = vpnconfig.TunnelConfig{
+					Clients: []string{ip},
+					Exclude: excl,
 				}
 			}
-			exclStr := strings.Join(excl, ",")
-			if exclStr == "" {
-				exclStr = "ru"
-			}
-			rule := fmt.Sprintf("%s:%s/32::any:%s", c.Route, c.IP, exclStr)
-			tunDirRules = append(tunDirRules, rule)
 		}
 	}
 
@@ -473,7 +486,7 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 	vpnCfg.Xray.Clients = xrayClients
 	vpnCfg.Xray.ExcludeSets = xrayExclusions
 	vpnCfg.Xray.Servers = serverIPs
-	vpnCfg.TunnelDirector.Rules = tunDirRules
+	vpnCfg.TunnelDirector.Tunnels = tunnels
 
 	if err := vpnconfig.SaveVPNDirectorConfig(scriptsDir+"/vpn-director.json", vpnCfg); err != nil {
 		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Save error: %v", err)))

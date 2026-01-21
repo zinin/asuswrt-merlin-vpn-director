@@ -53,12 +53,20 @@ ipt           # Legacy alias (runs: vpd update)
 
 ## Key Concepts
 
-**Tunnel Director Rules**: `table:src[%iface][:src_excl]:set[,set...][:set_excl]`
-- Example: `wgc1:192.168.50.0/24::us,ca` — route US/CA traffic via wgc1
+**Tunnel Director**: Routes LAN client traffic through VPN tunnels with exclusion-based logic.
+```json
+{
+  "tunnel_director": {
+    "tunnels": {
+      "wgc1": { "clients": ["192.168.50.0/24"], "exclude": ["ru"] }
+    }
+  }
+}
+```
+- All traffic from `clients` goes through tunnel
+- Traffic to destinations in `exclude` bypasses VPN (direct)
 
-**IPSet Types**:
-- Country sets: 2-letter ISO codes (us, ca, ru) — multi-source download
-- Combo sets: union of multiple sets (list:set type)
+**IPSet Types**: Country sets — 2-letter ISO codes (us, ca, ru) from multi-source download
 
 **IPSet Sources** (priority order):
 1. GeoLite2 via GitHub (firehol/blocklist-ipsets)
@@ -86,6 +94,7 @@ ipt           # Legacy alias (runs: vpd update)
 ## Modular Docs
 
 See `.claude/rules/` for detailed docs:
+- `packet-flow.md` — packet processing order, Xray vs TD priority, fwmark bit layout
 - `tunnel-director.md` — rule format, chain architecture, fwmark layout
 - `ipset-builder.md` — IPdeny sources, dump/restore, combo sets
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe

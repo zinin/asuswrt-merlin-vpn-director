@@ -202,8 +202,8 @@ load 'test_helper'
     load_common
 
     # Test that function accepts 2 args (backward compatibility)
-    # Uses real curl which will succeed for example.com
-    run download_file "http://example.com/file" "/tmp/bats_test_dl"
+    # Uses real curl with a stable test URL
+    run download_file "http://www.msftconnecttest.com/connecttest.txt" "/tmp/bats_test_dl"
     assert_success
 
     rm -f /tmp/bats_test_dl

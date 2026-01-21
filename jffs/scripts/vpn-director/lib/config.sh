@@ -43,7 +43,7 @@ _cfg_arr() { jq -r "$1 // [] | .[]" "$VPD_CONFIG_FILE" | tr '\n' ' ' | sed 's/ $
 ###################################################################################################
 # 4. Tunnel Director variables
 ###################################################################################################
-TUN_DIR_RULES=$(_cfg_arr '.tunnel_director.rules')
+TUN_DIR_TUNNELS_JSON=$(_cfg '.tunnel_director.tunnels // {}')
 IPS_BDR_DIR=$(_cfg '.data_dir')
 
 ###################################################################################################
@@ -68,7 +68,7 @@ XRAY_SERVERS_IPSET=$(_cfg '.advanced.xray.servers_ipset')
 ###################################################################################################
 # 7. Advanced: Tunnel Director
 ###################################################################################################
-TUN_DIR_CHAIN_PREFIX=$(_cfg '.advanced.tunnel_director.chain_prefix')
+TUN_DIR_CHAIN=$(_cfg '.advanced.tunnel_director.chain')
 TUN_DIR_PREF_BASE=$(_cfg '.advanced.tunnel_director.pref_base')
 TUN_DIR_MARK_MASK=$(_cfg '.advanced.tunnel_director.mark_mask')
 TUN_DIR_MARK_SHIFT=$(_cfg '.advanced.tunnel_director.mark_shift')
@@ -84,11 +84,11 @@ BOOT_WAIT_DELAY=$(_cfg '.advanced.boot.wait_delay')
 ###################################################################################################
 readonly \
     VPD_CONFIG_FILE \
-    TUN_DIR_RULES IPS_BDR_DIR \
+    TUN_DIR_TUNNELS_JSON IPS_BDR_DIR \
     XRAY_CLIENTS XRAY_SERVERS XRAY_EXCLUDE_SETS \
     XRAY_TPROXY_PORT XRAY_ROUTE_TABLE XRAY_RULE_PREF \
     XRAY_FWMARK XRAY_FWMARK_MASK XRAY_CHAIN \
     XRAY_CLIENTS_IPSET XRAY_SERVERS_IPSET \
-    TUN_DIR_CHAIN_PREFIX TUN_DIR_PREF_BASE \
+    TUN_DIR_CHAIN TUN_DIR_PREF_BASE \
     TUN_DIR_MARK_MASK TUN_DIR_MARK_SHIFT \
     MIN_BOOT_TIME BOOT_WAIT_DELAY

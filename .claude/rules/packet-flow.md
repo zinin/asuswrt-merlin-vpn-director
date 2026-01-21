@@ -1,0 +1,279 @@
+# Packet Flow Architecture
+
+Detailed description of how traffic routing works in VPN Director.
+
+## Overview
+
+VPN Director uses two independent routing mechanisms:
+
+| Mechanism | Purpose | Priority | Fwmark bits |
+|-----------|---------|----------|-------------|
+| **Xray TPROXY** | Transparent proxy via Xray | Higher (pos 1) | bit 8 (0x100) |
+| **Tunnel Director** | VPN tunnel routing (WG/OVPN) | Lower (pos 2+) | bits 16-23 (0x00ff0000) |
+
+Both work in `mangle` table's `PREROUTING` chain but use separate fwmark bit fields, so they don't interfere with each other's marks.
+
+## Packet Processing Order
+
+```
+Incoming packet from LAN (br0)
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    mangle PREROUTING                         │
+│                                                              │
+│  pos 1: ──► XRAY_TPROXY chain                               │
+│              │                                               │
+│              ├─ src NOT in XRAY_CLIENTS? ──► RETURN         │
+│              ├─ dst in XRAY_SERVERS? ──► RETURN (avoid loop)│
+│              ├─ dst is private/local? ──► RETURN            │
+│              ├─ dst in exclude_sets (ru, cn...)? ──► RETURN │
+│              │                                               │
+│              └─ TPROXY redirect to Xray port                │
+│                 + set mark 0x100                             │
+│                 ══► Packet goes to Xray, exits PREROUTING   │
+│                                                              │
+│  pos 2: ──► TUN_DIR chain (if mark field 0x00ff0000 == 0)   │
+│              │                                               │
+│              ├─ src + dst in exclude? ──► RETURN            │
+│              ├─ src matched? ──► MARK 0xN0000               │
+│              └─ first client match wins (linear order)      │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    ip rule lookup                            │
+│                                                              │
+│  pref 200:   fwmark 0x100/0x100 ──► table 100 (Xray local)  │
+│  pref 16384: fwmark 0x10000/0xff0000 ──► table wgc1         │
+│  pref 16385: fwmark 0x20000/0xff0000 ──► table ovpnc1       │
+│  ...                                                         │
+│  pref 32767: default ──► table main (WAN)                   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Priority: Xray vs Tunnel Director
+
+**Xray has absolute priority** because:
+
+1. XRAY_TPROXY is at position 1 in PREROUTING (hardcoded)
+2. TPROXY target **redirects** the packet to local Xray socket
+3. Packet never continues to TUN_DIR_* chains
+
+**Implication**: If a client IP is in both `xray.clients` and a TD rule, traffic goes through Xray only. TD rule is ignored for that client.
+
+## Fwmark Bit Layout
+
+```
+31                        16 15         8 7              0
+├─────────────────────────┼─────────────┼───────────────┤
+│   Tunnel Director       │   Reserved  │  Xray + VPN   │
+│   (8 bits: 0-255)       │             │  firmware     │
+├─────────────────────────┼─────────────┼───────────────┤
+│   0x00ff0000            │             │  0x100 = Xray │
+│   mark = slot << 16     │             │  0x01 = VPN   │
+└─────────────────────────┴─────────────┴───────────────┘
+
+Examples:
+  0x00000100 = Xray TPROXY (bit 8)
+  0x00010000 = TD rule 0 (slot 1 << 16)
+  0x00020000 = TD rule 1 (slot 2 << 16)
+  0x00010100 = Both Xray and TD rule 0 (theoretically, but Xray wins)
+```
+
+## Xray TPROXY Details
+
+### Chain Structure (tproxy.sh)
+
+```
+XRAY_TPROXY chain:
+  1. ! --match-set XRAY_CLIENTS src → RETURN
+  2. --match-set XRAY_SERVERS dst → RETURN
+  3. -d 127.0.0.0/8 → RETURN (loopback)
+  4. -d 10.0.0.0/8 → RETURN (RFC1918)
+  5. -d 172.16.0.0/12 → RETURN (RFC1918)
+  6. -d 192.168.0.0/16 → RETURN (RFC1918)
+  7. -d 169.254.0.0/16 → RETURN (link-local)
+  8. -d 224.0.0.0/4 → RETURN (multicast)
+  9. -d 255.255.255.255/32 → RETURN (broadcast)
+  10. --match-set {exclude_set} dst → RETURN (for each exclude_set)
+  11. -p tcp → TPROXY --on-port PORT --tproxy-mark 0x100/0x100
+  12. -p udp → TPROXY --on-port PORT --tproxy-mark 0x100/0x100
+```
+
+### IPSets
+
+| IPSet | Type | Purpose |
+|-------|------|---------|
+| `XRAY_CLIENTS` | hash:net | Source IPs to proxy |
+| `XRAY_SERVERS` | hash:net | Xray server IPs (excluded to avoid loops) |
+| `{country}` or `{country}_ext` | hash:net | Country exclusions |
+
+### Routing
+
+```bash
+# Route table for TPROXY (local delivery)
+ip route add local default dev lo table 100
+
+# IP rule: marked packets use table 100
+ip rule add pref 200 fwmark 0x100/0x100 table 100
+```
+
+## Tunnel Director Details
+
+### Chain Structure (tunnel.sh)
+
+Single chain with rules for all clients:
+
+```
+TUN_DIR chain:
+  # Client 1 (wgc1)
+  -s 192.168.50.0/24 -m set --match-set ru dst → RETURN
+  -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 → MARK 0x10000
+
+  # Client 2 (ovpnc1)
+  -s 192.168.1.5 -m set --match-set ru dst → RETURN
+  -s 192.168.1.5 -m mark --mark 0x0/0xff0000 → MARK 0x20000
+```
+
+PREROUTING jump:
+
+```
+-i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR
+```
+
+The `--mark 0x0/0xff0000` condition ensures **first-match-wins**: once a packet is marked, subsequent rules skip it.
+
+### Position Calculation
+
+```bash
+_tunnel_get_prerouting_base_pos()  # Returns position after system iface-mark rules
+```
+
+Typically:
+- Position 1: XRAY_TPROXY
+- Position 2+: System rules (if any)
+- Position N: TUN_DIR (single chain)
+
+### IP Rules
+
+```bash
+# For each TD rule:
+ip rule add pref {16384 + idx} fwmark {mark}/{mask} table {wgc1|ovpnc1|main}
+```
+
+## Traffic Flow Examples
+
+### Example 1: Client in Xray only
+
+Config:
+```json
+{
+  "xray": { "clients": ["192.168.50.10"], "exclude_sets": ["ru"] }
+}
+```
+
+Packet from 192.168.50.10 to 8.8.8.8 (US):
+1. XRAY_TPROXY: src in XRAY_CLIENTS? Yes
+2. dst in XRAY_SERVERS? No
+3. dst private? No
+4. dst in "ru"? No
+5. **TPROXY to Xray port, mark 0x100**
+6. Packet delivered to Xray process
+
+Packet from 192.168.50.10 to 77.88.8.8 (RU):
+1. XRAY_TPROXY: src in XRAY_CLIENTS? Yes
+2. dst in "ru"? Yes → **RETURN**
+3. TUN_DIR_*: no rules for this client
+4. **Goes to main table → WAN (direct)**
+
+### Example 2: Client in Tunnel Director only
+
+Config:
+```json
+{
+  "tunnel_director": {
+    "tunnels": {
+      "ovpnc3": {
+        "clients": ["192.168.1.5"],
+        "exclude": ["ru"]
+      }
+    }
+  }
+}
+```
+
+Packet from 192.168.1.5 to 8.8.8.8 (US):
+1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
+2. TUN_DIR: src=192.168.1.5 + dst in "ru"? No
+3. TUN_DIR: src=192.168.1.5? Yes → **MARK 0x10000**
+4. ip rule pref 16384: fwmark 0x10000 → table ovpnc3
+5. **Goes through OpenVPN tunnel**
+
+Packet from 192.168.1.5 to 77.88.8.8 (RU):
+1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
+2. TUN_DIR: src=192.168.1.5 + dst in "ru"? Yes → **RETURN** (no mark)
+3. **Goes to main table → WAN (direct)**
+
+### Example 3: Client in both Xray and TD
+
+Config:
+```json
+{
+  "xray": { "clients": ["192.168.50.0/24"], "exclude_sets": ["ru"] },
+  "tunnel_director": {
+    "tunnels": {
+      "wgc1": {
+        "clients": ["192.168.50.10"],
+        "exclude": ["ru"]
+      }
+    }
+  }
+}
+```
+
+Packet from 192.168.50.10 to 8.8.8.8 (US):
+1. XRAY_TPROXY: src in XRAY_CLIENTS (192.168.50.0/24)? Yes
+2. dst in "ru"? No
+3. **TPROXY to Xray** — TUN_DIR chain never evaluated
+
+**Xray always wins** for overlapping clients.
+
+## Where Routing Info is Stored
+
+### Configuration (desired state)
+
+| Location | Content |
+|----------|---------|
+| `vpn-director.json` | Rules, clients, exclusions |
+
+### Kernel (applied state)
+
+| Command | Shows |
+|---------|-------|
+| `ipset list -n` | All loaded ipsets |
+| `ipset list {name}` | Entries in specific ipset |
+| `iptables -t mangle -S XRAY_TPROXY` | Xray chain rules |
+| `iptables -t mangle -S TUN_DIR` | TD chain rules |
+| `iptables -t mangle -S PREROUTING` | Jump rules and positions |
+| `ip rule show` | Fwmark-based routing rules |
+| `ip route show table {N\|name}` | Routes in specific table |
+
+### Temporary state
+
+| File | Purpose |
+|------|---------|
+| `/tmp/tunnel_director/tun_dir_rules.sha256` | Hash of applied TD rules |
+| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Hash of built ipsets |
+
+## Key Code Locations
+
+| File | Function | Purpose |
+|------|----------|---------|
+| `lib/tproxy.sh:316-317` | PREROUTING insert pos 1 | Xray priority |
+| `lib/tproxy.sh:256-313` | `_tproxy_setup_iptables()` | Chain rules |
+| `lib/tunnel.sh:133-145` | `_tunnel_get_prerouting_base_pos()` | TD position calc |
+| `lib/tunnel.sh:421-422` | PREROUTING jump with mark check | First-match-wins |
+| `lib/tunnel.sh:412` | ip rule creation | Fwmark → table routing |

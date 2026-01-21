@@ -25,7 +25,7 @@ XRAY_CONFIG_DIR="/opt/etc/xray"
 
 # Temporary storage for parsed data
 XRAY_CLIENTS_LIST=""
-TUN_DIR_RULES_LIST=""
+TUN_DIR_TUNNELS_JSON='{}'
 SELECTED_SERVER_ADDRESS=""
 SELECTED_SERVER_PORT=""
 SELECTED_SERVER_UUID=""
@@ -206,6 +206,80 @@ step_configure_xray_exclusions() {
 # Step 3: Configure clients
 ###############################################################################
 
+# Helper: select exclude countries
+select_exclude_countries() {
+    printf "\n"
+    printf "Select countries to EXCLUDE from tunnel (direct routing):\n"
+    printf "  1) ru - Russia          6) fr - France\n"
+    printf "  2) ua - Ukraine         7) nl - Netherlands\n"
+    printf "  3) by - Belarus         8) pl - Poland\n"
+    printf "  4) kz - Kazakhstan      9) tr - Turkey\n"
+    printf "  5) de - Germany        10) il - Israel\n"
+    printf "\n"
+    printf "Enter numbers separated by space (e.g., 1 5 7) or 0 for none [default: 1]: "
+    read -r choice
+
+    if [[ -z $choice ]]; then
+        choice="1"
+    fi
+
+    local exclude_list=""
+    for num in $choice; do
+        local code=""
+        case "$num" in
+            0) exclude_list=""; break ;;
+            1) code="ru" ;;
+            2) code="ua" ;;
+            3) code="by" ;;
+            4) code="kz" ;;
+            5) code="de" ;;
+            6) code="fr" ;;
+            7) code="nl" ;;
+            8) code="pl" ;;
+            9) code="tr" ;;
+            10) code="il" ;;
+            *) print_warning "Unknown option: $num"; continue ;;
+        esac
+        if [[ -z $exclude_list ]]; then
+            exclude_list="$code"
+        else
+            exclude_list="$exclude_list $code"
+        fi
+    done
+
+    SELECTED_EXCLUDE="$exclude_list"
+}
+
+# Helper: add client to tunnel
+add_client_to_tunnel() {
+    local tunnel="$1"
+    local client="$2"
+    local exclude="$3"
+
+    # Add /32 suffix if not present
+    if [[ $client != */* ]]; then
+        client="${client}/32"
+    fi
+
+    # Build exclude JSON array
+    local exclude_json='[]'
+    if [[ -n $exclude ]]; then
+        # shellcheck disable=SC2086  # intentional word splitting
+        exclude_json=$(printf '%s\n' $exclude | jq -R . | jq -s .)
+    fi
+
+    # Check if tunnel already exists
+    if jq -e --arg t "$tunnel" '.[$t]' <<< "$TUN_DIR_TUNNELS_JSON" >/dev/null 2>&1; then
+        # Tunnel exists - add client to existing array
+        TUN_DIR_TUNNELS_JSON=$(jq --arg t "$tunnel" --arg c "$client" \
+            '.[$t].clients += [$c]' <<< "$TUN_DIR_TUNNELS_JSON")
+    else
+        # New tunnel - create with clients and exclude
+        TUN_DIR_TUNNELS_JSON=$(jq --arg t "$tunnel" --arg c "$client" --argjson e "$exclude_json" \
+            '.[$t] = {clients: [$c], exclude: $e}' <<< "$TUN_DIR_TUNNELS_JSON")
+    fi
+}
+
 step_configure_clients() {
     print_header "Step 3: Configure Clients"
 
@@ -213,10 +287,10 @@ step_configure_clients() {
     printf "Enter 'done' when finished.\n\n"
 
     XRAY_CLIENTS_LIST=""
-    TUN_DIR_RULES_LIST=""
+    TUN_DIR_TUNNELS_JSON='{}'
 
     while true; do
-        printf "Client IP (or 'done'): "
+        printf "Client IP or CIDR (or 'done'): "
         read -r client_ip
 
         if [[ $client_ip == "done" ]]; then
@@ -224,7 +298,8 @@ step_configure_clients() {
         fi
 
         # Validate IP format (basic check for private ranges)
-        case "$client_ip" in
+        local ip_part="${client_ip%%/*}"
+        case "$ip_part" in
             192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
                 ;;
             *)
@@ -235,7 +310,7 @@ step_configure_clients() {
 
         printf "\nWhere to route traffic for %s?\n" "$client_ip"
         printf "  1) Xray (VLESS proxy)\n"
-        printf "  2) Tunnel Director (OpenVPN)\n"
+        printf "  2) Tunnel Director (VPN tunnel)\n"
         printf "Choice [1-2]: "
         read -r route_choice
 
@@ -246,16 +321,41 @@ step_configure_clients() {
                 print_success "$client_ip -> Xray"
                 ;;
             2)
-                printf "OpenVPN client number [1-5]: "
-                read -r ovpn_num
-                case "$ovpn_num" in
+                printf "\nTunnel type:\n"
+                printf "  1) WireGuard (wgc1-5)\n"
+                printf "  2) OpenVPN (ovpnc1-5)\n"
+                printf "Choice [1-2]: "
+                read -r tunnel_type
+
+                local tunnel_prefix=""
+                case "$tunnel_type" in
+                    1) tunnel_prefix="wgc" ;;
+                    2) tunnel_prefix="ovpnc" ;;
+                    *)
+                        print_error "Invalid tunnel type"
+                        continue
+                        ;;
+                esac
+
+                printf "Tunnel number [1-5]: "
+                read -r tunnel_num
+                case "$tunnel_num" in
                     [1-5])
-                        TUN_DIR_RULES_LIST="${TUN_DIR_RULES_LIST}ovpnc${ovpn_num}:${client_ip}/32::any:ru
-"
-                        print_success "$client_ip -> ovpnc$ovpn_num"
+                        local tunnel="${tunnel_prefix}${tunnel_num}"
+
+                        # Ask for exclude countries only for new tunnels
+                        if ! jq -e --arg t "$tunnel" '.[$t]' <<< "$TUN_DIR_TUNNELS_JSON" >/dev/null 2>&1; then
+                            select_exclude_countries
+                            add_client_to_tunnel "$tunnel" "$client_ip" "$SELECTED_EXCLUDE"
+                            print_success "$client_ip -> $tunnel (exclude: ${SELECTED_EXCLUDE:-none})"
+                        else
+                            # Tunnel exists - just add client
+                            add_client_to_tunnel "$tunnel" "$client_ip" ""
+                            print_success "$client_ip -> $tunnel (using existing exclude)"
+                        fi
                         ;;
                     *)
-                        print_error "Invalid OpenVPN client number"
+                        print_error "Invalid tunnel number"
                         ;;
                 esac
                 ;;
@@ -267,7 +367,7 @@ step_configure_clients() {
         printf "\n"
     done
 
-    if [[ -z $XRAY_CLIENTS_LIST ]] && [[ -z $TUN_DIR_RULES_LIST ]]; then
+    if [[ -z $XRAY_CLIENTS_LIST ]] && [[ $TUN_DIR_TUNNELS_JSON == '{}' ]]; then
         print_warning "No clients configured"
     fi
 }
@@ -296,11 +396,9 @@ step_show_summary() {
     fi
     printf "\n"
 
-    printf "Tunnel Director Rules:\n"
-    if [[ -n $TUN_DIR_RULES_LIST ]]; then
-        printf '%s' "$TUN_DIR_RULES_LIST" | while read -r rule; do
-            [[ -n $rule ]] && printf "  - %s\n" "$rule"
-        done
+    printf "Tunnel Director Tunnels:\n"
+    if [[ $TUN_DIR_TUNNELS_JSON != '{}' ]]; then
+        jq -r 'to_entries[] | "  \(.key):\n    clients: \(.value.clients | join(", "))\n    exclude: \(.value.exclude | join(", "))"' <<< "$TUN_DIR_TUNNELS_JSON"
     else
         printf "  (none)\n"
     fi
@@ -350,11 +448,6 @@ step_generate_configs() {
         xray_exclude_json=$(printf '%s\n' ${XRAY_EXCLUDE_SETS_LIST//,/ } | jq -R . | jq -s .)
     fi
 
-    tun_dir_rules_json="[]"
-    if [[ -n $TUN_DIR_RULES_LIST ]]; then
-        tun_dir_rules_json=$(printf '%s' "$TUN_DIR_RULES_LIST" | grep -v '^$' | jq -R . | jq -s .)
-    fi
-
     # Build xray servers array from servers.json (unique IPs)
     xray_servers_json="[]"
     if [[ -f "$SERVERS_FILE" ]]; then
@@ -365,12 +458,12 @@ step_generate_configs() {
     jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
-        --argjson rules "$tun_dir_rules_json" \
+        --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
         --argjson servers "$xray_servers_json" \
         '.xray.clients = $clients |
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
-         .tunnel_director.rules = $rules' \
+         .tunnel_director.tunnels = $tunnels' \
         "$JFFS_DIR/vpn-director.json.template" \
         > "$JFFS_DIR/vpn-director.json"
 

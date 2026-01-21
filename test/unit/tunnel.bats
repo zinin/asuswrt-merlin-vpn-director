@@ -45,57 +45,21 @@ load '../test_helper'
 }
 
 # ============================================================================
-# _tunnel_resolve_set - resolve ipset name
+# tunnel_get_required_ipsets - parse tunnels JSON and return required ipsets
 # ============================================================================
 
-@test "_tunnel_resolve_set: returns set name for existing single country" {
-    load_tunnel_module
-    result=$(_tunnel_resolve_set "ru")
-    [ "$result" = "ru" ]
-}
-
-@test "_tunnel_resolve_set: returns empty for non-existing set" {
-    load_tunnel_module
-    result=$(_tunnel_resolve_set "nonexistent_xyz")
-    [ -z "$result" ]
-}
-
-@test "_tunnel_resolve_set: returns derived name for combo set" {
-    load_tunnel_module
-    # For combo "us,ca", the derived name would be "us_ca" (if it exists)
-    result=$(_tunnel_resolve_set "us,ca")
-    # Should return us_ca if the ipset exists (mock returns true)
-    [ "$result" = "us_ca" ]
-}
-
-# ============================================================================
-# tunnel_get_required_ipsets - parse rules and return required ipsets
-# ============================================================================
-
-@test "tunnel_get_required_ipsets: returns country codes from rules" {
+@test "tunnel_get_required_ipsets: returns exclude sets from config" {
     load_tunnel_module
     result=$(tunnel_get_required_ipsets)
-    # From fixture: "wgc1:192.168.50.0/24::us,ca"
-    echo "$result" | grep -q "us"
-    echo "$result" | grep -q "ca"
+    # From fixture: wgc1 has exclude: ["ru"]
+    echo "$result" | grep -q "ru"
 }
 
-@test "tunnel_get_required_ipsets: returns combo sets from rules" {
-    load_tunnel_module
-    result=$(tunnel_get_required_ipsets)
-    # From fixture: "wgc1:192.168.50.0/24::us,ca" -> combo "us,ca"
-    echo "$result" | grep -q "us,ca"
-}
-
-@test "tunnel_get_required_ipsets: handles empty rules gracefully" {
-    # This test uses a subshell to avoid readonly variable issues
+@test "tunnel_get_required_ipsets: handles empty tunnels gracefully" {
     load_common
     source "$LIB_DIR/firewall.sh"
-    # Set TUN_DIR_RULES before loading config (which makes it readonly)
-    export TUN_DIR_RULES=""
-    # Load config manually without readonly
+    export TUN_DIR_TUNNELS_JSON='{}'
     export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director.json"
-    # Source only ipset for parse functions
     source "$LIB_DIR/ipset.sh" --source-only
     source "$LIB_DIR/tunnel.sh" --source-only
 
@@ -114,11 +78,11 @@ load '../test_helper'
     assert_output --partial "Tunnel Director Status"
 }
 
-@test "tunnel_status: shows chain info section" {
+@test "tunnel_status: shows chain section with TUN_DIR name" {
     load_tunnel_module
     run tunnel_status
     assert_success
-    assert_output --partial "Chains"
+    assert_output --partial "Chain: TUN_DIR"
 }
 
 @test "tunnel_status: shows ip rules section" {
@@ -126,6 +90,13 @@ load '../test_helper'
     run tunnel_status
     assert_success
     assert_output --partial "IP Rules"
+}
+
+@test "tunnel_status: shows configured tunnels section" {
+    load_tunnel_module
+    run tunnel_status
+    assert_success
+    assert_output --partial "Configured Tunnels"
 }
 
 # ============================================================================
@@ -182,21 +153,21 @@ load '../test_helper'
 }
 
 # ============================================================================
-# tunnel_stop - remove all chains and ip rules
+# tunnel_stop - remove single TUN_DIR chain and ip rules
 # ============================================================================
 
-@test "tunnel_stop: returns success when no chains exist" {
+@test "tunnel_stop: returns success when chain does not exist" {
     load_tunnel_module
     run tunnel_stop
     assert_success
 }
 
-@test "tunnel_stop: logs cleanup message" {
+@test "tunnel_stop: removes single TUN_DIR chain" {
     load_tunnel_module
     run tunnel_stop
     assert_success
-    # Should indicate stopping/cleanup
     assert_output --partial "Stopping Tunnel Director"
+    assert_output --partial "Tunnel Director stopped"
 }
 
 # ============================================================================
@@ -209,10 +180,30 @@ load '../test_helper'
     assert_success
 }
 
-@test "tunnel_apply: logs when rules are applied" {
+@test "tunnel_apply: creates single TUN_DIR chain" {
     load_tunnel_module
     run tunnel_apply
     assert_success
+    # Check that it references TUN_DIR chain and tunnel name in log
+    assert_output --partial "wgc1"
+}
+
+@test "tunnel_apply: logs client routing info" {
+    load_tunnel_module
+    run tunnel_apply
+    assert_success
+    # Should mention the client from fixture (192.168.50.0/24)
+    assert_output --partial "192.168.50.0/24"
+}
+
+@test "tunnel_apply: PREROUTING jump includes -i br0 interface" {
+    load_tunnel_module
+    # Clear iptables log
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_success
+    # Verify PREROUTING rule includes -i br0 (from mock log)
+    grep -q -- '-i br0.*-j TUN_DIR' /tmp/bats_iptables_calls.log
 }
 
 # ============================================================================
@@ -228,4 +219,107 @@ load '../test_helper'
     source "$LIB_DIR/tunnel.sh" --source-only
     # If we get here without error, the test passes
     [ $? -eq 0 ]
+}
+
+# ============================================================================
+# Edge cases - Invalid JSON structure
+# ============================================================================
+
+@test "tunnel_apply: handles string instead of object in tunnels (invalid structure)" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-invalid-string.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    # Should not crash
+    assert_success
+    # Should log warning about invalid tunnel config structure
+    assert_output --partial "WARN"
+    assert_output --partial "wgc1"
+    assert_output --partial "invalid"
+}
+
+@test "tunnel_apply: handles clients as string instead of array" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-clients-string.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    # Should not crash
+    assert_success
+    # Should log warning about clients being wrong type
+    assert_output --partial "WARN"
+    assert_output --partial "wgc1"
+    assert_output --partial "clients"
+    # Should skip this tunnel (no MARK rules created)
+    refute_output --partial "Added:"
+}
+
+@test "tunnel_apply: handles exclude as string instead of array" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-exclude-string.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    # Should not crash
+    assert_success
+    # Should log warning about exclude being wrong type
+    assert_output --partial "WARN"
+    assert_output --partial "exclude"
+    # Should still create MARK rule for valid clients (exclusions skipped)
+    assert_output --partial "Added:"
+    assert_output --partial "192.168.50.0/24"
+}
+
+@test "tunnel_apply: handles overlapping clients in different tunnels (first-match wins)" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-overlapping.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    # Clear iptables log
+    : > /tmp/bats_iptables_calls.log
+
+    run tunnel_apply
+    assert_success
+
+    # Both tunnels should be configured
+    assert_output --partial "wgc1"
+    assert_output --partial "ovpnc1"
+
+    # Both clients should have MARK rules (first-match-wins via fwmark condition)
+    assert_output --partial "192.168.50.0/24"
+    assert_output --partial "192.168.50.100"
+}
+
+@test "tunnel_apply: handles non-existent exclude ipset (warns but creates MARK rule)" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-nonexistent-ipset.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    assert_success
+
+    # Should warn about non-existent ipset
+    assert_output --partial "WARN"
+    assert_output --partial "xx"
+    assert_output --partial "not found"
+
+    # But should still create the MARK rule for the client
+    assert_output --partial "192.168.50.0/24"
+    assert_output --partial "mark="
 }

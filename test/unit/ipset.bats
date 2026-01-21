@@ -116,68 +116,44 @@ load '../test_helper'
 }
 
 # ============================================================================
-# parse_country_codes - extract country codes from rules
+# parse_exclude_sets_from_json - extract exclude sets from tunnels JSON
 # ============================================================================
 
-@test "parse_country_codes: extracts country code from field 4" {
+@test "parse_exclude_sets_from_json: extracts exclude sets from tunnels JSON" {
     load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::ru" | parse_country_codes)
-    [ "$result" = "ru" ]
-}
-
-@test "parse_country_codes: extracts multiple countries from comma list" {
-    load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::us,ca,de" | parse_country_codes)
-    echo "$result" | grep -q "ca"
-    echo "$result" | grep -q "de"
-    echo "$result" | grep -q "us"
-}
-
-@test "parse_country_codes: handles exclusion field (field 5)" {
-    load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::us:ru" | parse_country_codes)
+    local json='{"wgc1":{"clients":["192.168.50.0/24"],"exclude":["ru","ua"]}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
     echo "$result" | grep -q "ru"
-    echo "$result" | grep -q "us"
+    echo "$result" | grep -q "ua"
 }
 
-@test "parse_country_codes: ignores invalid country codes" {
+@test "parse_exclude_sets_from_json: handles multiple tunnels" {
     load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::invalid,us" | parse_country_codes)
-    [ "$result" = "us" ]
+    local json='{"wgc1":{"exclude":["ru"]},"ovpnc1":{"exclude":["cn"]}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    echo "$result" | grep -q "ru"
+    echo "$result" | grep -q "cn"
 }
 
-@test "parse_country_codes: deduplicates country codes" {
+@test "parse_exclude_sets_from_json: deduplicates codes" {
     load_ipset_module
-    result=$(printf "wgc1:192.168.50.0/24::us\nwgc2:192.168.60.0/24::us" | parse_country_codes)
-    [ "$result" = "us" ]
+    local json='{"wgc1":{"exclude":["ru"]},"ovpnc1":{"exclude":["ru"]}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    [ "$(echo "$result" | wc -l)" -eq 1 ]
 }
 
-# ============================================================================
-# parse_combo_from_rules - extract combo ipsets from rules
-# ============================================================================
-
-@test "parse_combo_from_rules: extracts combo sets with comma" {
+@test "parse_exclude_sets_from_json: handles empty tunnels" {
     load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::us,ca" | parse_combo_from_rules)
-    [ "$result" = "us,ca" ]
-}
-
-@test "parse_combo_from_rules: ignores single country (no combo)" {
-    load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::us" | parse_combo_from_rules)
+    local json='{}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
     [ -z "$result" ]
 }
 
-@test "parse_combo_from_rules: extracts combo from exclusion field" {
+@test "parse_exclude_sets_from_json: ignores invalid country codes" {
     load_ipset_module
-    result=$(echo "wgc1:192.168.50.0/24::any:ru,ua" | parse_combo_from_rules)
-    [ "$result" = "ru,ua" ]
-}
-
-@test "parse_combo_from_rules: deduplicates identical combos" {
-    load_ipset_module
-    result=$(printf "wgc1:192.168.50.0/24::us,ca\nwgc2:192.168.60.0/24::us,ca" | parse_combo_from_rules)
-    [ "$result" = "us,ca" ]
+    local json='{"wgc1":{"exclude":["ru","invalid","zz"]}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    [ "$result" = "ru" ]
 }
 
 # ============================================================================
@@ -260,30 +236,15 @@ load '../test_helper'
     assert_output "ru"
 }
 
-@test "_normalize_spec: handles combo sets with mixed case" {
+@test "_normalize_spec: rejects comma-separated input (no combo support)" {
     load_ipset_module
-    run _normalize_spec "US,CA"
-    assert_success
-    assert_output "us,ca"
+    run _normalize_spec "us,ca"
+    assert_failure
 }
 
-@test "_normalize_spec: skips empty tokens in combo" {
+@test "_normalize_spec: returns failure for invalid country code" {
     load_ipset_module
-    run _normalize_spec "us,,ca"
-    assert_success
-    assert_output "us,ca"
-}
-
-@test "_normalize_spec: skips invalid codes in combo" {
-    load_ipset_module
-    run _normalize_spec "us,invalid,ca"
-    assert_success
-    assert_output --partial "us,ca"
-}
-
-@test "_normalize_spec: returns failure for all invalid codes" {
-    load_ipset_module
-    run _normalize_spec "invalid,xyz"
+    run _normalize_spec "invalid"
     assert_failure
 }
 
@@ -607,4 +568,33 @@ EOF
     run grep -c "ERROR" "$LOG_FILE"
     # Should have at least 3 ERROR logs (one per source)
     [[ "$output" -ge 3 ]]
+}
+
+# ============================================================================
+# Edge cases - parse_exclude_sets_from_json
+# ============================================================================
+
+@test "parse_exclude_sets_from_json: handles exclude as string instead of array" {
+    load_ipset_module
+    # Input with exclude as string instead of array
+    local json='{"wgc1":{"clients":["192.168.50.0/24"],"exclude":"ru"}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    # Should return empty - string exclude is filtered out by jq select(type == "array")
+    [ -z "$result" ]
+}
+
+@test "parse_exclude_sets_from_json: handles tunnel value as string (invalid structure)" {
+    load_ipset_module
+    local json='{"wgc1":"invalid_string"}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    # Should return empty - string tunnel values are filtered out by jq select(type == "object")
+    [ -z "$result" ]
+}
+
+@test "parse_exclude_sets_from_json: handles mixed valid and invalid tunnels" {
+    load_ipset_module
+    local json='{"wgc1":"invalid","ovpnc1":{"exclude":["ru"]}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    # Should skip invalid tunnel (string) and extract 'ru' from valid tunnel
+    [ "$result" = "ru" ]
 }

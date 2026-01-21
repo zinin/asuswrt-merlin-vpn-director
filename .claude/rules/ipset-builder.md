@@ -37,11 +37,6 @@ Files from GitHub sources contain comment lines (`#`) which are filtered automat
 - Type: `hash:net`
 - Size: auto-calculated (load factor ~0.75)
 
-### Combo Sets
-- Union of multiple sets: `us,ca,uk` → `us_ca_uk`
-- Type: `list:set`
-- Created when rules reference multiple countries
-
 ## Dump/Restore
 
 Cached dumps stored in `$IPS_BDR_DIR/ipsets/`:
@@ -95,13 +90,11 @@ Config options in `vpn-director.json` (`advanced.boot`):
 | `_ipset_exists(name)` | Check if ipset is loaded |
 | `_ipset_count(name)` | Get number of entries in ipset |
 | `_build_country_ipset(cc, dump_dir)` | Download, create, swap, dump |
-| `_build_combo_ipset(combo)` | Build list:set from members |
 | `_restore_from_cache(name, dump, force)` | Atomic restore from dump |
 | `_download_zone_multi_source(cc, dest)` | Try all sources with fallback |
 | `_try_download_zone(url, tmp, dest)` | Download and validate single source |
 | `_try_manual_fallback(cc, dest)` | Interactive manual fallback |
-| `parse_country_codes()` | Extract CCs from rules (field 4 & 5) |
-| `parse_combo_from_rules()` | Extract comma-separated combos |
+| `parse_exclude_sets_from_json()` | Extract exclude codes from tunnels JSON |
 | `_derive_set_name(name)` | Handle long names (>31 chars → SHA-256 prefix) |
 | `_calc_ipset_size(count)` | Calculate hashsize from entry count |
 | `_normalize_spec(spec)` | Validate and normalize ipset spec |
@@ -109,6 +102,5 @@ Config options in `vpn-director.json` (`advanced.boot`):
 
 ## Build Steps
 
-1. **Country ipsets**: Parse rules → download from IPdeny → create
-2. **Combo ipsets**: Find multi-country refs → create `list:set`
-3. **Save hash**: Write `TUN_DIR_IPSETS_HASH` for tunnel module sync
+1. **Country ipsets**: Parse exclude arrays from JSON → download → create
+2. **Save hash**: Write `TUN_DIR_IPSETS_HASH` for tunnel module sync

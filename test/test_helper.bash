@@ -43,6 +43,8 @@ setup() {
 teardown() {
     # Cleanup temp files if any
     rm -rf /tmp/bats_test_*
+    # Cleanup tunnel director state files
+    rm -rf /tmp/tunnel_director/*
 }
 
 # Helper to source common.sh with mocks

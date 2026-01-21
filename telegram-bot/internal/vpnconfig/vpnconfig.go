@@ -20,8 +20,16 @@ type VPNDirectorConfig struct {
 	Advanced       map[string]interface{} `json:"advanced,omitempty"`
 }
 
+type TunnelConfig struct {
+	Clients []string `json:"clients"`
+	Exclude []string `json:"exclude"`
+}
+
 type TunnelDirectorConfig struct {
-	Rules []string `json:"rules"`
+	// Note: Go's json.Marshal sorts map keys alphabetically, so tunnel order
+	// in saved JSON is deterministic. This matches jq 'keys[]' behavior.
+	// If insertion-order priority is needed, this should be changed to a slice.
+	Tunnels map[string]TunnelConfig `json:"tunnels"`
 }
 
 type XrayConfig struct {
