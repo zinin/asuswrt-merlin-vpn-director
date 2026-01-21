@@ -569,3 +569,32 @@ EOF
     # Should have at least 3 ERROR logs (one per source)
     [[ "$output" -ge 3 ]]
 }
+
+# ============================================================================
+# Edge cases - parse_exclude_sets_from_json
+# ============================================================================
+
+@test "parse_exclude_sets_from_json: handles exclude as string instead of array" {
+    load_ipset_module
+    # Input with exclude as string instead of array
+    local json='{"wgc1":{"clients":["192.168.50.0/24"],"exclude":"ru"}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    # Should return empty - string exclude is filtered out by jq select(type == "array")
+    [ -z "$result" ]
+}
+
+@test "parse_exclude_sets_from_json: handles tunnel value as string (invalid structure)" {
+    load_ipset_module
+    local json='{"wgc1":"invalid_string"}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    # Should return empty - string tunnel values are filtered out by jq select(type == "object")
+    [ -z "$result" ]
+}
+
+@test "parse_exclude_sets_from_json: handles mixed valid and invalid tunnels" {
+    load_ipset_module
+    local json='{"wgc1":"invalid","ovpnc1":{"exclude":["ru"]}}'
+    result=$(echo "$json" | parse_exclude_sets_from_json)
+    # Should skip invalid tunnel (string) and extract 'ru' from valid tunnel
+    [ "$result" = "ru" ]
+}

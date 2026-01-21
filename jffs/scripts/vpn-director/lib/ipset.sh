@@ -228,8 +228,9 @@ _normalize_spec() {
 parse_exclude_sets_from_json() {
     local valid_codes="$ALL_COUNTRY_CODES"
 
+    # Filter: only process objects with array-type exclude fields
     jq -r '
-        [.[] | .exclude // []] | flatten | unique | .[]
+        [.[] | select(type == "object") | .exclude | select(type == "array") | .[]] | unique | .[]
     ' 2>/dev/null | while read -r code; do
         # Validate against known country codes
         code=$(printf '%s' "$code" | tr 'A-Z' 'a-z')

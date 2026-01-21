@@ -220,3 +220,106 @@ load '../test_helper'
     # If we get here without error, the test passes
     [ $? -eq 0 ]
 }
+
+# ============================================================================
+# Edge cases - Invalid JSON structure
+# ============================================================================
+
+@test "tunnel_apply: handles string instead of object in tunnels (invalid structure)" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-invalid-string.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    # Should not crash
+    assert_success
+    # Should log warning about invalid tunnel config structure
+    assert_output --partial "WARN"
+    assert_output --partial "wgc1"
+    assert_output --partial "invalid"
+}
+
+@test "tunnel_apply: handles clients as string instead of array" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-clients-string.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    # Should not crash
+    assert_success
+    # Should log warning about clients being wrong type
+    assert_output --partial "WARN"
+    assert_output --partial "wgc1"
+    assert_output --partial "clients"
+    # Should skip this tunnel (no MARK rules created)
+    refute_output --partial "Added:"
+}
+
+@test "tunnel_apply: handles exclude as string instead of array" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-exclude-string.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    # Should not crash
+    assert_success
+    # Should log warning about exclude being wrong type
+    assert_output --partial "WARN"
+    assert_output --partial "exclude"
+    # Should still create MARK rule for valid clients (exclusions skipped)
+    assert_output --partial "Added:"
+    assert_output --partial "192.168.50.0/24"
+}
+
+@test "tunnel_apply: handles overlapping clients in different tunnels (first-match wins)" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-overlapping.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    # Clear iptables log
+    : > /tmp/bats_iptables_calls.log
+
+    run tunnel_apply
+    assert_success
+
+    # Both tunnels should be configured
+    assert_output --partial "wgc1"
+    assert_output --partial "ovpnc1"
+
+    # Both clients should have MARK rules (first-match-wins via fwmark condition)
+    assert_output --partial "192.168.50.0/24"
+    assert_output --partial "192.168.50.100"
+}
+
+@test "tunnel_apply: handles non-existent exclude ipset (warns but creates MARK rule)" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director-nonexistent-ipset.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    assert_success
+
+    # Should warn about non-existent ipset
+    assert_output --partial "WARN"
+    assert_output --partial "xx"
+    assert_output --partial "not found"
+
+    # But should still create the MARK rule for the client
+    assert_output --partial "192.168.50.0/24"
+    assert_output --partial "mark="
+}

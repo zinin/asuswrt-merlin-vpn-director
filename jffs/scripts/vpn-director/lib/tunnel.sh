@@ -314,10 +314,41 @@ tunnel_apply() {
             continue
         fi
 
+        # Validate tunnel config is an object (not string or other type)
+        local tunnel_type
+        tunnel_type=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$tunnel" '.[$t] | type')
+        if [[ $tunnel_type != "object" ]]; then
+            log -l WARN "Tunnel '$tunnel' has invalid config (expected object, got $tunnel_type); skipping"
+            warnings=1
+            continue
+        fi
+
+        # Validate clients is an array
+        local clients_type
+        clients_type=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$tunnel" '.[$t].clients | type')
+        if [[ $clients_type != "array" ]] && [[ $clients_type != "null" ]]; then
+            log -l WARN "Tunnel '$tunnel' has invalid clients (expected array, got $clients_type); skipping"
+            warnings=1
+            continue
+        fi
+
+        # Validate exclude is an array (if present)
+        local exclude_type
+        exclude_type=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$tunnel" '.[$t].exclude | type')
+        if [[ $exclude_type != "array" ]] && [[ $exclude_type != "null" ]]; then
+            log -l WARN "Tunnel '$tunnel' has invalid exclude (expected array, got $exclude_type); skipping exclusions"
+            warnings=1
+            exclude_type="null"  # Skip excludes but continue with clients
+        fi
+
         # Get clients and excludes for this tunnel
         local clients excludes
         clients=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$tunnel" '.[$t].clients // [] | .[]')
-        excludes=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$tunnel" '.[$t].exclude // [] | .[]')
+        if [[ $exclude_type == "array" ]]; then
+            excludes=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$tunnel" '.[$t].exclude // [] | .[]')
+        else
+            excludes=""
+        fi
 
         if [[ -z $clients ]]; then
             log -l WARN "Tunnel '$tunnel' has no clients; skipping"
