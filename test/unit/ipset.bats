@@ -379,3 +379,99 @@ load '../test_helper'
     assert_success
     assert_output --partial "function"
 }
+
+# ============================================================================
+# _try_download_zone - download and validate zone file
+# ============================================================================
+
+@test "_try_download_zone: filters comment lines from downloaded file" {
+    load_ipset_module
+
+    # Create mock zone file with comments
+    local mock_zone="/tmp/bats_mock_zone.txt"
+    cat > "$mock_zone" << 'EOF'
+# GeoLite2 Country
+# Generated: 2024-01-01
+1.0.0.0/24
+1.1.0.0/16
+# Another comment
+2.0.0.0/8
+EOF
+
+    # Override download_file to copy mock
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_success
+
+    # Verify no comments in output
+    run grep '^#' "$dest"
+    assert_failure
+
+    # Verify CIDRs present
+    run grep '1.0.0.0/24' "$dest"
+    assert_success
+
+    rm -f "$mock_zone" "$dest"
+}
+
+@test "_try_download_zone: rejects file with invalid CIDR format" {
+    load_ipset_module
+
+    # Create mock with HTML error page
+    local mock_zone="/tmp/bats_mock_html.txt"
+    cat > "$mock_zone" << 'EOF'
+<!DOCTYPE html>
+<html><head><title>404 Not Found</title></head>
+<body>Not Found</body></html>
+EOF
+
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_failure
+
+    rm -f "$mock_zone" "$dest"
+}
+
+@test "_try_download_zone: accepts valid zone file" {
+    load_ipset_module
+
+    local mock_zone="/tmp/bats_mock_valid.txt"
+    cat > "$mock_zone" << 'EOF'
+1.0.0.0/24
+2.0.0.0/16
+EOF
+
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_success
+
+    [[ -f "$dest" ]]
+
+    rm -f "$mock_zone" "$dest"
+}
+
+@test "_try_download_zone: returns failure on download error" {
+    load_ipset_module
+
+    download_file() {
+        return 1
+    }
+
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "/tmp/bats_dest.txt"
+    assert_failure
+}

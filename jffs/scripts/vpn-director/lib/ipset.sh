@@ -375,6 +375,40 @@ _print_swap_and_destroy() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _try_download_zone - download zone file from URL, filter comments, validate CIDR format
+# -------------------------------------------------------------------------------------------------
+# Args:
+#   $1 - URL to download from
+#   $2 - temporary file path for download
+#   $3 - destination file path
+# Returns:
+#   0 on success, 1 on failure (download error, invalid format)
+# -------------------------------------------------------------------------------------------------
+_try_download_zone() {
+    local url="$1" tmp_file="$2" dest="$3"
+
+    # Download with 30 sec timeout
+    if ! download_file "$url" "$tmp_file" 30; then
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    # Filter comments and empty lines
+    grep -v '^#' "$tmp_file" | grep -v '^[[:space:]]*$' > "${tmp_file}.filtered"
+    mv "${tmp_file}.filtered" "$tmp_file"
+
+    # Validate: first line must be CIDR format
+    if ! head -1 "$tmp_file" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
+        log -l DEBUG "Invalid CIDR format from $url"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    mv "$tmp_file" "$dest"
+    return 0
+}
+
+# -------------------------------------------------------------------------------------------------
 # _download_zone - download a zone file from IPdeny with interactive fallback
 # -------------------------------------------------------------------------------------------------
 # If download fails and stdin is a tty, prompts user to manually download
