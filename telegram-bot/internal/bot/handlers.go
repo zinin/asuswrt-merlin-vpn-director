@@ -17,6 +17,7 @@ import (
 )
 
 const scriptsDir = "/jffs/scripts/vpn-director"
+const maxMessageLength = 4000 // Telegram limit is 4096, leave margin
 
 func (b *Bot) handleStart(msg *tgbotapi.Message) {
 	text := `VPN Director Bot
@@ -72,7 +73,7 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 	for i, s := range servers {
 		sb.WriteString(fmt.Sprintf("%d. %s — %s (%s)\n", i+1, s.Name, s.Address, s.IP))
 	}
-	b.sendMessage(msg.Chat.ID, sb.String())
+	b.sendLongMessage(msg.Chat.ID, sb.String())
 }
 
 func (b *Bot) handleRestart(msg *tgbotapi.Message) {
@@ -132,6 +133,32 @@ func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
+	}
+}
+
+func (b *Bot) sendLongMessage(chatID int64, text string) {
+	if len(text) <= maxMessageLength {
+		b.sendMessage(chatID, text)
+		return
+	}
+
+	// Split by lines, respecting message limit
+	lines := strings.Split(text, "\n")
+	var chunk strings.Builder
+
+	for _, line := range lines {
+		if chunk.Len()+len(line)+1 > maxMessageLength {
+			b.sendMessage(chatID, chunk.String())
+			chunk.Reset()
+		}
+		if chunk.Len() > 0 {
+			chunk.WriteString("\n")
+		}
+		chunk.WriteString(line)
+	}
+
+	if chunk.Len() > 0 {
+		b.sendMessage(chatID, chunk.String())
 	}
 }
 
@@ -238,5 +265,5 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 	if len(parseErrors) > 0 {
 		sb.WriteString(fmt.Sprintf("\n(%d with errors)", len(parseErrors)))
 	}
-	b.sendMessage(msg.Chat.ID, sb.String())
+	b.sendLongMessage(msg.Chat.ID, sb.String())
 }
