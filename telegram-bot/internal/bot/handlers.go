@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,45 @@ func extractCountry(name string) string {
 		return "Other"
 	}
 	return country
+}
+
+// groupServersByCountry groups servers by country and returns formatted string
+func groupServersByCountry(servers []vpnconfig.Server) string {
+	if len(servers) == 0 {
+		return ""
+	}
+
+	counts := make(map[string]int)
+	for _, s := range servers {
+		country := extractCountry(s.Name)
+		counts[country]++
+	}
+
+	type countryCount struct {
+		country string
+		count   int
+	}
+	var sorted []countryCount
+	for c, n := range counts {
+		sorted = append(sorted, countryCount{c, n})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
+		}
+		return sorted[i].country < sorted[j].country
+	})
+
+	var parts []string
+	maxShow := 10
+	for i, cc := range sorted {
+		if i >= maxShow {
+			parts = append(parts, fmt.Sprintf("и ещё %d стран", len(sorted)-maxShow))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s (%d)", cc.country, cc.count))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (b *Bot) handleStart(msg *tgbotapi.Message) {
