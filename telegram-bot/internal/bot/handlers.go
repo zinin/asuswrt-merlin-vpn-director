@@ -503,19 +503,29 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 		return
 	}
 
-	// Response with full stats
+	// Response with grouped stats
 	var sb strings.Builder
-	if resolveErrors > 0 {
-		sb.WriteString(fmt.Sprintf("⚠️ Imported %d of %d \\(%d DNS errors\\):\n",
-			len(resolved), totalParsed, resolveErrors))
+	if resolveErrors > 0 || len(parseErrors) > 0 {
+		sb.WriteString(fmt.Sprintf("⚠️ Imported %d of %d servers:\n", len(resolved), totalParsed))
 	} else {
 		sb.WriteString(fmt.Sprintf("✅ Imported %d servers:\n", len(resolved)))
 	}
-	for i, s := range resolved {
-		sb.WriteString(fmt.Sprintf("%d\\. %s — %s\n", i+1, escapeMarkdownV2(s.Name), escapeMarkdownV2(s.Address)))
+
+	groupedStr := groupServersByCountry(resolved)
+	sb.WriteString(escapeMarkdownV2(groupedStr))
+
+	if resolveErrors > 0 || len(parseErrors) > 0 {
+		sb.WriteString("\n\n")
+		if resolveErrors > 0 {
+			sb.WriteString(fmt.Sprintf("%d DNS errors", resolveErrors))
+		}
+		if len(parseErrors) > 0 {
+			if resolveErrors > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(fmt.Sprintf("%d parse errors", len(parseErrors)))
+		}
 	}
-	if len(parseErrors) > 0 {
-		sb.WriteString(fmt.Sprintf("\n\\(%d with errors\\)", len(parseErrors)))
-	}
-	b.sendLongMessage(msg.Chat.ID, sb.String())
+
+	b.sendMessage(msg.Chat.ID, sb.String())
 }
