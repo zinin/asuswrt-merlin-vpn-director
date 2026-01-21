@@ -33,13 +33,11 @@ Incoming packet from LAN (br0)
 │                 + set mark 0x100                             │
 │                 ══► Packet goes to Xray, exits PREROUTING   │
 │                                                              │
-│  pos 2: ──► TUN_DIR_0 chain (if mark field 0x00ff0000 == 0) │
-│  pos 3: ──► TUN_DIR_1 chain (if mark field 0x00ff0000 == 0) │
-│  ...                                                         │
+│  pos 2: ──► TUN_DIR chain (if mark field 0x00ff0000 == 0)   │
 │              │                                               │
-│              ├─ src excluded? ──► RETURN                    │
-│              ├─ dst matches ipset? ──► MARK 0xN0000         │
-│              └─ first match wins (subsequent chains skip)   │
+│              ├─ src + dst in exclude? ──► RETURN            │
+│              ├─ src matched? ──► MARK 0xN0000               │
+│              └─ first client match wins (linear order)      │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
          │
@@ -127,33 +125,37 @@ ip rule add pref 200 fwmark 0x100/0x100 table 100
 
 ### Chain Structure (tunnel.sh)
 
-For each rule in config, a separate chain is created:
+Single chain with rules for all clients:
 
 ```
-TUN_DIR_0 chain (for rule index 0):
-  1. -s {src_excl} → RETURN (if source excluded)
-  2. {ipset match} → MARK --set-xmark 0x10000/0x00ff0000
+TUN_DIR chain:
+  # Client 1 (wgc1)
+  -s 192.168.50.0/24 -m set --match-set ru dst → RETURN
+  -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 → MARK 0x10000
+
+  # Client 2 (ovpnc1)
+  -s 192.168.1.5 -m set --match-set ru dst → RETURN
+  -s 192.168.1.5 -m mark --mark 0x0/0xff0000 → MARK 0x20000
 ```
 
-PREROUTING jump conditions:
+PREROUTING jump:
 
 ```
--s {src} -i {src_iif} -m mark --mark 0x0/0x00ff0000 -j TUN_DIR_0
+-i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR
 ```
 
-The `--mark 0x0/0x00ff0000` condition ensures **first-match-wins**: once a packet is marked by one TD rule, subsequent rules skip it.
+The `--mark 0x0/0xff0000` condition ensures **first-match-wins**: once a packet is marked, subsequent rules skip it.
 
 ### Position Calculation
 
 ```bash
 _tunnel_get_prerouting_base_pos()  # Returns position after system iface-mark rules
-insert_pos = base_pos + rule_index
 ```
 
 Typically:
 - Position 1: XRAY_TPROXY
 - Position 2+: System rules (if any)
-- Position N+: TUN_DIR_0, TUN_DIR_1, ...
+- Position N: TUN_DIR (single chain)
 
 ### IP Rules
 
@@ -193,26 +195,27 @@ Config:
 ```json
 {
   "tunnel_director": {
-    "rules": ["ovpnc3:192.168.1.5/32::any:ru"]
+    "tunnels": {
+      "ovpnc3": {
+        "clients": ["192.168.1.5"],
+        "exclude": ["ru"]
+      }
+    }
   }
 }
 ```
 
 Packet from 192.168.1.5 to 8.8.8.8 (US):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
-2. TUN_DIR_0: src=192.168.1.5? Yes
-3. dst in "any"? Yes (any = no ipset check)
-4. dst in "ru" (exclusion)? No
-5. **MARK 0x10000**
-6. ip rule pref 16384: fwmark 0x10000 → table ovpnc3
-7. **Goes through OpenVPN tunnel**
+2. TUN_DIR: src=192.168.1.5 + dst in "ru"? No
+3. TUN_DIR: src=192.168.1.5? Yes → **MARK 0x10000**
+4. ip rule pref 16384: fwmark 0x10000 → table ovpnc3
+5. **Goes through OpenVPN tunnel**
 
 Packet from 192.168.1.5 to 77.88.8.8 (RU):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
-2. TUN_DIR_0: src=192.168.1.5? Yes
-3. dst in "any"? Yes
-4. dst in "ru" (exclusion)? Yes → **RETURN** (no mark set)
-5. **Goes to main table → WAN (direct)**
+2. TUN_DIR: src=192.168.1.5 + dst in "ru"? Yes → **RETURN** (no mark)
+3. **Goes to main table → WAN (direct)**
 
 ### Example 3: Client in both Xray and TD
 
@@ -221,7 +224,12 @@ Config:
 {
   "xray": { "clients": ["192.168.50.0/24"], "exclude_sets": ["ru"] },
   "tunnel_director": {
-    "rules": ["wgc1:192.168.50.10/32::us"]
+    "tunnels": {
+      "wgc1": {
+        "clients": ["192.168.50.10"],
+        "exclude": ["ru"]
+      }
+    }
   }
 }
 ```
@@ -229,7 +237,7 @@ Config:
 Packet from 192.168.50.10 to 8.8.8.8 (US):
 1. XRAY_TPROXY: src in XRAY_CLIENTS (192.168.50.0/24)? Yes
 2. dst in "ru"? No
-3. **TPROXY to Xray** — TD rule never evaluated
+3. **TPROXY to Xray** — TUN_DIR chain never evaluated
 
 **Xray always wins** for overlapping clients.
 
@@ -248,7 +256,7 @@ Packet from 192.168.50.10 to 8.8.8.8 (US):
 | `ipset list -n` | All loaded ipsets |
 | `ipset list {name}` | Entries in specific ipset |
 | `iptables -t mangle -S XRAY_TPROXY` | Xray chain rules |
-| `iptables -t mangle -S TUN_DIR_N` | TD chain rules |
+| `iptables -t mangle -S TUN_DIR` | TD chain rules |
 | `iptables -t mangle -S PREROUTING` | Jump rules and positions |
 | `ip rule show` | Fwmark-based routing rules |
 | `ip route show table {N\|name}` | Routes in specific table |
@@ -266,6 +274,6 @@ Packet from 192.168.50.10 to 8.8.8.8 (US):
 |------|----------|---------|
 | `lib/tproxy.sh:316-317` | PREROUTING insert pos 1 | Xray priority |
 | `lib/tproxy.sh:256-313` | `_tproxy_setup_iptables()` | Chain rules |
-| `lib/tunnel.sh:155-166` | `_tunnel_get_prerouting_base_pos()` | TD position calc |
-| `lib/tunnel.sh:508-512` | PREROUTING jump with mark check | First-match-wins |
-| `lib/tunnel.sh:514-517` | ip rule creation | Fwmark → table routing |
+| `lib/tunnel.sh:133-145` | `_tunnel_get_prerouting_base_pos()` | TD position calc |
+| `lib/tunnel.sh:421-422` | PREROUTING jump with mark check | First-match-wins |
+| `lib/tunnel.sh:412` | ip rule creation | Fwmark → table routing |
