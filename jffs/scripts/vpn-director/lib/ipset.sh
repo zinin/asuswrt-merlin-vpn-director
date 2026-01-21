@@ -502,48 +502,6 @@ _download_zone_multi_source() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _download_zone - download a zone file from IPdeny with interactive fallback
-# -------------------------------------------------------------------------------------------------
-# If download fails and stdin is a tty, prompts user to manually download
-# the file to /tmp/ and press Enter to continue.
-# -------------------------------------------------------------------------------------------------
-_download_zone() {
-    local cc="$1" dest="$2"
-    local url="${IPDENY_BASE_URL}/${cc}${IPDENY_FILE_SUFFIX}"
-    local fallback_path="/tmp/${cc}${IPDENY_FILE_SUFFIX}"
-
-    log "Downloading zone file for '$cc'..."
-
-    # Try download with 30 sec timeout
-    if download_file "$url" "$dest" 30; then
-        log "Successfully downloaded zone for '$cc'"
-        return 0
-    fi
-
-    # Download failed — check interactive mode
-    if [[ ! -t 0 ]]; then
-        log -l ERROR "Failed to download zone for '$cc'"
-        return 1
-    fi
-
-    # Interactive fallback
-    printf '\n'
-    printf 'Failed to download: %s\n' "$url"
-    printf 'Please download the file manually and place it at: %s\n' "$fallback_path"
-    printf 'Press Enter when ready (or Ctrl+C to cancel): '
-    read -r
-
-    if [[ -f "$fallback_path" ]]; then
-        cp "$fallback_path" "$dest"
-        log "Using manually downloaded zone for '$cc'"
-        return 0
-    fi
-
-    log -l ERROR "File not found: $fallback_path"
-    return 1
-}
-
-# -------------------------------------------------------------------------------------------------
 # _restore_from_cache - restore ipset from dump file
 # -------------------------------------------------------------------------------------------------
 # Returns 0 on success, 1 if restore failed or dump not found.

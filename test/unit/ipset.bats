@@ -344,43 +344,6 @@ load '../test_helper'
 }
 
 # ============================================================================
-# _download_zone interactive fallback
-# ============================================================================
-
-@test "_download_zone: non-interactive mode fails on download error without prompt" {
-    load_ipset_module
-
-    # Test that in non-interactive mode (stdin piped from /dev/null),
-    # function fails silently without showing interactive prompt
-    # We test by running in a subshell with stdin redirected
-    run bash -c '
-        export TEST_MODE=1
-        export LOG_FILE="/tmp/bats_test.log"
-        export VPD_CONFIG_FILE="'"$TEST_ROOT"'/fixtures/vpn-director.json"
-        export PATH="'"$TEST_ROOT"'/mocks:$PATH"
-        source "'"$LIB_DIR"'/common.sh"
-        source "'"$LIB_DIR"'/config.sh"
-        source "'"$LIB_DIR"'/ipset.sh" --source-only
-        # Override download_file to fail
-        download_file() { return 1; }
-        _download_zone "ru" "/tmp/test_zone"
-    ' < /dev/null
-
-    assert_failure
-    # Should not contain interactive prompt
-    refute_output --partial "Please download"
-}
-
-@test "_download_zone: function exists and has correct signature" {
-    load_ipset_module
-
-    # Verify function is defined
-    run type _download_zone
-    assert_success
-    assert_output --partial "function"
-}
-
-# ============================================================================
 # _try_download_zone - download and validate zone file
 # ============================================================================
 
