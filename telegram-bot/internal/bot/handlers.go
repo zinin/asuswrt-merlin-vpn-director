@@ -234,6 +234,49 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 	}
 }
 
+func (b *Bot) handleServersCallback(cb *tgbotapi.CallbackQuery) {
+	chatID := cb.Message.Chat.ID
+	data := cb.Data
+
+	// Acknowledge callback
+	if _, err := b.api.Send(tgbotapi.NewCallback(cb.ID, "")); err != nil {
+		log.Printf("[ERROR] Failed to acknowledge callback: %v", err)
+	}
+
+	// Parse page number from "servers:page:N"
+	var page int
+	if _, err := fmt.Sscanf(data, "servers:page:%d", &page); err != nil {
+		// noop button clicked
+		return
+	}
+
+	// Load servers
+	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(scriptsDir + "/vpn-director.json")
+	if err != nil {
+		log.Printf("[ERROR] Config load error: %v", err)
+		return
+	}
+
+	dataDir := vpnCfg.DataDir
+	if dataDir == "" {
+		dataDir = scriptsDir + "/data"
+	}
+
+	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
+	if err != nil || len(servers) == 0 {
+		log.Printf("[ERROR] Server load error: %v", err)
+		return
+	}
+
+	text, keyboard := buildServersPage(servers, page)
+
+	edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, cb.Message.MessageID, text, keyboard)
+	edit.ParseMode = "MarkdownV2"
+	if _, err := b.api.Send(edit); err != nil {
+		log.Printf("[ERROR] Failed to edit servers page: %v", err)
+	}
+}
+
 func (b *Bot) handleRestart(msg *tgbotapi.Message) {
 	b.sendMessage(msg.Chat.ID, "Restarting VPN Director\\.\\.\\.")
 	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart")
