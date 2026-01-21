@@ -25,6 +25,7 @@ const (
 	botLogPath      = "/tmp/telegram-bot.log"
 	vpnLogPath      = "/tmp/vpn-director.log"
 	defaultLogLines = 20
+	serversPerPage  = 15
 )
 
 // escapeMarkdownV2 escapes special characters for Telegram MarkdownV2
@@ -117,6 +118,56 @@ func buildCodeBlockText(header, content string, maxLen int) string {
 	}
 
 	return fmt.Sprintf("%s\n```\n%s```", header, content)
+}
+
+// buildServersPage builds paginated server list with navigation keyboard
+func buildServersPage(servers []vpnconfig.Server, page int) (string, tgbotapi.InlineKeyboardMarkup) {
+	totalPages := (len(servers) + serversPerPage - 1) / serversPerPage
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
+	start := page * serversPerPage
+	end := start + serversPerPage
+	if end > len(servers) {
+		end = len(servers)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🖥 *Servers* \\(%d\\), page %d/%d:\n",
+		len(servers), page+1, totalPages))
+
+	for i := start; i < end; i++ {
+		s := servers[i]
+		sb.WriteString(fmt.Sprintf("%d\\. %s — %s \\(%s\\)\n",
+			i+1,
+			escapeMarkdownV2(s.Name),
+			escapeMarkdownV2(s.Address),
+			escapeMarkdownV2(s.IP)))
+	}
+
+	// Navigation buttons
+	var buttons []tgbotapi.InlineKeyboardButton
+
+	if page > 0 {
+		buttons = append(buttons,
+			tgbotapi.NewInlineKeyboardButtonData("← Prev", fmt.Sprintf("servers:page:%d", page-1)))
+	}
+
+	buttons = append(buttons,
+		tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%d/%d", page+1, totalPages), "servers:noop"))
+
+	if page < totalPages-1 {
+		buttons = append(buttons,
+			tgbotapi.NewInlineKeyboardButtonData("Next →", fmt.Sprintf("servers:page:%d", page+1)))
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons)
+
+	return sb.String(), keyboard
 }
 
 func (b *Bot) sendCodeBlock(chatID int64, header, content string) {

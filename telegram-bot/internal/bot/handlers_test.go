@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -225,6 +226,74 @@ func TestBuildCodeBlockText(t *testing.T) {
 			}
 			if !strings.HasSuffix(got, "```") {
 				t.Errorf("buildCodeBlockText() should end with ```, got %q", got)
+			}
+		})
+	}
+}
+
+func TestBuildServersPageText(t *testing.T) {
+	servers := make([]vpnconfig.Server, 47)
+	for i := range servers {
+		servers[i] = vpnconfig.Server{
+			Name:    fmt.Sprintf("Server-%d, City", i+1),
+			Address: fmt.Sprintf("srv%d.example.com", i+1),
+			IP:      fmt.Sprintf("1.2.3.%d", i+1),
+		}
+	}
+
+	tests := []struct {
+		name          string
+		page          int
+		expectHeader  string
+		expectFirst   string
+		expectLast    string
+		expectButtons int // number of navigation buttons
+	}{
+		{
+			name:          "first page",
+			page:          0,
+			expectHeader:  "🖥 *Servers* \\(47\\), page 1/4:",
+			expectFirst:   "1\\. Server\\-1",
+			expectLast:    "15\\. Server\\-15",
+			expectButtons: 2, // [1/4] [Next →]
+		},
+		{
+			name:          "middle page",
+			page:          1,
+			expectHeader:  "🖥 *Servers* \\(47\\), page 2/4:",
+			expectFirst:   "16\\. Server\\-16",
+			expectLast:    "30\\. Server\\-30",
+			expectButtons: 3, // [← Prev] [2/4] [Next →]
+		},
+		{
+			name:          "last page",
+			page:          3,
+			expectHeader:  "🖥 *Servers* \\(47\\), page 4/4:",
+			expectFirst:   "46\\. Server\\-46",
+			expectLast:    "47\\. Server\\-47",
+			expectButtons: 2, // [← Prev] [4/4]
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, keyboard := buildServersPage(servers, tt.page)
+
+			if !strings.Contains(text, tt.expectHeader) {
+				t.Errorf("page text should contain %q, got:\n%s", tt.expectHeader, text)
+			}
+			if !strings.Contains(text, tt.expectFirst) {
+				t.Errorf("page text should contain first server %q", tt.expectFirst)
+			}
+			if !strings.Contains(text, tt.expectLast) {
+				t.Errorf("page text should contain last server %q", tt.expectLast)
+			}
+
+			if len(keyboard.InlineKeyboard) != 1 {
+				t.Errorf("expected 1 keyboard row, got %d", len(keyboard.InlineKeyboard))
+			}
+			if len(keyboard.InlineKeyboard[0]) != tt.expectButtons {
+				t.Errorf("expected %d buttons, got %d", tt.expectButtons, len(keyboard.InlineKeyboard[0]))
 			}
 		})
 	}
