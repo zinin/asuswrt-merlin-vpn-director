@@ -594,7 +594,7 @@ _restore_from_cache() {
 _build_country_ipset() {
     local cc="$1" dump_dir="$2"
     local set_name="$cc"
-    local dump="${dump_dir}/${set_name}-ipdeny.dump"
+    local dump="${dump_dir}/${set_name}.dump"
     local target_set cidr_list restore_script
     local cnt=0 rc=0
 
@@ -610,7 +610,7 @@ _build_country_ipset() {
 
     # Download CIDR list
     cidr_list=$(tmp_file)
-    if ! _download_zone "$cc" "$cidr_list"; then
+    if ! _download_zone_multi_source "$cc" "$cidr_list"; then
         rm -f "$cidr_list"
         return 1
     fi
@@ -775,7 +775,7 @@ ipset_ensure() {
     else
         # Single country set
         local set_name="$spec"
-        local dump="${dump_dir}/${set_name}-ipdeny.dump"
+        local dump="${dump_dir}/${set_name}.dump"
 
         # Try restore from cache first (skip if IPSET_FORCE_UPDATE is set)
         if _restore_from_cache "$set_name" "$dump" "${IPSET_FORCE_UPDATE:-0}"; then
