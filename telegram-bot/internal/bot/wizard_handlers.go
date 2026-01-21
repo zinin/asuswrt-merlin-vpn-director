@@ -248,17 +248,18 @@ func (b *Bot) updateExclusionsMessage(msg *tgbotapi.Message, state *wizard.State
 		}
 	}
 	sort.Strings(selected)
-	text := "Step 2/4: Exclude from proxy\n"
+	text := escapeMarkdownV2("Step 2/4: Exclude from proxy") + "\n"
 	if len(selected) > 0 {
-		text += fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))
+		text += escapeMarkdownV2(fmt.Sprintf("Selected: %s", strings.Join(selected, ", ")))
 	} else {
-		text += "Selected: (none)"
+		text += escapeMarkdownV2("Selected: (none)")
 	}
 
 	edit := tgbotapi.NewEditMessageTextAndMarkup(
 		msg.Chat.ID, msg.MessageID, text,
 		tgbotapi.NewInlineKeyboardMarkup(rows...),
 	)
+	edit.ParseMode = "MarkdownV2"
 	if _, err := b.api.Send(edit); err != nil {
 		log.Printf("[ERROR] Failed to update exclusions message: %v", err)
 	}
