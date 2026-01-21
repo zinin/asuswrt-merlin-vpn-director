@@ -315,9 +315,8 @@ func (b *Bot) sendLogFile(chatID int64, path, name, lines string) {
 		output = "(empty)"
 	}
 
-	text := fmt.Sprintf("📋 *%s logs* \\(last %s lines\\):\n```\n%s```",
-		escapeMarkdownV2(name), lines, output)
-	b.sendLongMessage(chatID, text)
+	header := fmt.Sprintf("📋 *%s logs* \\(last %s lines\\):", escapeMarkdownV2(name), lines)
+	b.sendCodeBlock(chatID, header, output)
 }
 
 func (b *Bot) handleIP(msg *tgbotapi.Message) {
