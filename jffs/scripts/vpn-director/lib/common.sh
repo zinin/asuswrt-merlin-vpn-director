@@ -352,8 +352,8 @@ get_script_name() {
 #   * Messages are written to both syslog (via logger) and stderr.
 ###################################################################################################
 _log_tag="$(get_script_name -n)"
-LOG_FILE="/tmp/vpn_director.log"
-MAX_LOG_SIZE=102400  # 100KB
+LOG_FILE="/tmp/vpn-director.log"
+MAX_LOG_SIZE=204800  # 200KB
 
 # -------------------------------------------------------------------------------------------------
 # log - unified logger with ISO 8601 timestamp
