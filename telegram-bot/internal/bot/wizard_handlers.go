@@ -56,7 +56,7 @@ func (b *Bot) handleWizardCallback(cb *tgbotapi.CallbackQuery) {
 	}
 
 	if state == nil {
-		b.sendMessage(chatID, "No active session. Use /configure")
+		b.sendMessage(chatID, escapeMarkdownV2("No active session. Use /configure"))
 		return
 	}
 
