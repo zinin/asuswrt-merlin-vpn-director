@@ -270,13 +270,13 @@ func (b *Bot) sendClientsSelection(chatID int64, state *wizard.State) {
 	clients := state.GetClients()
 
 	var sb strings.Builder
-	sb.WriteString("Step 3/4: Clients\n\n")
+	sb.WriteString(escapeMarkdownV2("Step 3/4: Clients") + "\n\n")
 
 	if len(clients) == 0 {
-		sb.WriteString("(none yet)\n")
+		sb.WriteString(escapeMarkdownV2("(none yet)") + "\n")
 	} else {
 		for _, c := range clients {
-			sb.WriteString(fmt.Sprintf("* %s -> %s\n", c.IP, c.Route))
+			sb.WriteString(escapeMarkdownV2(fmt.Sprintf("* %s -> %s", c.IP, c.Route)) + "\n")
 		}
 	}
 
@@ -292,6 +292,7 @@ func (b *Bot) sendClientsSelection(chatID int64, state *wizard.State) {
 	}
 
 	msg := tgbotapi.NewMessage(chatID, sb.String())
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send clients selection: %v", err)
