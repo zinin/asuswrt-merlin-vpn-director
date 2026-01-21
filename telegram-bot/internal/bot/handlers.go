@@ -185,12 +185,12 @@ func (b *Bot) handleStart(msg *tgbotapi.Message) {
 	text := `*VPN Director Bot*
 
 Commands:
-/status \- Xray status
+/status \- VPN Director status
 /servers \- server list
 /import \<url\> \- import servers
 /configure \- configuration
-/restart \- restart Xray
-/stop \- stop Xray
+/restart \- restart VPN Director
+/stop \- stop VPN Director
 /logs \- recent logs
 /ip \- external IP
 /version \- bot version`
