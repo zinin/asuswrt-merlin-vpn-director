@@ -77,8 +77,8 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleRestart(msg *tgbotapi.Message) {
-	b.sendMessage(msg.Chat.ID, "Restarting Xray...")
-	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
+	b.sendMessage(msg.Chat.ID, "Restarting VPN Director...")
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart")
 	if err != nil {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
 		return
@@ -87,11 +87,11 @@ func (b *Bot) handleRestart(msg *tgbotapi.Message) {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error (code %d):\n%s", result.ExitCode, result.Output))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, "Xray restarted")
+	b.sendMessage(msg.Chat.ID, "VPN Director restarted")
 }
 
 func (b *Bot) handleStop(msg *tgbotapi.Message) {
-	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "stop", "xray")
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "stop")
 	if err != nil {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
 		return
@@ -100,7 +100,7 @@ func (b *Bot) handleStop(msg *tgbotapi.Message) {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error (code %d):\n%s", result.ExitCode, result.Output))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, "Xray stopped")
+	b.sendMessage(msg.Chat.ID, "VPN Director stopped")
 }
 
 func (b *Bot) handleLogs(msg *tgbotapi.Message) {
