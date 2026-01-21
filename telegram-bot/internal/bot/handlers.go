@@ -198,8 +198,8 @@ func (b *Bot) handleStatus(msg *tgbotapi.Message) {
 		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
-	text := fmt.Sprintf("📊 *VPN Director Status*:\n```\n%s```", result.Output)
-	b.sendLongMessage(msg.Chat.ID, text)
+	header := "📊 *VPN Director Status*:"
+	b.sendCodeBlock(msg.Chat.ID, header, result.Output)
 }
 
 func (b *Bot) handleServers(msg *tgbotapi.Message) {
