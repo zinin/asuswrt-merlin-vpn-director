@@ -439,6 +439,28 @@ EOF
     assert_failure
 }
 
+@test "_try_download_zone: rejects file with only comments (empty after filtering)" {
+    load_ipset_module
+
+    local mock_zone="/tmp/bats_mock_comments_only.txt"
+    cat > "$mock_zone" << 'EOF'
+# This file has only comments
+# No actual CIDR data
+#
+EOF
+
+    download_file() {
+        cp "$mock_zone" "$2"
+        return 0
+    }
+
+    local dest="/tmp/bats_test_dest.txt"
+    run _try_download_zone "https://example.com/test.zone" "/tmp/bats_tmp.txt" "$dest"
+    assert_failure
+
+    rm -f "$mock_zone" "$dest"
+}
+
 # ============================================================================
 # _try_manual_fallback - manual fallback for interactive mode
 # ============================================================================

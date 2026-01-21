@@ -393,12 +393,12 @@ _try_download_zone() {
         return 1
     fi
 
-    # Filter comments and empty lines
-    grep -v '^#' "$tmp_file" | grep -v '^[[:space:]]*$' > "${tmp_file}.filtered"
+    # Filter comments and empty lines (|| true prevents exit under set -e if all lines filtered)
+    grep -v '^#' "$tmp_file" 2>/dev/null | grep -v '^[[:space:]]*$' > "${tmp_file}.filtered" || true
     mv "${tmp_file}.filtered" "$tmp_file"
 
-    # Validate: first line must be CIDR format
-    if ! head -1 "$tmp_file" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
+    # Validate: file must be non-empty and first line must be CIDR format
+    if [[ ! -s "$tmp_file" ]] || ! head -1 "$tmp_file" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
         log -l DEBUG "Invalid CIDR format from $url"
         rm -f "$tmp_file"
         return 1
@@ -431,9 +431,9 @@ _try_manual_fallback() {
     read -r
 
     if [[ -f "$fallback_path" ]]; then
-        # Filter comments and validate
-        grep -v '^#' "$fallback_path" | grep -v '^[[:space:]]*$' > "$dest"
-        if head -1 "$dest" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
+        # Filter comments and validate (|| true prevents exit under set -e)
+        grep -v '^#' "$fallback_path" 2>/dev/null | grep -v '^[[:space:]]*$' > "$dest" || true
+        if [[ -s "$dest" ]] && head -1 "$dest" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+'; then
             log "Using manually provided zone for '$cc'"
             return 0
         fi
