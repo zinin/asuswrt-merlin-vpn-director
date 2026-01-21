@@ -187,8 +187,8 @@ tunnel_status() {
     else
         printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '
             to_entries[] |
-            "Tunnel: \(.key)\n  Clients: \(.value.clients | join(", "))\n  Exclude: \(.value.exclude // [] | join(", "))"
-        '
+            "Tunnel: \(.key)\n  Clients: \(.value.clients // [] | join(", "))\n  Exclude: \(.value.exclude // [] | join(", "))"
+        ' 2>/dev/null || printf '%s\n' "Error: Failed to parse tunnels JSON"
     fi
     printf '\n'
 
