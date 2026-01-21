@@ -196,6 +196,16 @@ load '../test_helper'
     assert_output --partial "192.168.50.0/24"
 }
 
+@test "tunnel_apply: PREROUTING jump includes -i br0 interface" {
+    load_tunnel_module
+    # Clear iptables log
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_success
+    # Verify PREROUTING rule includes -i br0 (from mock log)
+    grep -q -- '-i br0.*-j TUN_DIR' /tmp/bats_iptables_calls.log
+}
+
 # ============================================================================
 # Module loading
 # ============================================================================

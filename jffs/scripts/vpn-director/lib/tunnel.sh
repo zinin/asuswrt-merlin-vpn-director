@@ -382,9 +382,9 @@ tunnel_apply() {
         tunnel_idx=$((tunnel_idx + 1))
     done <<< "$tunnels"
 
-    # Add jump from PREROUTING to TUN_DIR chain
+    # Add jump from PREROUTING to TUN_DIR chain (filter LAN traffic via br0)
     sync_fw_rule -q mangle PREROUTING "-j ${TUN_DIR_CHAIN}\$" \
-        "-m mark --mark 0x0/$_tunnel_mark_mask_hex -j $TUN_DIR_CHAIN" "$base_pos"
+        "-i br0 -m mark --mark 0x0/$_tunnel_mark_mask_hex -j $TUN_DIR_CHAIN" "$base_pos"
 
     # Save hash
     mkdir -p "$(dirname "$TUN_DIR_HASH")"
