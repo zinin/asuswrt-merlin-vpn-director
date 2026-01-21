@@ -53,18 +53,18 @@ func escapeMarkdownV2(text string) string {
 }
 
 func (b *Bot) handleStart(msg *tgbotapi.Message) {
-	text := `VPN Director Bot
+	text := `*VPN Director Bot*
 
 Commands:
-/status - Xray status
-/servers - server list
-/import <url> - import servers
-/configure - configuration
-/restart - restart Xray
-/stop - stop Xray
-/logs - recent logs
-/ip - external IP
-/version - bot version`
+/status \- Xray status
+/servers \- server list
+/import <url> \- import servers
+/configure \- configuration
+/restart \- restart Xray
+/stop \- stop Xray
+/logs \- recent logs
+/ip \- external IP
+/version \- bot version`
 
 	b.sendMessage(msg.Chat.ID, text)
 }
@@ -115,30 +115,30 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleRestart(msg *tgbotapi.Message) {
-	b.sendMessage(msg.Chat.ID, "Restarting VPN Director...")
+	b.sendMessage(msg.Chat.ID, "Restarting VPN Director\\.\\.\\.")
 	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error (code %d):\n%s", result.ExitCode, result.Output))
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error \\(code %d\\):\n```\n%s```", result.ExitCode, result.Output))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, "VPN Director restarted")
+	b.sendMessage(msg.Chat.ID, "✅ VPN Director restarted")
 }
 
 func (b *Bot) handleStop(msg *tgbotapi.Message) {
 	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "stop")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error (code %d):\n%s", result.ExitCode, result.Output))
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error \\(code %d\\):\n```\n%s```", result.ExitCode, result.Output))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, "VPN Director stopped")
+	b.sendMessage(msg.Chat.ID, "⏹ VPN Director stopped")
 }
 
 func (b *Bot) handleLogs(msg *tgbotapi.Message) {
@@ -200,14 +200,15 @@ func (b *Bot) sendLogFile(chatID int64, path, name, lines string) {
 func (b *Bot) handleIP(msg *tgbotapi.Message) {
 	result, err := shell.Exec("curl", "-s", "--connect-timeout", "5", "--max-time", "10", "ifconfig.me")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, fmt.Sprintf("External IP: %s", strings.TrimSpace(result.Output)))
+	ip := strings.TrimSpace(result.Output)
+	b.sendMessage(msg.Chat.ID, fmt.Sprintf("🌐 External IP: `%s`", escapeMarkdownV2(ip)))
 }
 
 func (b *Bot) handleVersion(msg *tgbotapi.Message) {
-	b.sendMessage(msg.Chat.ID, b.version)
+	b.sendMessage(msg.Chat.ID, escapeMarkdownV2(b.version))
 }
 
 func (b *Bot) sendMessage(chatID int64, text string) {
