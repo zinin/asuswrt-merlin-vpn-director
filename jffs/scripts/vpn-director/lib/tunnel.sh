@@ -301,6 +301,12 @@ tunnel_apply() {
         return 0
     fi
 
+    # Validate JSON before modifying firewall state
+    if ! printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        log -l ERROR "Invalid tunnels JSON configuration"
+        return 1
+    fi
+
     # Compute config hash for change detection
     local new_hash old_hash empty_hash
     new_hash=$(printf '%s' "$TUN_DIR_TUNNELS_JSON" | compute_hash)
@@ -400,9 +406,10 @@ tunnel_apply() {
                     -s "$client" -m set --match-set "$excl_set" dst -j RETURN
             done <<< "$excludes"
 
-            # Add MARK rule for this client
+            # Add MARK rule for this client (first-match: only if not already marked)
             ensure_fw_rule -q mangle "$TUN_DIR_CHAIN" \
-                -s "$client" -j MARK --set-xmark "$mark_hex/$_tunnel_mark_mask_hex"
+                -s "$client" -m mark --mark "0x0/$_tunnel_mark_mask_hex" \
+                -j MARK --set-xmark "$mark_hex/$_tunnel_mark_mask_hex"
 
             log "Added: client=$client tunnel=$tunnel mark=$mark_hex"
             changes=1
