@@ -20,7 +20,7 @@
 #   _next_pow2()            - round up to next power of 2
 #   _calc_ipset_size()      - calculate hashsize from entry count (min 1024)
 #   _derive_set_name()      - lowercase or hash for long names (>31 chars)
-#   parse_country_codes()   - extract country codes from rules (stdin)
+#   parse_exclude_sets_from_json() - extract exclude codes from tunnels JSON (stdin)
 #   parse_combo_from_rules() - extract combo ipsets from rules (stdin)
 #   _ipset_exists()         - check if ipset exists
 #   _ipset_count()          - get entry count
@@ -221,50 +221,23 @@ _normalize_spec() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# parse_country_codes - extract country codes from tunnel director rules
+# parse_exclude_sets_from_json - extract exclude country codes from tunnels JSON
 # -------------------------------------------------------------------------------------------------
-# Accepts rules via stdin in format: table:src[%iface][:src_excl]:set[:set_excl]
-# Extracts 2-letter country codes from field 4 (set) and field 5 (set_excl)
-# Validates against ALL_COUNTRY_CODES
+# Reads tunnels JSON from stdin, extracts all exclude arrays, validates country codes.
+# Output: one valid country code per line, sorted and deduplicated.
 # -------------------------------------------------------------------------------------------------
-parse_country_codes() {
-    awk -v valid="$ALL_COUNTRY_CODES" '
-        function add_code(tok, base) {
-            gsub(/[[:space:]]+/, "", tok)
-            if (tok ~ /^[a-z]{2}$/) {
-                base = tok
-                if (V[base]) seen[base] = 1
-            }
-        }
-        BEGIN {
-            n = split(valid, arr, /[[:space:]\r\n]+/)
-            for (i = 1; i <= n; i++) if (arr[i] != "") V[arr[i]] = 1
-        }
-        {
-            # Split on ":" outside [...] (for IPv6 literals in src)
-            depth = 0; tok = ""; nf2 = 0
-            for (i = 1; i <= length($0); i++) {
-                c = substr($0, i, 1)
-                if (c == "[") depth++
-                else if (c == "]" && depth > 0) depth--
-                if (c == ":" && depth == 0) {
-                    f[++nf2] = tok; tok = ""
-                }
-                else tok = tok c
-            }
-            f[++nf2] = tok
+parse_exclude_sets_from_json() {
+    local valid_codes="$ALL_COUNTRY_CODES"
 
-            # Field 4 = set, Field 5 = set_excl
-            for (fld = 4; fld <= 5; fld++) {
-                if (fld > nf2) continue
-                n = split(tolower(f[fld]), parts, ",")
-                for (i = 1; i <= n; i++) add_code(parts[i])
-            }
-
-            for (i = 1; i <= nf2; i++) delete f[i]
-        }
-        END { for (c in seen) print c }
-    ' | sort
+    jq -r '
+        [.[] | .exclude // []] | flatten | unique | .[]
+    ' 2>/dev/null | while read -r code; do
+        # Validate against known country codes
+        code=$(printf '%s' "$code" | tr 'A-Z' 'a-z')
+        if [[ " $valid_codes " == *" $code "* ]]; then
+            printf '%s\n' "$code"
+        fi
+    done | sort -u
 }
 
 ###################################################################################################
