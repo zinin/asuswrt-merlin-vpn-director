@@ -400,12 +400,12 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 
 // Step 5: Apply configuration
 func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
-	b.sendMessage(chatID, "Applying configuration...")
+	b.sendMessage(chatID, escapeMarkdownV2("Applying configuration..."))
 
 	// Load current config
 	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(scriptsDir + "/vpn-director.json")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("Config load error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Config load error: %v", err)))
 		return
 	}
 
@@ -415,7 +415,7 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 	}
 	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
 	if err != nil && !os.IsNotExist(err) {
-		b.sendMessage(chatID, fmt.Sprintf("Server load error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Server load error: %v", err)))
 		return
 	}
 
@@ -476,46 +476,46 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 	vpnCfg.TunnelDirector.Rules = tunDirRules
 
 	if err := vpnconfig.SaveVPNDirectorConfig(scriptsDir+"/vpn-director.json", vpnCfg); err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("Save error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Save error: %v", err)))
 		return
 	}
-	b.sendMessage(chatID, "vpn-director.json updated")
+	b.sendMessage(chatID, escapeMarkdownV2("vpn-director.json updated"))
 
 	// Generate Xray config
 	if serverIndex < len(servers) {
 		s := servers[serverIndex]
 		if err := b.generateXrayConfig(s); err != nil {
-			b.sendMessage(chatID, fmt.Sprintf("Xray config generation error: %v", err))
+			b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Xray config generation error: %v", err)))
 		} else {
-			b.sendMessage(chatID, "xray/config.json updated")
+			b.sendMessage(chatID, escapeMarkdownV2("xray/config.json updated"))
 		}
 	}
 
 	// Apply configuration via vpn-director
 	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "apply")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director.sh apply exec error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director.sh apply exec error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director apply error (exit %d): %s", result.ExitCode, result.Output))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director apply error (exit %d): %s", result.ExitCode, result.Output)))
 		return
 	}
-	b.sendMessage(chatID, "VPN Director applied")
+	b.sendMessage(chatID, escapeMarkdownV2("VPN Director applied"))
 
 	// Restart Xray to apply new config
 	result, err = shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director.sh restart exec error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director.sh restart exec error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director restart error (exit %d): %s", result.ExitCode, result.Output))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director restart error (exit %d): %s", result.ExitCode, result.Output)))
 		return
 	}
-	b.sendMessage(chatID, "Xray restarted")
+	b.sendMessage(chatID, escapeMarkdownV2("Xray restarted"))
 
-	b.sendMessage(chatID, "Done!")
+	b.sendMessage(chatID, escapeMarkdownV2("Done!"))
 	b.wizard.Clear(chatID)
 }
 
