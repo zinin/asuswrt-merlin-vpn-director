@@ -203,14 +203,15 @@ func (b *Bot) sendExclusionsSelection(chatID int64, state *wizard.State) {
 		}
 	}
 	sort.Strings(selected)
-	text := "Step 2/4: Exclude from proxy\n"
+	text := escapeMarkdownV2("Step 2/4: Exclude from proxy") + "\n"
 	if len(selected) > 0 {
-		text += fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))
+		text += escapeMarkdownV2(fmt.Sprintf("Selected: %s", strings.Join(selected, ", ")))
 	} else {
-		text += "Selected: (none)"
+		text += escapeMarkdownV2("Selected: (none)")
 	}
 
 	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send exclusions selection: %v", err)
