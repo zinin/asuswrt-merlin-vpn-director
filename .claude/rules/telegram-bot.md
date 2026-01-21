@@ -38,7 +38,7 @@ telegram-bot/
 | `/configure` | `handleConfigure` | Start config wizard |
 | `/restart` | `handleRestart` | Restart Xray |
 | `/stop` | `handleStop` | Stop Xray |
-| `/logs` | `handleLogs` | Last 20 lines of vpn_director.log |
+| `/logs [bot\|vpn\|all] [N]` | `handleLogs` | Show logs (default: all, 20 lines) |
 | `/ip` | `handleIP` | Show external IP |
 
 ## Configuration Wizard
@@ -112,3 +112,4 @@ Binary: `bin/telegram-bot-{arch}`
 - Output: stdout + `/tmp/telegram-bot.log` (always, via `io.MultiWriter`)
 - Format: `2026/01/18 15:04:05 main.go:42: [INFO] Bot started`
 - Levels: `[INFO]`, `[WARN]`, `[ERROR]` (manual prefixes)
+- Rotation: Both log files truncated at 200KB (checked every minute)

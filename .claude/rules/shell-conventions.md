@@ -33,7 +33,7 @@ paths: "**/*.sh, jffs/**/*"
 | `get_active_wan_if` | Get active WAN interface name |
 | `get_ipv6_enabled` | Returns 1 if IPv6 enabled, 0 otherwise |
 
-**Logging**: `LOG_FILE=/tmp/vpn_director.log` with 100KB rotation
+**Logging**: `LOG_FILE=/tmp/vpn-director.log` with 200KB rotation
 
 ## Firewall Utilities (firewall.sh)
 
