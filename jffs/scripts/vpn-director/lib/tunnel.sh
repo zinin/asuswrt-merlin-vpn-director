@@ -234,51 +234,35 @@ tunnel_get_required_ipsets() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# tunnel_stop - remove all chains and ip rules
+# tunnel_stop - remove chain and ip rules
 # -------------------------------------------------------------------------------------------------
-# Removes all TUN_DIR_* chains and their corresponding ip rules.
+# Removes TUN_DIR chain and all associated ip rules.
 # -------------------------------------------------------------------------------------------------
 tunnel_stop() {
     _tunnel_init
 
     log "Stopping Tunnel Director..."
 
-    # Find all TUN_DIR_* chains in mangle
-    local chains
-    chains="$(
-        iptables -t mangle -S 2>/dev/null |
-        awk -v pre="${TUN_DIR_CHAIN_PREFIX:-TUN_DIR_}" '
-            $1 == "-N" && $2 ~ ("^" pre "[0-9]+$") { print $2 }
-        '
-    )"
+    # Remove PREROUTING jump
+    purge_fw_rules -q "mangle PREROUTING" "-j ${TUN_DIR_CHAIN}\$"
 
-    if [[ -z $chains ]]; then
-        log "No TUN_DIR_* chains found"
-        return 0
+    # Delete chain if exists
+    if fw_chain_exists mangle "$TUN_DIR_CHAIN"; then
+        delete_fw_chain -q mangle "$TUN_DIR_CHAIN"
+        log "Removed chain: $TUN_DIR_CHAIN"
     fi
 
-    local ch idx_num pref
+    # Remove ip rules in our pref range
     local pref_base="${TUN_DIR_PREF_BASE:-16384}"
-    local chain_prefix="${TUN_DIR_CHAIN_PREFIX:-TUN_DIR_}"
+    local max_rules="${_tunnel_mark_field_max:-255}"
+    local i
 
-    while IFS= read -r ch; do
-        [[ -n $ch ]] || continue
+    for ((i = 0; i < max_rules; i++)); do
+        ip rule del pref $((pref_base + i)) 2>/dev/null || true
+    done
 
-        # Extract index from chain name
-        idx_num="${ch#"$chain_prefix"}"
-        pref=$((pref_base + idx_num))
-
-        # Remove PREROUTING jump
-        purge_fw_rules -q "mangle PREROUTING" "-j ${ch}\$"
-
-        # Delete chain
-        delete_fw_chain -q mangle "$ch"
-
-        # Remove ip rule
-        ip rule del pref "$pref" 2>/dev/null || true
-
-        log "Removed rule: pref=$pref chain=$ch"
-    done <<< "$chains"
+    # Clear hash file
+    rm -f "$TUN_DIR_HASH"
 
     log "Tunnel Director stopped"
     return 0

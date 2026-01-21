@@ -170,21 +170,21 @@ load '../test_helper'
 }
 
 # ============================================================================
-# tunnel_stop - remove all chains and ip rules
+# tunnel_stop - remove single TUN_DIR chain and ip rules
 # ============================================================================
 
-@test "tunnel_stop: returns success when no chains exist" {
+@test "tunnel_stop: returns success when chain does not exist" {
     load_tunnel_module
     run tunnel_stop
     assert_success
 }
 
-@test "tunnel_stop: logs cleanup message" {
+@test "tunnel_stop: removes single TUN_DIR chain" {
     load_tunnel_module
     run tunnel_stop
     assert_success
-    # Should indicate stopping/cleanup
     assert_output --partial "Stopping Tunnel Director"
+    assert_output --partial "Tunnel Director stopped"
 }
 
 # ============================================================================
