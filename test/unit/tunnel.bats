@@ -69,33 +69,21 @@ load '../test_helper'
 }
 
 # ============================================================================
-# tunnel_get_required_ipsets - parse rules and return required ipsets
+# tunnel_get_required_ipsets - parse tunnels JSON and return required ipsets
 # ============================================================================
 
-@test "tunnel_get_required_ipsets: returns country codes from rules" {
+@test "tunnel_get_required_ipsets: returns exclude sets from config" {
     load_tunnel_module
     result=$(tunnel_get_required_ipsets)
-    # From fixture: "wgc1:192.168.50.0/24::us,ca"
-    echo "$result" | grep -q "us"
-    echo "$result" | grep -q "ca"
+    # From fixture: wgc1 has exclude: ["ru"]
+    echo "$result" | grep -q "ru"
 }
 
-@test "tunnel_get_required_ipsets: returns combo sets from rules" {
-    load_tunnel_module
-    result=$(tunnel_get_required_ipsets)
-    # From fixture: "wgc1:192.168.50.0/24::us,ca" -> combo "us,ca"
-    echo "$result" | grep -q "us,ca"
-}
-
-@test "tunnel_get_required_ipsets: handles empty rules gracefully" {
-    # This test uses a subshell to avoid readonly variable issues
+@test "tunnel_get_required_ipsets: handles empty tunnels gracefully" {
     load_common
     source "$LIB_DIR/firewall.sh"
-    # Set TUN_DIR_RULES before loading config (which makes it readonly)
-    export TUN_DIR_RULES=""
-    # Load config manually without readonly
+    export TUN_DIR_TUNNELS_JSON='{}'
     export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director.json"
-    # Source only ipset for parse functions
     source "$LIB_DIR/ipset.sh" --source-only
     source "$LIB_DIR/tunnel.sh" --source-only
 

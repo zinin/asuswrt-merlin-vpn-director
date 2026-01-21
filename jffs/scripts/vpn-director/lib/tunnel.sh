@@ -223,25 +223,14 @@ tunnel_status() {
 # -------------------------------------------------------------------------------------------------
 # tunnel_get_required_ipsets - return list of ipsets needed for rules
 # -------------------------------------------------------------------------------------------------
-# Parses TUN_DIR_RULES and returns:
-# - Individual country codes (one per line)
-# - Combo ipsets (comma-separated, one per line)
+# Parses TUN_DIR_TUNNELS_JSON and returns exclude country codes.
 # -------------------------------------------------------------------------------------------------
 tunnel_get_required_ipsets() {
-    local rules
-
-    # Normalize rules (one per line)
-    rules="$(printf '%s\n' $TUN_DIR_RULES | awk 'NF')"
-
-    if [[ -z $rules ]]; then
+    if [[ -z $TUN_DIR_TUNNELS_JSON ]] || [[ $TUN_DIR_TUNNELS_JSON == "{}" ]]; then
         return 0
     fi
 
-    # Extract country codes and combos
-    {
-        printf '%s\n' "$rules" | parse_country_codes
-        printf '%s\n' "$rules" | parse_combo_from_rules
-    } | sort -u
+    printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | parse_exclude_sets_from_json
 }
 
 # -------------------------------------------------------------------------------------------------
