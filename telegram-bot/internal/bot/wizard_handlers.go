@@ -138,7 +138,7 @@ func (b *Bot) sendServerSelection(chatID int64, _ *wizard.State) {
 
 	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
 	if err != nil || len(servers) == 0 {
-		b.sendMessage(chatID, "No servers found. Use /import")
+		b.sendMessage(chatID, escapeMarkdownV2("No servers found. Use /import"))
 		b.wizard.Clear(chatID)
 		return
 	}
@@ -163,7 +163,8 @@ func (b *Bot) sendServerSelection(chatID int64, _ *wizard.State) {
 		tgbotapi.NewInlineKeyboardButtonData("Cancel", "cancel"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Step 1/4: Select Xray server (%d available)", len(servers)))
+	msg := tgbotapi.NewMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Step 1/4: Select Xray server (%d available)", len(servers))))
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send server selection: %v", err)
