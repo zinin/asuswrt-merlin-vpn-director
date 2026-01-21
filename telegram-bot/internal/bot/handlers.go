@@ -164,6 +164,14 @@ func (b *Bot) handleVersion(msg *tgbotapi.Message) {
 
 func (b *Bot) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "MarkdownV2"
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
+	}
+}
+
+func (b *Bot) sendPlainMessage(chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
 	}
