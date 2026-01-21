@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,19 +21,179 @@ import (
 const scriptsDir = "/jffs/scripts/vpn-director"
 const maxMessageLength = 4000 // Telegram limit is 4096, leave margin
 
+const (
+	botLogPath      = "/tmp/telegram-bot.log"
+	vpnLogPath      = "/tmp/vpn-director.log"
+	defaultLogLines = 20
+	serversPerPage  = 15
+)
+
+// escapeMarkdownV2 escapes special characters for Telegram MarkdownV2
+func escapeMarkdownV2(text string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\", // backslash must be first
+		"_", "\\_",
+		"*", "\\*",
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		"`", "\\`",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"-", "\\-",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		".", "\\.",
+		"!", "\\!",
+	)
+	return replacer.Replace(text)
+}
+
+// extractCountry extracts country name from server name format "Country, City"
+func extractCountry(name string) string {
+	parts := strings.SplitN(name, ",", 2)
+	country := strings.TrimSpace(parts[0])
+	if country == "" {
+		return "Other"
+	}
+	return country
+}
+
+// groupServersByCountry groups servers by country and returns formatted string
+func groupServersByCountry(servers []vpnconfig.Server) string {
+	if len(servers) == 0 {
+		return ""
+	}
+
+	counts := make(map[string]int)
+	for _, s := range servers {
+		country := extractCountry(s.Name)
+		counts[country]++
+	}
+
+	type countryCount struct {
+		country string
+		count   int
+	}
+	var sorted []countryCount
+	for c, n := range counts {
+		sorted = append(sorted, countryCount{c, n})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
+		}
+		return sorted[i].country < sorted[j].country
+	})
+
+	var parts []string
+	maxShow := 10
+	for i, cc := range sorted {
+		if i >= maxShow {
+			parts = append(parts, fmt.Sprintf("и ещё %d стран", len(sorted)-maxShow))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s (%d)", cc.country, cc.count))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// buildCodeBlockText builds a code block message with optional truncation
+func buildCodeBlockText(header, content string, maxLen int) string {
+	// Calculate max content length: total - header - "\n```\n" (5) - "```" (3) - buffer
+	maxContentLen := maxLen - len(header) - 10
+
+	if len(content) > maxContentLen {
+		// Truncate from beginning to show latest content
+		content = content[len(content)-maxContentLen:]
+		// Find first newline to avoid cutting mid-line
+		if idx := strings.Index(content, "\n"); idx != -1 {
+			content = content[idx+1:]
+		}
+		content = "...\n" + content
+	}
+
+	return fmt.Sprintf("%s\n```\n%s```", header, content)
+}
+
+// buildServersPage builds paginated server list with navigation keyboard
+func buildServersPage(servers []vpnconfig.Server, page int) (string, tgbotapi.InlineKeyboardMarkup) {
+	// Guard clause for empty servers list
+	if len(servers) == 0 {
+		return "No servers available\\.", tgbotapi.NewInlineKeyboardMarkup()
+	}
+
+	totalPages := (len(servers) + serversPerPage - 1) / serversPerPage
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
+	start := page * serversPerPage
+	end := start + serversPerPage
+	if end > len(servers) {
+		end = len(servers)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🖥 *Servers* \\(%d\\), page %d/%d:\n",
+		len(servers), page+1, totalPages))
+
+	for i := start; i < end; i++ {
+		s := servers[i]
+		sb.WriteString(fmt.Sprintf("%d\\. %s — %s \\(%s\\)\n",
+			i+1,
+			escapeMarkdownV2(s.Name),
+			escapeMarkdownV2(s.Address),
+			escapeMarkdownV2(s.IP)))
+	}
+
+	// Navigation buttons
+	var buttons []tgbotapi.InlineKeyboardButton
+
+	if page > 0 {
+		buttons = append(buttons,
+			tgbotapi.NewInlineKeyboardButtonData("← Prev", fmt.Sprintf("servers:page:%d", page-1)))
+	}
+
+	buttons = append(buttons,
+		tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%d/%d", page+1, totalPages), "servers:noop"))
+
+	if page < totalPages-1 {
+		buttons = append(buttons,
+			tgbotapi.NewInlineKeyboardButtonData("Next →", fmt.Sprintf("servers:page:%d", page+1)))
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons)
+
+	return sb.String(), keyboard
+}
+
+func (b *Bot) sendCodeBlock(chatID int64, header, content string) {
+	text := buildCodeBlockText(header, content, maxMessageLength)
+	b.sendMessage(chatID, text)
+}
+
 func (b *Bot) handleStart(msg *tgbotapi.Message) {
-	text := `VPN Director Bot
+	text := `*VPN Director Bot*
 
 Commands:
-/status - Xray status
-/servers - server list
-/import <url> - import servers
-/configure - configuration
-/restart - restart Xray
-/stop - stop Xray
-/logs - recent logs
-/ip - external IP
-/version - bot version`
+/status \- VPN Director status
+/servers \- server list
+/import \<url\> \- import servers
+/configure \- configuration
+/restart \- restart VPN Director
+/stop \- stop VPN Director
+/logs \- recent logs
+/ip \- external IP
+/version \- bot version`
 
 	b.sendMessage(msg.Chat.ID, text)
 }
@@ -39,16 +201,17 @@ Commands:
 func (b *Bot) handleStatus(msg *tgbotapi.Message) {
 	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "status")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, result.Output)
+	header := "📊 *VPN Director Status*:"
+	b.sendCodeBlock(msg.Chat.ID, header, result.Output)
 }
 
 func (b *Bot) handleServers(msg *tgbotapi.Message) {
 	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(scriptsDir + "/vpn-director.json")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Config load error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Config load error: %v", err)))
 		return
 	}
 
@@ -59,77 +222,172 @@ func (b *Bot) handleServers(msg *tgbotapi.Message) {
 
 	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
 
 	if len(servers) == 0 {
-		b.sendMessage(msg.Chat.ID, "No servers. Use /import to add servers.")
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2("No servers. Use /import to add servers."))
 		return
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Servers (%d):\n", len(servers)))
-	for i, s := range servers {
-		sb.WriteString(fmt.Sprintf("%d. %s — %s (%s)\n", i+1, s.Name, s.Address, s.IP))
+	text, keyboard := buildServersPage(servers, 0)
+	msgCfg := tgbotapi.NewMessage(msg.Chat.ID, text)
+	msgCfg.ParseMode = "MarkdownV2"
+	msgCfg.ReplyMarkup = keyboard
+	if _, err := b.api.Send(msgCfg); err != nil {
+		log.Printf("[ERROR] Failed to send servers page: %v", err)
 	}
-	b.sendLongMessage(msg.Chat.ID, sb.String())
+}
+
+func (b *Bot) handleServersCallback(cb *tgbotapi.CallbackQuery) {
+	chatID := cb.Message.Chat.ID
+	data := cb.Data
+
+	// Acknowledge callback
+	if _, err := b.api.Send(tgbotapi.NewCallback(cb.ID, "")); err != nil {
+		log.Printf("[ERROR] Failed to acknowledge callback: %v", err)
+	}
+
+	// Parse page number from "servers:page:N"
+	var page int
+	if _, err := fmt.Sscanf(data, "servers:page:%d", &page); err != nil {
+		// noop button clicked
+		return
+	}
+
+	// Load servers
+	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(scriptsDir + "/vpn-director.json")
+	if err != nil {
+		log.Printf("[ERROR] Config load error: %v", err)
+		return
+	}
+
+	dataDir := vpnCfg.DataDir
+	if dataDir == "" {
+		dataDir = scriptsDir + "/data"
+	}
+
+	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
+	if err != nil || len(servers) == 0 {
+		log.Printf("[ERROR] Server load error: %v", err)
+		return
+	}
+
+	text, keyboard := buildServersPage(servers, page)
+
+	edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, cb.Message.MessageID, text, keyboard)
+	edit.ParseMode = "MarkdownV2"
+	if _, err := b.api.Send(edit); err != nil {
+		log.Printf("[ERROR] Failed to edit servers page: %v", err)
+	}
 }
 
 func (b *Bot) handleRestart(msg *tgbotapi.Message) {
-	b.sendMessage(msg.Chat.ID, "Restarting Xray...")
-	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
+	b.sendMessage(msg.Chat.ID, "Restarting VPN Director\\.\\.\\.")
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "restart")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error (code %d):\n%s", result.ExitCode, result.Output))
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error \\(code %d\\):\n```\n%s```", result.ExitCode, result.Output))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, "Xray restarted")
+	b.sendMessage(msg.Chat.ID, "✅ VPN Director restarted")
 }
 
 func (b *Bot) handleStop(msg *tgbotapi.Message) {
-	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "stop", "xray")
+	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "stop")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error (code %d):\n%s", result.ExitCode, result.Output))
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error \\(code %d\\):\n```\n%s```", result.ExitCode, result.Output))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, "Xray stopped")
+	b.sendMessage(msg.Chat.ID, "⏹ VPN Director stopped")
 }
 
 func (b *Bot) handleLogs(msg *tgbotapi.Message) {
-	result, err := shell.Exec("tail", "-n", "20", "/tmp/vpn_director.log")
+	args := strings.Fields(msg.CommandArguments())
+
+	source := "all"
+	lines := defaultLogLines
+
+	// Parse arguments: /logs [source] [lines]
+	if len(args) >= 1 {
+		switch args[0] {
+		case "bot", "vpn", "all":
+			source = args[0]
+		default:
+			// Maybe it's a number
+			if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
+				lines = n
+			} else {
+				b.sendMessage(msg.Chat.ID, "Usage: `/logs [bot|vpn|all] [lines]`")
+				return
+			}
+		}
+	}
+
+	if len(args) >= 2 {
+		if n, err := strconv.Atoi(args[1]); err == nil && n > 0 {
+			lines = n
+		}
+	}
+
+	linesStr := strconv.Itoa(lines)
+
+	if source == "bot" || source == "all" {
+		b.sendLogFile(msg.Chat.ID, botLogPath, "Bot", linesStr)
+	}
+
+	if source == "vpn" || source == "all" {
+		b.sendLogFile(msg.Chat.ID, vpnLogPath, "VPN Director", linesStr)
+	}
+}
+
+func (b *Bot) sendLogFile(chatID int64, path, name, lines string) {
+	result, err := shell.Exec("tail", "-n", lines, path)
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Error reading %s logs: %v", name, err)))
 		return
 	}
-	if result.Output == "" {
-		b.sendMessage(msg.Chat.ID, "Log is empty")
-		return
+
+	output := result.Output
+	if output == "" {
+		output = "(empty)"
 	}
-	b.sendMessage(msg.Chat.ID, "```\n"+result.Output+"```")
+
+	header := fmt.Sprintf("📋 *%s logs* \\(last %s lines\\):", escapeMarkdownV2(name), lines)
+	b.sendCodeBlock(chatID, header, output)
 }
 
 func (b *Bot) handleIP(msg *tgbotapi.Message) {
 	result, err := shell.Exec("curl", "-s", "--connect-timeout", "5", "--max-time", "10", "ifconfig.me")
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Error: %v", err)))
 		return
 	}
-	b.sendMessage(msg.Chat.ID, fmt.Sprintf("External IP: %s", strings.TrimSpace(result.Output)))
+	ip := strings.TrimSpace(result.Output)
+	b.sendMessage(msg.Chat.ID, fmt.Sprintf("🌐 External IP: `%s`", ip))
 }
 
 func (b *Bot) handleVersion(msg *tgbotapi.Message) {
-	b.sendMessage(msg.Chat.ID, b.version)
+	b.sendMessage(msg.Chat.ID, escapeMarkdownV2(b.version))
 }
 
 func (b *Bot) sendMessage(chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "MarkdownV2"
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
+	}
+}
+
+func (b *Bot) sendPlainMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
@@ -165,24 +423,24 @@ func (b *Bot) sendLongMessage(chatID int64, text string) {
 func (b *Bot) handleImport(msg *tgbotapi.Message) {
 	args := msg.CommandArguments()
 	if args == "" {
-		b.sendMessage(msg.Chat.ID, "Usage: /import <url>")
+		b.sendMessage(msg.Chat.ID, "Usage: `/import <url>`")
 		return
 	}
 
 	// Validate URL scheme
 	parsedURL, err := url.Parse(args)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		b.sendMessage(msg.Chat.ID, "Invalid URL. Use http:// or https://")
+		b.sendMessage(msg.Chat.ID, "Invalid URL\\. Use http:// or https://")
 		return
 	}
 
-	b.sendMessage(msg.Chat.ID, "Loading server list...")
+	b.sendMessage(msg.Chat.ID, "Loading server list\\.\\.\\.")
 
 	// HTTP client with timeout
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(args)
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Download error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Download error: %v", err)))
 		return
 	}
 	defer resp.Body.Close()
@@ -196,17 +454,21 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 	// Limit body size (1MB max)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Read error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Read error: %v", err)))
 		return
 	}
 
 	servers, parseErrors := vless.DecodeSubscription(string(body))
 	if len(servers) == 0 {
-		errMsg := "No VLESS servers found"
+		var sb strings.Builder
+		sb.WriteString("No VLESS servers found")
 		if len(parseErrors) > 0 {
-			errMsg += fmt.Sprintf("\nErrors: %v", parseErrors)
+			sb.WriteString("\nErrors:\n")
+			for _, e := range parseErrors {
+				sb.WriteString(fmt.Sprintf("• %s\n", e))
+			}
 		}
-		b.sendMessage(msg.Chat.ID, errMsg)
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(sb.String()))
 		return
 	}
 
@@ -242,28 +504,38 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 
 	// Ensure data dir exists
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Directory creation error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Directory creation error: %v", err)))
 		return
 	}
 
 	if err := vpnconfig.SaveServers(dataDir+"/servers.json", resolved); err != nil {
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("Save error: %v", err))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(fmt.Sprintf("Save error: %v", err)))
 		return
 	}
 
-	// Response with full stats
+	// Response with grouped stats
 	var sb strings.Builder
-	if resolveErrors > 0 {
-		sb.WriteString(fmt.Sprintf("⚠️ Imported %d of %d (%d DNS errors):\n",
-			len(resolved), totalParsed, resolveErrors))
+	if resolveErrors > 0 || len(parseErrors) > 0 {
+		sb.WriteString(fmt.Sprintf("⚠️ Imported %d of %d servers:\n", len(resolved), totalParsed))
 	} else {
-		sb.WriteString(fmt.Sprintf("✓ Imported %d servers:\n", len(resolved)))
+		sb.WriteString(fmt.Sprintf("✅ Imported %d servers:\n", len(resolved)))
 	}
-	for i, s := range resolved {
-		sb.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, s.Name, s.Address))
+
+	groupedStr := groupServersByCountry(resolved)
+	sb.WriteString(escapeMarkdownV2(groupedStr))
+
+	if resolveErrors > 0 || len(parseErrors) > 0 {
+		sb.WriteString("\n\n")
+		if resolveErrors > 0 {
+			sb.WriteString(fmt.Sprintf("%d DNS errors", resolveErrors))
+		}
+		if len(parseErrors) > 0 {
+			if resolveErrors > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(fmt.Sprintf("%d parse errors", len(parseErrors)))
+		}
 	}
-	if len(parseErrors) > 0 {
-		sb.WriteString(fmt.Sprintf("\n(%d with errors)", len(parseErrors)))
-	}
-	b.sendLongMessage(msg.Chat.ID, sb.String())
+
+	b.sendMessage(msg.Chat.ID, sb.String())
 }

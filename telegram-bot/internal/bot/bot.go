@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"log"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
@@ -44,8 +45,8 @@ func (b *Bot) registerCommands() error {
 		{Command: "servers", Description: "Server list"},
 		{Command: "import", Description: "Import servers from URL"},
 		{Command: "configure", Description: "Configuration wizard"},
-		{Command: "restart", Description: "Restart Xray"},
-		{Command: "stop", Description: "Stop Xray"},
+		{Command: "restart", Description: "Restart VPN Director"},
+		{Command: "stop", Description: "Stop VPN Director"},
 		{Command: "logs", Description: "Recent logs"},
 		{Command: "ip", Description: "External IP"},
 		{Command: "version", Description: "Bot version"},
@@ -137,5 +138,12 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	}
 
 	log.Printf("[INFO] Callback from %s: %s", username, cb.Data)
+
+	// Route to appropriate handler
+	if strings.HasPrefix(cb.Data, "servers:") {
+		b.handleServersCallback(cb)
+		return
+	}
+
 	b.handleWizardCallback(cb)
 }

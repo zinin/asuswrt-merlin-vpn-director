@@ -29,7 +29,7 @@ func (b *Bot) handleWizardInput(msg *tgbotapi.Message) {
 	if state.GetStep() == wizard.StepClientIP {
 		ip := strings.TrimSpace(msg.Text)
 		if !isValidLANIP(ip) {
-			b.sendMessage(msg.Chat.ID, "Invalid IP. Enter IP from range 192.168.x.x, 10.x.x.x or 172.16-31.x.x")
+			b.sendMessage(msg.Chat.ID, escapeMarkdownV2("Invalid IP. Enter IP from range 192.168.x.x, 10.x.x.x or 172.16-31.x.x"))
 			return
 		}
 		state.SetPendingIP(ip)
@@ -56,7 +56,7 @@ func (b *Bot) handleWizardCallback(cb *tgbotapi.CallbackQuery) {
 	}
 
 	if state == nil {
-		b.sendMessage(chatID, "No active session. Use /configure")
+		b.sendMessage(chatID, escapeMarkdownV2("No active session. Use /configure"))
 		return
 	}
 
@@ -138,7 +138,7 @@ func (b *Bot) sendServerSelection(chatID int64, _ *wizard.State) {
 
 	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
 	if err != nil || len(servers) == 0 {
-		b.sendMessage(chatID, "No servers found. Use /import")
+		b.sendMessage(chatID, escapeMarkdownV2("No servers found. Use /import"))
 		b.wizard.Clear(chatID)
 		return
 	}
@@ -163,7 +163,8 @@ func (b *Bot) sendServerSelection(chatID int64, _ *wizard.State) {
 		tgbotapi.NewInlineKeyboardButtonData("Cancel", "cancel"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Step 1/4: Select Xray server (%d available)", len(servers)))
+	msg := tgbotapi.NewMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Step 1/4: Select Xray server (%d available)", len(servers))))
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send server selection: %v", err)
@@ -202,14 +203,15 @@ func (b *Bot) sendExclusionsSelection(chatID int64, state *wizard.State) {
 		}
 	}
 	sort.Strings(selected)
-	text := "Step 2/4: Exclude from proxy\n"
+	text := escapeMarkdownV2("Step 2/4: Exclude from proxy") + "\n"
 	if len(selected) > 0 {
-		text += fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))
+		text += escapeMarkdownV2(fmt.Sprintf("Selected: %s", strings.Join(selected, ", ")))
 	} else {
-		text += "Selected: (none)"
+		text += escapeMarkdownV2("Selected: (none)")
 	}
 
 	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send exclusions selection: %v", err)
@@ -246,17 +248,18 @@ func (b *Bot) updateExclusionsMessage(msg *tgbotapi.Message, state *wizard.State
 		}
 	}
 	sort.Strings(selected)
-	text := "Step 2/4: Exclude from proxy\n"
+	text := escapeMarkdownV2("Step 2/4: Exclude from proxy") + "\n"
 	if len(selected) > 0 {
-		text += fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))
+		text += escapeMarkdownV2(fmt.Sprintf("Selected: %s", strings.Join(selected, ", ")))
 	} else {
-		text += "Selected: (none)"
+		text += escapeMarkdownV2("Selected: (none)")
 	}
 
 	edit := tgbotapi.NewEditMessageTextAndMarkup(
 		msg.Chat.ID, msg.MessageID, text,
 		tgbotapi.NewInlineKeyboardMarkup(rows...),
 	)
+	edit.ParseMode = "MarkdownV2"
 	if _, err := b.api.Send(edit); err != nil {
 		log.Printf("[ERROR] Failed to update exclusions message: %v", err)
 	}
@@ -267,13 +270,13 @@ func (b *Bot) sendClientsSelection(chatID int64, state *wizard.State) {
 	clients := state.GetClients()
 
 	var sb strings.Builder
-	sb.WriteString("Step 3/4: Clients\n\n")
+	sb.WriteString(escapeMarkdownV2("Step 3/4: Clients") + "\n\n")
 
 	if len(clients) == 0 {
-		sb.WriteString("(none yet)\n")
+		sb.WriteString(escapeMarkdownV2("(none yet)") + "\n")
 	} else {
 		for _, c := range clients {
-			sb.WriteString(fmt.Sprintf("* %s -> %s\n", c.IP, c.Route))
+			sb.WriteString(escapeMarkdownV2(fmt.Sprintf("* %s -> %s", c.IP, c.Route)) + "\n")
 		}
 	}
 
@@ -289,6 +292,7 @@ func (b *Bot) sendClientsSelection(chatID int64, state *wizard.State) {
 	}
 
 	msg := tgbotapi.NewMessage(chatID, sb.String())
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send clients selection: %v", err)
@@ -296,7 +300,8 @@ func (b *Bot) sendClientsSelection(chatID int64, state *wizard.State) {
 }
 
 func (b *Bot) sendClientIPPrompt(chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "Enter client IP address\n(e.g.: 192.168.1.100)")
+	msg := tgbotapi.NewMessage(chatID, escapeMarkdownV2("Enter client IP address\n(e.g.: 192.168.1.100)"))
+	msg.ParseMode = "MarkdownV2"
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send client IP prompt: %v", err)
 	}
@@ -330,7 +335,8 @@ func (b *Bot) sendRouteSelection(chatID int64, ip string) {
 		tgbotapi.NewInlineKeyboardButtonData("Cancel", "cancel"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Where to route traffic for %s?", ip))
+	msg := tgbotapi.NewMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Where to route traffic for %s?", ip)))
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send route selection: %v", err)
@@ -351,11 +357,11 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 	clients := state.GetClients()
 
 	var sb strings.Builder
-	sb.WriteString("Step 4/4: Confirmation\n\n")
+	sb.WriteString(escapeMarkdownV2("Step 4/4: Confirmation") + "\n\n")
 
 	if serverIndex < len(servers) {
 		s := servers[serverIndex]
-		sb.WriteString(fmt.Sprintf("Xray server: %s (%s)\n", s.Name, s.IP))
+		sb.WriteString(escapeMarkdownV2(fmt.Sprintf("Xray server: %s (%s)", s.Name, s.IP)) + "\n")
 	}
 
 	var excl []string
@@ -365,15 +371,15 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 		}
 	}
 	if len(excl) > 0 {
-		sb.WriteString(fmt.Sprintf("Exclusions: %s\n", strings.Join(excl, ", ")))
+		sb.WriteString(escapeMarkdownV2(fmt.Sprintf("Exclusions: %s", strings.Join(excl, ", "))) + "\n")
 	}
 
-	sb.WriteString("\nClients:\n")
+	sb.WriteString("\n" + escapeMarkdownV2("Clients:") + "\n")
 	if len(clients) == 0 {
-		sb.WriteString("(none)\n")
+		sb.WriteString(escapeMarkdownV2("(none)") + "\n")
 	} else {
 		for _, c := range clients {
-			sb.WriteString(fmt.Sprintf("* %s -> %s\n", c.IP, c.Route))
+			sb.WriteString(escapeMarkdownV2(fmt.Sprintf("* %s -> %s", c.IP, c.Route)) + "\n")
 		}
 	}
 
@@ -385,6 +391,7 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 	}
 
 	msg := tgbotapi.NewMessage(chatID, sb.String())
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send confirmation: %v", err)
@@ -393,12 +400,12 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 
 // Step 5: Apply configuration
 func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
-	b.sendMessage(chatID, "Applying configuration...")
+	b.sendMessage(chatID, escapeMarkdownV2("Applying configuration..."))
 
 	// Load current config
 	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(scriptsDir + "/vpn-director.json")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("Config load error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Config load error: %v", err)))
 		return
 	}
 
@@ -408,7 +415,7 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 	}
 	servers, err := vpnconfig.LoadServers(dataDir + "/servers.json")
 	if err != nil && !os.IsNotExist(err) {
-		b.sendMessage(chatID, fmt.Sprintf("Server load error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Server load error: %v", err)))
 		return
 	}
 
@@ -469,46 +476,46 @@ func (b *Bot) applyConfig(chatID int64, state *wizard.State) {
 	vpnCfg.TunnelDirector.Rules = tunDirRules
 
 	if err := vpnconfig.SaveVPNDirectorConfig(scriptsDir+"/vpn-director.json", vpnCfg); err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("Save error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Save error: %v", err)))
 		return
 	}
-	b.sendMessage(chatID, "vpn-director.json updated")
+	b.sendMessage(chatID, escapeMarkdownV2("vpn-director.json updated"))
 
 	// Generate Xray config
 	if serverIndex < len(servers) {
 		s := servers[serverIndex]
 		if err := b.generateXrayConfig(s); err != nil {
-			b.sendMessage(chatID, fmt.Sprintf("Xray config generation error: %v", err))
+			b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("Xray config generation error: %v", err)))
 		} else {
-			b.sendMessage(chatID, "xray/config.json updated")
+			b.sendMessage(chatID, escapeMarkdownV2("xray/config.json updated"))
 		}
 	}
 
 	// Apply configuration via vpn-director
 	result, err := shell.Exec(scriptsDir+"/vpn-director.sh", "apply")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director.sh apply exec error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director.sh apply exec error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director apply error (exit %d): %s", result.ExitCode, result.Output))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director apply error (exit %d): %s", result.ExitCode, result.Output)))
 		return
 	}
-	b.sendMessage(chatID, "VPN Director applied")
+	b.sendMessage(chatID, escapeMarkdownV2("VPN Director applied"))
 
 	// Restart Xray to apply new config
 	result, err = shell.Exec(scriptsDir+"/vpn-director.sh", "restart", "xray")
 	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director.sh restart exec error: %v", err))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director.sh restart exec error: %v", err)))
 		return
 	}
 	if result.ExitCode != 0 {
-		b.sendMessage(chatID, fmt.Sprintf("vpn-director restart error (exit %d): %s", result.ExitCode, result.Output))
+		b.sendMessage(chatID, escapeMarkdownV2(fmt.Sprintf("vpn-director restart error (exit %d): %s", result.ExitCode, result.Output)))
 		return
 	}
-	b.sendMessage(chatID, "Xray restarted")
+	b.sendMessage(chatID, escapeMarkdownV2("Xray restarted"))
 
-	b.sendMessage(chatID, "Done!")
+	b.sendMessage(chatID, escapeMarkdownV2("Done!"))
 	b.wizard.Clear(chatID)
 }
 
