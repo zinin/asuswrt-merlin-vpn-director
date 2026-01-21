@@ -231,6 +231,18 @@ func TestBuildCodeBlockText(t *testing.T) {
 	}
 }
 
+func TestBuildServersPageEmpty(t *testing.T) {
+	// Test guard clause for empty servers list - should not panic
+	text, keyboard := buildServersPage([]vpnconfig.Server{}, 0)
+
+	if text != "No servers available\\." {
+		t.Errorf("expected 'No servers available\\.', got %q", text)
+	}
+	if len(keyboard.InlineKeyboard) != 0 {
+		t.Errorf("expected empty keyboard, got %d rows", len(keyboard.InlineKeyboard))
+	}
+}
+
 func TestBuildServersPageText(t *testing.T) {
 	servers := make([]vpnconfig.Server, 47)
 	for i := range servers {

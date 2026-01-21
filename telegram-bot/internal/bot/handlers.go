@@ -122,6 +122,11 @@ func buildCodeBlockText(header, content string, maxLen int) string {
 
 // buildServersPage builds paginated server list with navigation keyboard
 func buildServersPage(servers []vpnconfig.Server, page int) (string, tgbotapi.InlineKeyboardMarkup) {
+	// Guard clause for empty servers list
+	if len(servers) == 0 {
+		return "No servers available\\.", tgbotapi.NewInlineKeyboardMarkup()
+	}
+
 	totalPages := (len(servers) + serversPerPage - 1) / serversPerPage
 	if page < 0 {
 		page = 0
@@ -454,11 +459,15 @@ func (b *Bot) handleImport(msg *tgbotapi.Message) {
 
 	servers, parseErrors := vless.DecodeSubscription(string(body))
 	if len(servers) == 0 {
-		errMsg := "No VLESS servers found"
+		var sb strings.Builder
+		sb.WriteString("No VLESS servers found")
 		if len(parseErrors) > 0 {
-			errMsg += fmt.Sprintf("\nErrors: %v", parseErrors)
+			sb.WriteString("\nErrors:\n")
+			for _, e := range parseErrors {
+				sb.WriteString(fmt.Sprintf("• %s\n", e))
+			}
 		}
-		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(errMsg))
+		b.sendMessage(msg.Chat.ID, escapeMarkdownV2(sb.String()))
 		return
 	}
 
