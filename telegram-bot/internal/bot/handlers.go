@@ -101,6 +101,29 @@ func groupServersByCountry(servers []vpnconfig.Server) string {
 	return strings.Join(parts, ", ")
 }
 
+// buildCodeBlockText builds a code block message with optional truncation
+func buildCodeBlockText(header, content string, maxLen int) string {
+	// Calculate max content length: total - header - "\n```\n" (5) - "```" (3) - buffer
+	maxContentLen := maxLen - len(header) - 10
+
+	if len(content) > maxContentLen {
+		// Truncate from beginning to show latest content
+		content = content[len(content)-maxContentLen:]
+		// Find first newline to avoid cutting mid-line
+		if idx := strings.Index(content, "\n"); idx != -1 {
+			content = content[idx+1:]
+		}
+		content = "...\n" + content
+	}
+
+	return fmt.Sprintf("%s\n```\n%s```", header, content)
+}
+
+func (b *Bot) sendCodeBlock(chatID int64, header, content string) {
+	text := buildCodeBlockText(header, content, maxMessageLength)
+	b.sendMessage(chatID, text)
+}
+
 func (b *Bot) handleStart(msg *tgbotapi.Message) {
 	text := `*VPN Director Bot*
 

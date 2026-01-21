@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/vpnconfig"
@@ -175,6 +176,55 @@ func TestGroupServersByCountry(t *testing.T) {
 			got := groupServersByCountry(tt.servers)
 			if got != tt.expected {
 				t.Errorf("groupServersByCountry() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildCodeBlockText(t *testing.T) {
+	tests := []struct {
+		name            string
+		header          string
+		content         string
+		maxLen          int
+		expectTruncated bool
+		expectPrefix    string
+	}{
+		{
+			name:            "short content fits",
+			header:          "Header:",
+			content:         "line1\nline2\nline3",
+			maxLen:          4000,
+			expectTruncated: false,
+			expectPrefix:    "Header:\n```\nline1\nline2\nline3```",
+		},
+		{
+			name:            "long content truncated",
+			header:          "H:",
+			content:         "aaa\nbbb\nccc\nddd\neee",
+			maxLen:          25,
+			expectTruncated: true,
+			expectPrefix:    "H:\n```\n...\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildCodeBlockText(tt.header, tt.content, tt.maxLen)
+			if tt.expectTruncated {
+				if !strings.HasPrefix(got, tt.expectPrefix) {
+					t.Errorf("buildCodeBlockText() should start with %q, got %q", tt.expectPrefix, got)
+				}
+				if !strings.Contains(got, "...") {
+					t.Errorf("buildCodeBlockText() should contain truncation indicator ...")
+				}
+			} else {
+				if got != tt.expectPrefix {
+					t.Errorf("buildCodeBlockText() = %q, want %q", got, tt.expectPrefix)
+				}
+			}
+			if !strings.HasSuffix(got, "```") {
+				t.Errorf("buildCodeBlockText() should end with ```, got %q", got)
 			}
 		})
 	}
