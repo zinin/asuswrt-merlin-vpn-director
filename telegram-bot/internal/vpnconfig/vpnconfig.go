@@ -20,8 +20,13 @@ type VPNDirectorConfig struct {
 	Advanced       map[string]interface{} `json:"advanced,omitempty"`
 }
 
+type TunnelConfig struct {
+	Clients []string `json:"clients"`
+	Exclude []string `json:"exclude"`
+}
+
 type TunnelDirectorConfig struct {
-	Rules []string `json:"rules"`
+	Tunnels map[string]TunnelConfig `json:"tunnels"`
 }
 
 type XrayConfig struct {

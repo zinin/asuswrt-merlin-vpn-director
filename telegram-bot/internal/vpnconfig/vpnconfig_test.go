@@ -121,7 +121,12 @@ func TestLoadVPNDirectorConfig_ValidConfig(t *testing.T) {
 	jsonContent := `{
 		"data_dir": "/jffs/scripts/vpn-director/data",
 		"tunnel_director": {
-			"rules": ["wgc1:192.168.50.0/24::us,ca"]
+			"tunnels": {
+				"wgc1": {
+					"clients": ["192.168.50.0/24"],
+					"exclude": ["us", "ca"]
+				}
+			}
 		},
 		"xray": {
 			"clients": ["192.168.50.0/24"],
@@ -147,12 +152,19 @@ func TestLoadVPNDirectorConfig_ValidConfig(t *testing.T) {
 		t.Errorf("expected DataDir '/jffs/scripts/vpn-director/data', got '%s'", cfg.DataDir)
 	}
 
-	if len(cfg.TunnelDirector.Rules) != 1 {
-		t.Fatalf("expected 1 rule, got %d", len(cfg.TunnelDirector.Rules))
+	if len(cfg.TunnelDirector.Tunnels) != 1 {
+		t.Fatalf("expected 1 tunnel, got %d", len(cfg.TunnelDirector.Tunnels))
 	}
 
-	if cfg.TunnelDirector.Rules[0] != "wgc1:192.168.50.0/24::us,ca" {
-		t.Errorf("unexpected rule: %s", cfg.TunnelDirector.Rules[0])
+	wgc1, ok := cfg.TunnelDirector.Tunnels["wgc1"]
+	if !ok {
+		t.Fatal("expected tunnel 'wgc1' to exist")
+	}
+	if len(wgc1.Clients) != 1 || wgc1.Clients[0] != "192.168.50.0/24" {
+		t.Errorf("unexpected wgc1 clients: %v", wgc1.Clients)
+	}
+	if len(wgc1.Exclude) != 2 {
+		t.Errorf("expected 2 exclude sets, got %d", len(wgc1.Exclude))
 	}
 
 	if len(cfg.Xray.Clients) != 1 {
@@ -179,7 +191,16 @@ func TestSaveVPNDirectorConfig_RoundTrip(t *testing.T) {
 	original := &VPNDirectorConfig{
 		DataDir: "/data",
 		TunnelDirector: TunnelDirectorConfig{
-			Rules: []string{"rule1", "rule2"},
+			Tunnels: map[string]TunnelConfig{
+				"wgc1": {
+					Clients: []string{"192.168.1.0/24"},
+					Exclude: []string{"ru"},
+				},
+				"ovpnc1": {
+					Clients: []string{"10.0.0.5/32"},
+					Exclude: []string{"ru", "cn"},
+				},
+			},
 		},
 		Xray: XrayConfig{
 			Clients:     []string{"192.168.1.0/24"},
@@ -205,8 +226,8 @@ func TestSaveVPNDirectorConfig_RoundTrip(t *testing.T) {
 		t.Errorf("DataDir mismatch: %s != %s", original.DataDir, loaded.DataDir)
 	}
 
-	if !reflect.DeepEqual(loaded.TunnelDirector.Rules, original.TunnelDirector.Rules) {
-		t.Errorf("TunnelDirector.Rules mismatch")
+	if !reflect.DeepEqual(loaded.TunnelDirector.Tunnels, original.TunnelDirector.Tunnels) {
+		t.Errorf("TunnelDirector.Tunnels mismatch")
 	}
 
 	if !reflect.DeepEqual(loaded.Xray.Clients, original.Xray.Clients) {
@@ -229,7 +250,12 @@ func TestSaveVPNDirectorConfig_FormattedJSON(t *testing.T) {
 	cfg := &VPNDirectorConfig{
 		DataDir: "/data",
 		TunnelDirector: TunnelDirectorConfig{
-			Rules: []string{"rule1"},
+			Tunnels: map[string]TunnelConfig{
+				"wgc1": {
+					Clients: []string{"192.168.1.100/32"},
+					Exclude: []string{"ru"},
+				},
+			},
 		},
 		Xray: XrayConfig{
 			Clients:     []string{},
