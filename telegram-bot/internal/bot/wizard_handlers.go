@@ -357,11 +357,11 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 	clients := state.GetClients()
 
 	var sb strings.Builder
-	sb.WriteString("Step 4/4: Confirmation\n\n")
+	sb.WriteString(escapeMarkdownV2("Step 4/4: Confirmation") + "\n\n")
 
 	if serverIndex < len(servers) {
 		s := servers[serverIndex]
-		sb.WriteString(fmt.Sprintf("Xray server: %s (%s)\n", s.Name, s.IP))
+		sb.WriteString(escapeMarkdownV2(fmt.Sprintf("Xray server: %s (%s)", s.Name, s.IP)) + "\n")
 	}
 
 	var excl []string
@@ -371,15 +371,15 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 		}
 	}
 	if len(excl) > 0 {
-		sb.WriteString(fmt.Sprintf("Exclusions: %s\n", strings.Join(excl, ", ")))
+		sb.WriteString(escapeMarkdownV2(fmt.Sprintf("Exclusions: %s", strings.Join(excl, ", "))) + "\n")
 	}
 
-	sb.WriteString("\nClients:\n")
+	sb.WriteString("\n" + escapeMarkdownV2("Clients:") + "\n")
 	if len(clients) == 0 {
-		sb.WriteString("(none)\n")
+		sb.WriteString(escapeMarkdownV2("(none)") + "\n")
 	} else {
 		for _, c := range clients {
-			sb.WriteString(fmt.Sprintf("* %s -> %s\n", c.IP, c.Route))
+			sb.WriteString(escapeMarkdownV2(fmt.Sprintf("* %s -> %s", c.IP, c.Route)) + "\n")
 		}
 	}
 
@@ -391,6 +391,7 @@ func (b *Bot) sendConfirmation(chatID int64, state *wizard.State) {
 	}
 
 	msg := tgbotapi.NewMessage(chatID, sb.String())
+	msg.ParseMode = "MarkdownV2"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[ERROR] Failed to send confirmation: %v", err)
