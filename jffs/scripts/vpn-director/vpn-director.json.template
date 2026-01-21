@@ -1,7 +1,7 @@
 {
   "data_dir": "/jffs/scripts/vpn-director/data",
   "tunnel_director": {
-    "rules": []
+    "tunnels": {}
   },
   "xray": {
     "clients": [],
@@ -20,7 +20,7 @@
       "servers_ipset": "XRAY_SERVERS"
     },
     "tunnel_director": {
-      "chain_prefix": "TUN_DIR_",
+      "chain": "TUN_DIR",
       "pref_base": 16384,
       "mark_mask": "0x00ff0000",
       "mark_shift": 16
