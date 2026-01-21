@@ -26,6 +26,9 @@ type TunnelConfig struct {
 }
 
 type TunnelDirectorConfig struct {
+	// Note: Go's json.Marshal sorts map keys alphabetically, so tunnel order
+	// in saved JSON is deterministic. This matches jq 'keys[]' behavior.
+	// If insertion-order priority is needed, this should be changed to a slice.
 	Tunnels map[string]TunnelConfig `json:"tunnels"`
 }
 

@@ -302,7 +302,8 @@ tunnel_apply() {
     # Process each tunnel
     local tunnel_idx=0
     local tunnels
-    tunnels=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r 'keys[]')
+    # Use keys_unsorted to preserve JSON file order (not alphabetical sorting)
+    tunnels=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r 'keys_unsorted[]')
 
     while IFS= read -r tunnel; do
         [[ -n $tunnel ]] || continue
@@ -408,7 +409,10 @@ tunnel_apply() {
         # Add ip rule for this tunnel
         local pref=$((TUN_DIR_PREF_BASE + tunnel_idx))
         ip rule del pref "$pref" 2>/dev/null || true
-        ip rule add pref "$pref" fwmark "$mark_hex/$_tunnel_mark_mask_hex" lookup "$tunnel" 2>/dev/null || true
+        if ! ip rule add pref "$pref" fwmark "$mark_hex/$_tunnel_mark_mask_hex" lookup "$tunnel" 2>/dev/null; then
+            log -l ERROR "Failed to add ip rule: pref=$pref fwmark=$mark_hex lookup=$tunnel"
+            warnings=1
+        fi
 
         tunnel_idx=$((tunnel_idx + 1))
     done <<< "$tunnels"
