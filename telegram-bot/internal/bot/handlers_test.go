@@ -49,3 +49,61 @@ func TestEscapeMarkdownV2(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractCountry(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "country and city",
+			input:    "Чехия, Прага",
+			expected: "Чехия",
+		},
+		{
+			name:     "country and extra",
+			input:    "Германия, Extra",
+			expected: "Германия",
+		},
+		{
+			name:     "english format",
+			input:    "Germany, Berlin",
+			expected: "Germany",
+		},
+		{
+			name:     "with leading/trailing spaces",
+			input:    "  Россия , Москва  ",
+			expected: "Россия",
+		},
+		{
+			name:     "no comma",
+			input:    "Unknown Server",
+			expected: "Unknown Server",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "Other",
+		},
+		{
+			name:     "only spaces",
+			input:    "   ",
+			expected: "Other",
+		},
+		{
+			name:     "comma at start",
+			input:    ", City",
+			expected: "Other",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractCountry(tt.input)
+			if got != tt.expected {
+				t.Errorf("extractCountry(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

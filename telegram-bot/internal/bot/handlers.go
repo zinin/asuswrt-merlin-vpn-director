@@ -51,6 +51,16 @@ func escapeMarkdownV2(text string) string {
 	return replacer.Replace(text)
 }
 
+// extractCountry extracts country name from server name format "Country, City"
+func extractCountry(name string) string {
+	parts := strings.SplitN(name, ",", 2)
+	country := strings.TrimSpace(parts[0])
+	if country == "" {
+		return "Other"
+	}
+	return country
+}
+
 func (b *Bot) handleStart(msg *tgbotapi.Message) {
 	text := `*VPN Director Bot*
 
