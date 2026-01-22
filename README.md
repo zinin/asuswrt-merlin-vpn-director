@@ -25,17 +25,17 @@ After installation:
 
 1. Import VLESS servers (optional):
    ```bash
-   /jffs/scripts/vpn-director/import_server_list.sh
+   /opt/vpn-director/import_server_list.sh
    ```
 
 2. Run the configuration wizard:
    ```bash
-   /jffs/scripts/vpn-director/configure.sh
+   /opt/vpn-director/configure.sh
    ```
 
 3. Setup Telegram bot (optional):
    ```bash
-   /jffs/scripts/vpn-director/setup_telegram_bot.sh
+   /opt/vpn-director/setup_telegram_bot.sh
    ```
 
 ## Requirements
@@ -59,30 +59,25 @@ After installation:
 
 After installation, configs are located at:
 
-- `/jffs/scripts/vpn-director/vpn-director.json` - Unified config (Xray + Tunnel Director)
+- `/opt/vpn-director/vpn-director.json` - Unified config (Xray + Tunnel Director)
 - `/opt/etc/xray/config.json` - Xray server configuration
 
 ## Commands
 
 ```bash
 # VPN Director CLI
-/jffs/scripts/vpn-director/vpn-director.sh status              # Show all status
-/jffs/scripts/vpn-director/vpn-director.sh apply               # Apply configuration
-/jffs/scripts/vpn-director/vpn-director.sh stop                # Stop all components
-/jffs/scripts/vpn-director/vpn-director.sh restart             # Restart all
-/jffs/scripts/vpn-director/vpn-director.sh update              # Update ipsets + reapply
+/opt/vpn-director/vpn-director.sh status              # Show all status
+/opt/vpn-director/vpn-director.sh apply               # Apply configuration
+/opt/vpn-director/vpn-director.sh stop                # Stop all components
+/opt/vpn-director/vpn-director.sh restart             # Restart all
+/opt/vpn-director/vpn-director.sh update              # Update ipsets + reapply
 
 # Component-specific
-/jffs/scripts/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
-/jffs/scripts/vpn-director/vpn-director.sh restart xray        # Restart Xray TPROXY only
+/opt/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
+/opt/vpn-director/vpn-director.sh restart xray        # Restart Xray TPROXY only
 
 # Import servers
-/jffs/scripts/vpn-director/import_server_list.sh
-
-# Shell aliases (after install)
-vpd status
-vpd apply
-ipt           # Legacy alias (runs: vpd update)
+/opt/vpn-director/import_server_list.sh
 ```
 
 ## Telegram Bot
@@ -94,7 +89,7 @@ Remote management via Telegram with username-based authorization.
 1. Create a bot via [@BotFather](https://t.me/BotFather) and get the token
 2. Run setup script:
    ```bash
-   /jffs/scripts/vpn-director/setup_telegram_bot.sh
+   /opt/vpn-director/setup_telegram_bot.sh
    ```
 3. Enter bot token and allowed usernames (without @)
 
