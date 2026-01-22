@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-JFFS_DIR="/jffs/scripts/vpn-director"
-CONFIG_FILE="$JFFS_DIR/telegram-bot.json"
+VPD_DIR="/opt/vpn-director"
+CONFIG_FILE="$VPD_DIR/telegram-bot.json"
 
 echo "Telegram Bot Setup"
 echo "=================="

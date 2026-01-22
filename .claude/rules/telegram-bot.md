@@ -72,7 +72,7 @@ On apply:
 
 ## Config File
 
-`/jffs/scripts/vpn-director/telegram-bot.json`:
+`/opt/vpn-director/telegram-bot.json`:
 ```json
 {
   "bot_token": "123456:ABC...",
@@ -119,7 +119,7 @@ go test -run TestHandleStatus ./internal/bot/
 ## Deployment
 
 1. Build for target architecture
-2. Copy binary to `/jffs/scripts/vpn-director/telegram-bot`
+2. Copy binary to `/opt/vpn-director/telegram-bot`
 3. Run `./setup_telegram_bot.sh` to create config
 4. Bot auto-starts if config exists and token is set
 

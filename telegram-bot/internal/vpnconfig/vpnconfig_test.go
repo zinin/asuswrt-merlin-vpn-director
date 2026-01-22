@@ -119,7 +119,7 @@ func TestLoadVPNDirectorConfig_ValidConfig(t *testing.T) {
 	path := filepath.Join(tmpDir, "vpn-director.json")
 
 	jsonContent := `{
-		"data_dir": "/jffs/scripts/vpn-director/data",
+		"data_dir": "/opt/vpn-director/data",
 		"tunnel_director": {
 			"tunnels": {
 				"wgc1": {
@@ -148,8 +148,8 @@ func TestLoadVPNDirectorConfig_ValidConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.DataDir != "/jffs/scripts/vpn-director/data" {
-		t.Errorf("expected DataDir '/jffs/scripts/vpn-director/data', got '%s'", cfg.DataDir)
+	if cfg.DataDir != "/opt/vpn-director/data" {
+		t.Errorf("expected DataDir '/opt/vpn-director/data', got '%s'", cfg.DataDir)
 	}
 
 	if len(cfg.TunnelDirector.Tunnels) != 1 {

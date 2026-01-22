@@ -8,8 +8,8 @@ on:
   push:
     branches: [master]
     paths:
-      - 'jffs/scripts/vpn-director/lib/ipset.sh'
-      - 'test/integration/ipset_sources.bats'
+      - 'router/opt/vpn-director/lib/ipset.sh'
+      - 'router/test/integration/ipset_sources.bats'
 
 jobs:
   test-sources:
@@ -26,7 +26,7 @@ jobs:
           sudo git clone https://github.com/bats-core/bats-assert.git /usr/lib/bats/bats-assert
 
       - name: Test IPSet sources availability
-        run: bats test/integration/ipset_sources.bats
+        run: bats router/test/integration/ipset_sources.bats
 
       - name: Notify on failure
         if: failure()

@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Paths
-JFFS_DIR="/jffs/scripts/vpn-director"
+VPD_DIR="/opt/vpn-director"
 XRAY_CONFIG_DIR="/opt/etc/xray"
 
 # Temporary storage for parsed data
@@ -75,13 +75,13 @@ confirm() {
 ###############################################################################
 
 get_data_dir() {
-    local config_file="$JFFS_DIR/vpn-director.json"
+    local config_file="$VPD_DIR/vpn-director.json"
 
     if [[ ! -f $config_file ]]; then
-        config_file="$JFFS_DIR/vpn-director.json.template"
+        config_file="$VPD_DIR/vpn-director.json.template"
     fi
 
-    jq -r '.data_dir // "/jffs/scripts/vpn-director/data"' "$config_file"
+    jq -r '.data_dir // "/opt/vpn-director/data"' "$config_file"
 }
 
 check_servers_file() {
@@ -417,8 +417,8 @@ step_show_summary() {
 step_generate_configs() {
     print_header "Step 5: Generating Configs"
 
-    if [[ ! -f $JFFS_DIR/vpn-director.json.template ]]; then
-        print_error "Template not found: $JFFS_DIR/vpn-director.json.template"
+    if [[ ! -f $VPD_DIR/vpn-director.json.template ]]; then
+        print_error "Template not found: $VPD_DIR/vpn-director.json.template"
         print_info "Run install.sh first to download required files"
         exit 1
     fi
@@ -464,10 +464,10 @@ step_generate_configs() {
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
          .tunnel_director.tunnels = $tunnels' \
-        "$JFFS_DIR/vpn-director.json.template" \
-        > "$JFFS_DIR/vpn-director.json"
+        "$VPD_DIR/vpn-director.json.template" \
+        > "$VPD_DIR/vpn-director.json"
 
-    print_success "Generated $JFFS_DIR/vpn-director.json"
+    print_success "Generated $VPD_DIR/vpn-director.json"
 }
 
 ###############################################################################
@@ -478,8 +478,8 @@ step_apply_rules() {
     print_header "Step 6: Applying Rules"
 
     print_info "Applying configuration (this may take a while)..."
-    if [[ -x $JFFS_DIR/vpn-director.sh ]]; then
-        "$JFFS_DIR/vpn-director.sh" restart || {
+    if [[ -x $VPD_DIR/vpn-director.sh ]]; then
+        "$VPD_DIR/vpn-director.sh" restart || {
             print_warning "vpn-director.sh restart failed"
             return 1
         }
@@ -507,7 +507,7 @@ main() {
     step_apply_rules                  # Step 6
 
     print_header "Configuration Complete"
-    printf "Check status with: /jffs/scripts/vpn-director/vpn-director.sh status\n"
+    printf "Check status with: /opt/vpn-director/vpn-director.sh status\n"
 }
 
 main "$@"

@@ -7,7 +7,13 @@ PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
 # ENABLED and DESC are kept for consistency with Entware conventions.
 ENABLED=yes
 DESC="VPN Director"
-VPD="/jffs/scripts/vpn-director/vpn-director.sh"
+VPD="/opt/vpn-director/vpn-director.sh"
+
+# Check if vpn-director is installed
+if [ ! -x "$VPD" ]; then
+    logger -t "S99vpn-director" "vpn-director not found at $VPD"
+    exit 0
+fi
 
 start() {
     echo "Starting $DESC..."
@@ -15,7 +21,7 @@ start() {
         # Remove legacy cron job from previous versions
         cru d update_ipsets 2>/dev/null
         cru a vpn_director_update "0 3 * * * $VPD update"
-        /jffs/scripts/vpn-director/lib/send-email.sh "Startup" "VPN Director started" 2>/dev/null || true
+        /opt/vpn-director/lib/send-email.sh "Startup" "VPN Director started" 2>/dev/null || true
     else
         echo "Failed to start $DESC"
         return 1

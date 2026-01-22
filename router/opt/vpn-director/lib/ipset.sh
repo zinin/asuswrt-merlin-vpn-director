@@ -57,14 +57,13 @@ IPS_BUILDER_DIR="/tmp/ipset_builder"
 TUN_DIRECTOR_DIR="/tmp/tunnel_director"
 
 # State files
-TUN_DIR_IPSETS_HASH="$IPS_BUILDER_DIR/tun_dir_ipsets.sha256"
 TUN_DIR_HASH="$TUN_DIRECTOR_DIR/tun_dir_rules.sha256"
 
 # Ensure directories exist
 mkdir -p "$IPS_BUILDER_DIR" "$TUN_DIRECTOR_DIR"
 
 # Export for use by other modules
-export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_IPSETS_HASH TUN_DIR_HASH
+export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_HASH
 
 ###################################################################################################
 # Constants (defined before --source-only for testability)
@@ -584,7 +583,7 @@ ipset_status() {
 # -------------------------------------------------------------------------------------------------
 ipset_ensure() {
     local raw_spec="$1" spec
-    local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+    local dump_dir="${IPS_BDR_DIR:-/opt/vpn-director/data}/ipsets"
 
     # Normalize and validate input
     if ! spec=$(_normalize_spec "$raw_spec"); then
@@ -618,7 +617,7 @@ ipset_ensure() {
 # -------------------------------------------------------------------------------------------------
 ipset_update() {
     local raw_spec="$1" spec
-    local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+    local dump_dir="${IPS_BDR_DIR:-/opt/vpn-director/data}/ipsets"
 
     # Normalize and validate input
     if ! spec=$(_normalize_spec "$raw_spec"); then

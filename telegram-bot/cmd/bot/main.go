@@ -25,7 +25,7 @@ func versionString() string {
 	return fmt.Sprintf("%s (%s, %s)", Version, Commit, BuildDate)
 }
 
-const configPath = "/jffs/scripts/vpn-director/telegram-bot.json"
+const configPath = "/opt/vpn-director/telegram-bot.json"
 
 const (
 	botLogPath = "/tmp/telegram-bot.log"

@@ -1,5 +1,5 @@
 ---
-paths: "jffs/scripts/vpn-director/**"
+paths: "router/opt/vpn-director/**"
 ---
 
 # Xray TPROXY

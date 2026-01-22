@@ -1,0 +1,16 @@
+#!/bin/sh
+
+ENABLED=yes
+PROCS=telegram-bot
+ARGS=""
+PREARGS=""
+DESC="Telegram Bot for VPN Director"
+PATH=/opt/vpn-director:/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Check if telegram-bot binary exists
+if [ ! -x /opt/vpn-director/telegram-bot ]; then
+    logger -t "S98telegram-bot" "telegram-bot not found at /opt/vpn-director/telegram-bot"
+    exit 0
+fi
+
+. /opt/etc/init.d/rc.func

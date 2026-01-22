@@ -19,9 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 
 # Paths
-JFFS_DIR="/jffs/scripts/vpn-director"
-VPD_CONFIG="$JFFS_DIR/vpn-director.json"
-VPD_TEMPLATE="$JFFS_DIR/vpn-director.json.template"
+VPD_DIR="/opt/vpn-director"
+VPD_CONFIG="$VPD_DIR/vpn-director.json"
+VPD_TEMPLATE="$VPD_DIR/vpn-director.json.template"
 
 ###############################################################################
 # Helper functions
@@ -117,7 +117,7 @@ get_data_dir() {
         exit 1
     fi
 
-    jq -r '.data_dir // "/jffs/scripts/vpn-director/data"' "$config_file"
+    jq -r '.data_dir // "/opt/vpn-director/data"' "$config_file"
 }
 
 ###############################################################################
@@ -277,7 +277,7 @@ main() {
     step_parse_and_save_servers
 
     log -l TRACE "Import Complete"
-    printf "Server list saved. Run /jffs/scripts/vpn-director/configure.sh to continue setup.\n"
+    printf "Server list saved. Run /opt/vpn-director/configure.sh to continue setup.\n"
 }
 
 if [[ "${IMPORT_TEST_MODE:-0}" != "1" ]]; then

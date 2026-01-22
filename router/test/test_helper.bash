@@ -19,7 +19,7 @@ _find_test_root() {
 }
 export TEST_ROOT="$(_find_test_root)"
 export PROJECT_ROOT="$TEST_ROOT/.."
-export SCRIPTS_DIR="$PROJECT_ROOT/jffs/scripts/vpn-director"
+export SCRIPTS_DIR="$PROJECT_ROOT/opt/vpn-director"
 export LIB_DIR="$SCRIPTS_DIR/lib"
 
 # Test mode - disables syslog, uses fixtures
