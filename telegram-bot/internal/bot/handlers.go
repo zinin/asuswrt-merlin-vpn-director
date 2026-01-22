@@ -18,7 +18,7 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/vpnconfig"
 )
 
-const scriptsDir = "/jffs/scripts/vpn-director"
+const scriptsDir = "/opt/vpn-director"
 const maxMessageLength = 4000 // Telegram limit is 4096, leave margin
 
 const (
