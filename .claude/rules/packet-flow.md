@@ -130,11 +130,11 @@ Single chain with rules for all clients:
 ```
 TUN_DIR chain:
   # Client 1 (wgc1)
-  -s 192.168.50.0/24 -m set --match-set ru dst → RETURN
+  -s 192.168.50.0/24 -m set --match-set <country> dst → RETURN
   -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 → MARK 0x10000
 
   # Client 2 (ovpnc1)
-  -s 192.168.1.5 -m set --match-set ru dst → RETURN
+  -s 192.168.1.5 -m set --match-set <country> dst → RETURN
   -s 192.168.1.5 -m mark --mark 0x0/0xff0000 → MARK 0x20000
 ```
 
