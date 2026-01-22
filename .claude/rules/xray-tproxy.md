@@ -31,7 +31,7 @@ In `vpn-director.json`:
 |-----------|---------|---------|
 | `xray.clients` | `[]` | LAN IPs/CIDRs to proxy (JSON array) |
 | `xray.servers` | `[]` | Xray server IPs to exclude (avoid loops) |
-| `xray.exclude_sets` | `["ru"]` | Country codes/ipsets to skip |
+| `xray.exclude_sets` | `[]` | Country codes/ipsets to skip |
 | `advanced.xray.tproxy_port` | `12345` | Xray dokodemo-door port |
 | `advanced.xray.route_table` | `100` | ip route table number |
 | `advanced.xray.rule_pref` | `200` | ip rule priority |
@@ -95,7 +95,7 @@ Script exits without changes if:
 
 Prefers `{set}_ext` variant if exists:
 ```bash
-resolve_exclude_set "ru"  # Returns: ru_ext if exists, else ru
+resolve_exclude_set "<country_code>"  # Returns: <country_code>_ext if exists, else <country_code>
 ```
 
 ## Key Functions
