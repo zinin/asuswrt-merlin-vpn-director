@@ -1,3 +1,5 @@
+🇬🇧 English | [🇷🇺 Русский](README.ru.md)
+
 # VPN Director for Asuswrt-Merlin
 
 Selective traffic routing through Xray TPROXY and OpenVPN tunnels.
