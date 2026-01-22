@@ -1,9 +1,10 @@
 #!/bin/sh
 
-###################################################################################################
-# firewall-start - Asuswrt-Merlin hook invoked when the firewall stack reloads
-###################################################################################################
+PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+VPD_SCRIPT="/opt/vpn-director/vpn-director.sh"
 
-# Skip if Entware not ready (during early boot)
-[ -x /opt/bin/bash ] || exit 0
-/jffs/scripts/vpn-director/vpn-director.sh apply
+if [ -x "$VPD_SCRIPT" ]; then
+    "$VPD_SCRIPT" apply
+else
+    logger -t "firewall-start" "vpn-director not found at $VPD_SCRIPT"
+fi
