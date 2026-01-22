@@ -1,5 +1,5 @@
 {
-  "data_dir": "/jffs/scripts/vpn-director/data",
+  "data_dir": "/opt/vpn-director/data",
   "tunnel_director": {
     "tunnels": {}
   },
