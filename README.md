@@ -74,7 +74,13 @@ After installation, configs are located at:
 
 # Component-specific
 /opt/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
+/opt/vpn-director/vpn-director.sh status ipset        # IPSet status only
 /opt/vpn-director/vpn-director.sh restart xray        # Restart Xray TPROXY only
+
+# Options (can be used with any command)
+/opt/vpn-director/vpn-director.sh -v status           # Verbose output
+/opt/vpn-director/vpn-director.sh -f apply            # Force reapply
+/opt/vpn-director/vpn-director.sh --dry-run apply     # Show what would be done
 
 # Import servers
 /opt/vpn-director/import_server_list.sh
@@ -141,7 +147,7 @@ This project uses Entware init.d for automatic startup:
 |--------|-------------|---------|
 | `/opt/etc/init.d/S99vpn-director` | After Entware initialized | Runs `vpn-director.sh apply` to initialize all components |
 | `/jffs/scripts/firewall-start` | After firewall rules applied | Reapplies configuration after firewall reload |
-| `/jffs/scripts/wan-event` | On WAN events | Handles WAN connection changes |
+| `/jffs/scripts/wan-event` | On WAN connected | Runs `vpn-director.sh apply` on WAN connection |
 
 **Note:** The init.d script ensures Entware bash is available before running vpn-director scripts.
 
@@ -198,4 +204,7 @@ Xray and Telegram bot may occasionally crash. Use monit for automatic restart.
 
 ## License
 
-MIT
+Copyright (C) 2026 Alexander Zinin <mail@zinin.ru>
+
+Licensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later). See `LICENSE`.
