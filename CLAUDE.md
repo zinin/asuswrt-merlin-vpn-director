@@ -9,47 +9,40 @@ Traffic routing system for Asus routers: Xray TPROXY, Tunnel Director, IPSet Bui
 curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh | bash
 
 # VPN Director CLI
-/jffs/scripts/vpn-director/vpn-director.sh status              # Show all status
-/jffs/scripts/vpn-director/vpn-director.sh apply               # Apply configuration
-/jffs/scripts/vpn-director/vpn-director.sh stop                # Stop all components
-/jffs/scripts/vpn-director/vpn-director.sh restart             # Restart all
-/jffs/scripts/vpn-director/vpn-director.sh update              # Update ipsets + reapply
+/opt/vpn-director/vpn-director.sh status              # Show all status
+/opt/vpn-director/vpn-director.sh apply               # Apply configuration
+/opt/vpn-director/vpn-director.sh stop                # Stop all components
+/opt/vpn-director/vpn-director.sh restart             # Restart all
+/opt/vpn-director/vpn-director.sh update              # Update ipsets + reapply
 
 # Component-specific commands
-/jffs/scripts/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
-/jffs/scripts/vpn-director/vpn-director.sh restart xray        # Restart Xray TPROXY only
+/opt/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
+/opt/vpn-director/vpn-director.sh restart xray        # Restart Xray TPROXY only
 
 # Import servers
-/jffs/scripts/vpn-director/import_server_list.sh
-
-# Shell aliases
-vpd status    # Short form via alias
-vpd apply
-vpd update
-ipt           # Legacy alias (runs: vpd update)
+/opt/vpn-director/import_server_list.sh
 ```
 
 ## Architecture
 
 | Path | Purpose |
 |------|---------|
-| `jffs/scripts/vpn-director/vpn-director.sh` | Unified CLI entry point |
-| `jffs/scripts/vpn-director/lib/common.sh` | Core utilities: log, tmp_file, download_file, resolve_ip |
-| `jffs/scripts/vpn-director/lib/firewall.sh` | Firewall helpers: chain, rule, block/allow host |
-| `jffs/scripts/vpn-director/lib/config.sh` | JSON config loader (vpn-director.json → shell vars) |
-| `jffs/scripts/vpn-director/lib/ipset.sh` | IPSet module: ensure, update, status |
-| `jffs/scripts/vpn-director/lib/tunnel.sh` | Tunnel Director module: apply, stop, status |
-| `jffs/scripts/vpn-director/lib/tproxy.sh` | Xray TPROXY module: apply, stop, status |
-| `opt/etc/init.d/S99vpn-director` | Entware init.d script for startup |
-| `jffs/scripts/firewall-start` | Asuswrt-Merlin hook for firewall reload |
-| `jffs/scripts/wan-event` | Asuswrt-Merlin hook for WAN events |
-| `test/` | Bats tests (unit/, integration/) |
-| `jffs/scripts/vpn-director/vpn-director.json.template` | Unified config template |
-| `jffs/configs/profile.add` | Shell alias for `vpd` command |
-| `config/xray.json.template` | Xray server config template |
+| `router/opt/vpn-director/vpn-director.sh` | Unified CLI entry point |
+| `router/opt/vpn-director/lib/common.sh` | Core utilities: log, tmp_file, download_file, resolve_ip |
+| `router/opt/vpn-director/lib/firewall.sh` | Firewall helpers: chain, rule, block/allow host |
+| `router/opt/vpn-director/lib/config.sh` | JSON config loader (vpn-director.json → shell vars) |
+| `router/opt/vpn-director/lib/ipset.sh` | IPSet module: ensure, update, status |
+| `router/opt/vpn-director/lib/tunnel.sh` | Tunnel Director module: apply, stop, status |
+| `router/opt/vpn-director/lib/tproxy.sh` | Xray TPROXY module: apply, stop, status |
+| `router/opt/etc/init.d/S99vpn-director` | Entware init.d script for startup |
+| `router/jffs/scripts/firewall-start` | Asuswrt-Merlin hook for firewall reload |
+| `router/jffs/scripts/wan-event` | Asuswrt-Merlin hook for WAN events |
+| `router/test/` | Bats tests (unit/, integration/) |
+| `router/opt/vpn-director/vpn-director.json.template` | Unified config template |
+| `router/opt/etc/xray/config.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
 | `telegram-bot/` | Go-based Telegram bot for remote management |
-| `jffs/scripts/vpn-director/setup_telegram_bot.sh` | Bot configuration script |
+| `router/opt/vpn-director/setup_telegram_bot.sh` | Bot configuration script |
 
 ## Key Concepts
 
@@ -78,11 +71,11 @@ ipt           # Legacy alias (runs: vpd update)
 
 | Path | Purpose |
 |------|---------|
-| `/jffs/scripts/vpn-director/vpn-director.json` | Unified config (Xray + Tunnel Director) |
+| `/opt/vpn-director/vpn-director.json` | Unified config (Xray + Tunnel Director) |
 | `/opt/etc/xray/config.json` | Xray server configuration |
-| `/jffs/scripts/vpn-director/telegram-bot.json` | Telegram bot config (token, allowed users) |
+| `/opt/vpn-director/telegram-bot.json` | Telegram bot config (token, allowed users) |
 
-**Data storage**: `data_dir` in vpn-director.json (default: `/jffs/scripts/vpn-director/data`) — servers.json, ipset dumps
+**Data storage**: `data_dir` in vpn-director.json (default: `/opt/vpn-director/data`) — servers.json, ipset dumps
 
 ## Shell Conventions
 
