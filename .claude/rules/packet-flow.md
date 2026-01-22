@@ -222,12 +222,12 @@ Packet from 192.168.1.5 to 203.0.113.1 (excluded country):
 Config:
 ```json
 {
-  "xray": { "clients": ["192.168.50.0/24"], "exclude_sets": ["ru"] },
+  "xray": { "clients": ["192.168.50.0/24"], "exclude_sets": ["<country_code>"] },
   "tunnel_director": {
     "tunnels": {
       "wgc1": {
         "clients": ["192.168.50.10"],
-        "exclude": ["ru"]
+        "exclude": ["<country_code>"]
       }
     }
   }
@@ -236,7 +236,7 @@ Config:
 
 Packet from 192.168.50.10 to 8.8.8.8 (US):
 1. XRAY_TPROXY: src in XRAY_CLIENTS (192.168.50.0/24)? Yes
-2. dst in "ru"? No
+2. dst in excluded country? No
 3. **TPROXY to Xray** — TUN_DIR chain never evaluated
 
 **Xray always wins** for overlapping clients.
