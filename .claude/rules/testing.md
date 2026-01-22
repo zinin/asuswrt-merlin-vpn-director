@@ -1,5 +1,5 @@
 ---
-paths: "test/**/*"
+paths: "router/test/**/*"
 ---
 
 # Testing
@@ -11,16 +11,16 @@ Uses [Bats](https://bats-core.readthedocs.io/) (Bash Automated Testing System) w
 ## Running Tests
 
 ```bash
-npx bats test/              # Run all tests (recursive)
-npx bats test/unit/         # Run unit tests only
-npx bats test/integration/  # Run integration tests only
-npx bats test/common.bats   # Run specific test file
+bats router/test/              # Run all tests (recursive)
+bats router/test/unit/         # Run unit tests only
+bats router/test/integration/  # Run integration tests only
+bats router/test/common.bats   # Run specific test file
 ```
 
 ## Test Structure
 
 ```
-test/
+router/test/
 ├── test_helper.bash         # Shared setup, helpers, paths
 ├── fixtures/                # Test data files
 │   ├── hosts                # Mock /etc/hosts
@@ -102,7 +102,7 @@ test/
 
 ## Mocks
 
-Mocks are shell scripts in `test/mocks/` that simulate router commands:
+Mocks are shell scripts in `router/test/mocks/` that simulate router commands:
 
 - **nvram**: Returns predefined values for router settings
 - **iptables/ip6tables**: Tracks rule operations
@@ -116,10 +116,10 @@ Mocks are added to PATH before real commands via `setup()`.
 ## Adding New Tests
 
 1. Create test file in appropriate directory:
-   - `test/unit/` for module unit tests
-   - `test/integration/` for CLI integration tests
-   - `test/` for utility tests (common, firewall, config)
+   - `router/test/unit/` for module unit tests
+   - `router/test/integration/` for CLI integration tests
+   - `router/test/` for utility tests (common, firewall, config)
 2. Add `load 'test_helper'` at top (use relative path: `load '../test_helper'` from subdirs)
 3. Use appropriate `load_*` helper to source scripts
-4. Add mocks to `test/mocks/` if needed
-5. Run: `npx bats test/unit/new_module.bats`
+4. Add mocks to `router/test/mocks/` if needed
+5. Run: `bats router/test/unit/new_module.bats`
