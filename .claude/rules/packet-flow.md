@@ -198,7 +198,7 @@ Config:
     "tunnels": {
       "ovpnc3": {
         "clients": ["192.168.1.5"],
-        "exclude": ["ru"]
+        "exclude": ["<country_code>"]
       }
     }
   }
@@ -207,14 +207,14 @@ Config:
 
 Packet from 192.168.1.5 to 8.8.8.8 (US):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
-2. TUN_DIR: src=192.168.1.5 + dst in "ru"? No
+2. TUN_DIR: src=192.168.1.5 + dst in excluded country? No
 3. TUN_DIR: src=192.168.1.5? Yes → **MARK 0x10000**
 4. ip rule pref 16384: fwmark 0x10000 → table ovpnc3
 5. **Goes through OpenVPN tunnel**
 
-Packet from 192.168.1.5 to 77.88.8.8 (RU):
+Packet from 192.168.1.5 to 203.0.113.1 (excluded country):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
-2. TUN_DIR: src=192.168.1.5 + dst in "ru"? Yes → **RETURN** (no mark)
+2. TUN_DIR: src=192.168.1.5 + dst in excluded country? Yes → **RETURN** (no mark)
 3. **Goes to main table → WAN (direct)**
 
 ### Example 3: Client in both Xray and TD
