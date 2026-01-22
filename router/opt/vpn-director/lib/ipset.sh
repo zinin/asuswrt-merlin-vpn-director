@@ -583,7 +583,7 @@ ipset_status() {
 # -------------------------------------------------------------------------------------------------
 ipset_ensure() {
     local raw_spec="$1" spec
-    local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+    local dump_dir="${IPS_BDR_DIR:-/opt/vpn-director/data}/ipsets"
 
     # Normalize and validate input
     if ! spec=$(_normalize_spec "$raw_spec"); then
@@ -617,7 +617,7 @@ ipset_ensure() {
 # -------------------------------------------------------------------------------------------------
 ipset_update() {
     local raw_spec="$1" spec
-    local dump_dir="${IPS_BDR_DIR:-/jffs/scripts/vpn-director/data}/ipsets"
+    local dump_dir="${IPS_BDR_DIR:-/opt/vpn-director/data}/ipsets"
 
     # Normalize and validate input
     if ! spec=$(_normalize_spec "$raw_spec"); then
