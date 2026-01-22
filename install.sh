@@ -19,7 +19,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Installation paths
-JFFS_DIR="/jffs/scripts"
+VPD_DIR="/opt/vpn-director"
+JFFS_HOOKS_DIR="/jffs/scripts"
 XRAY_CONFIG_DIR="/opt/etc/xray"
 REPO_URL="https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master"
 
@@ -53,6 +54,12 @@ check_environment() {
         exit 1
     fi
 
+    # Check for Entware
+    if [[ ! -d /opt/bin ]]; then
+        print_error "Entware not found. Install Entware first."
+        exit 1
+    fi
+
     # Check required commands
     missing=""
     if ! which curl >/dev/null 2>&1; then
@@ -73,10 +80,11 @@ check_environment() {
 create_directories() {
     print_info "Creating directories..."
 
-    mkdir -p "$JFFS_DIR/vpn-director/lib"
+    mkdir -p "$VPD_DIR/lib"
+    mkdir -p "$VPD_DIR/data"
     mkdir -p "$XRAY_CONFIG_DIR"
-    mkdir -p "/jffs/configs"
     mkdir -p "/opt/etc/init.d"
+    mkdir -p "$JFFS_HOOKS_DIR"
 
     print_success "Directories created"
 }
@@ -89,25 +97,24 @@ download_scripts() {
     print_info "Downloading scripts..."
 
     for script in \
-        "jffs/scripts/vpn-director/vpn-director.sh" \
-        "jffs/scripts/vpn-director/configure.sh" \
-        "jffs/scripts/vpn-director/import_server_list.sh" \
-        "jffs/scripts/vpn-director/vpn-director.json.template" \
-        "jffs/scripts/vpn-director/lib/common.sh" \
-        "jffs/scripts/vpn-director/lib/firewall.sh" \
-        "jffs/scripts/vpn-director/lib/config.sh" \
-        "jffs/scripts/vpn-director/lib/ipset.sh" \
-        "jffs/scripts/vpn-director/lib/tunnel.sh" \
-        "jffs/scripts/vpn-director/lib/tproxy.sh" \
-        "jffs/scripts/vpn-director/lib/send-email.sh" \
-        "jffs/scripts/vpn-director/setup_telegram_bot.sh" \
-        "jffs/scripts/firewall-start" \
-        "jffs/scripts/wan-event" \
-        "jffs/configs/profile.add" \
-        "opt/etc/init.d/S99vpn-director" \
-        "opt/etc/init.d/S98telegram-bot"
+        "router/opt/vpn-director/vpn-director.sh" \
+        "router/opt/vpn-director/configure.sh" \
+        "router/opt/vpn-director/import_server_list.sh" \
+        "router/opt/vpn-director/vpn-director.json.template" \
+        "router/opt/vpn-director/lib/common.sh" \
+        "router/opt/vpn-director/lib/firewall.sh" \
+        "router/opt/vpn-director/lib/config.sh" \
+        "router/opt/vpn-director/lib/ipset.sh" \
+        "router/opt/vpn-director/lib/tunnel.sh" \
+        "router/opt/vpn-director/lib/tproxy.sh" \
+        "router/opt/vpn-director/lib/send-email.sh" \
+        "router/opt/vpn-director/setup_telegram_bot.sh" \
+        "router/jffs/scripts/firewall-start" \
+        "router/jffs/scripts/wan-event" \
+        "router/opt/etc/init.d/S99vpn-director" \
+        "router/opt/etc/init.d/S98telegram-bot"
     do
-        target="/$script"
+        target="/${script#router/}"
         curl -fsSL "$REPO_URL/$script" -o "$target" || {
             print_error "Failed to download $script"
             exit 1
@@ -117,8 +124,8 @@ download_scripts() {
     done
 
     # Download xray config template
-    curl -fsSL "$REPO_URL/config/xray.json.template" -o "$XRAY_CONFIG_DIR/config.json.template" || {
-        print_error "Failed to download xray.json.template"
+    curl -fsSL "$REPO_URL/router/opt/etc/xray/config.json.template" -o "$XRAY_CONFIG_DIR/config.json.template" || {
+        print_error "Failed to download config.json.template"
         exit 1
     }
     print_success "Installed $XRAY_CONFIG_DIR/config.json.template"
@@ -135,7 +142,7 @@ download_telegram_bot() {
     arch=$(uname -m)
     local bot_binary=""
     local release_url="https://github.com/zinin/asuswrt-merlin-vpn-director/releases/latest/download"
-    local bot_path="$JFFS_DIR/vpn-director/telegram-bot"
+    local bot_path="$VPD_DIR/telegram-bot"
     local tmp_path="${bot_path}.tmp"
     local was_running=false
 
@@ -188,13 +195,13 @@ print_next_steps() {
 
     printf "Next steps:\n\n"
     printf "  1. Import VLESS servers:\n"
-    printf "     ${GREEN}/jffs/scripts/vpn-director/import_server_list.sh${NC}\n\n"
+    printf "     ${GREEN}/opt/vpn-director/import_server_list.sh${NC}\n\n"
     printf "  2. Run configuration wizard:\n"
-    printf "     ${GREEN}/jffs/scripts/vpn-director/configure.sh${NC}\n\n"
+    printf "     ${GREEN}/opt/vpn-director/configure.sh${NC}\n\n"
     printf "  3. (Optional) Setup Telegram bot:\n"
-    printf "     ${GREEN}/jffs/scripts/vpn-director/setup_telegram_bot.sh${NC}\n\n"
+    printf "     ${GREEN}/opt/vpn-director/setup_telegram_bot.sh${NC}\n\n"
     printf "Or edit configs manually:\n"
-    printf "  /jffs/scripts/vpn-director/vpn-director.json\n"
+    printf "  /opt/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"
 }
 
