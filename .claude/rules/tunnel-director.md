@@ -20,11 +20,11 @@ Routes LAN client traffic through VPN tunnels. All traffic goes through the tunn
     "tunnels": {
       "wgc1": {
         "clients": ["192.168.50.0/24", "192.168.50.100"],
-        "exclude": ["ru", "cn"]
+        "exclude": ["<country_code>"]
       },
       "ovpnc1": {
         "clients": ["192.168.1.5"],
-        "exclude": ["ru"]
+        "exclude": ["<country_code>"]
       }
     }
   }
@@ -50,10 +50,9 @@ Single chain in mangle table:
 ```
 PREROUTING
     └─> TUN_DIR
-          ├─ src 192.168.50.0/24 + dst ru -> RETURN
-          ├─ src 192.168.50.0/24 + dst cn -> RETURN
+          ├─ src 192.168.50.0/24 + dst <country> -> RETURN
           ├─ src 192.168.50.0/24 -> MARK 0x10000 (wgc1)
-          ├─ src 192.168.1.5 + dst ru -> RETURN
+          ├─ src 192.168.1.5 + dst <country> -> RETURN
           └─ src 192.168.1.5 -> MARK 0x20000 (ovpnc1)
 ```
 
