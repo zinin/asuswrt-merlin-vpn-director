@@ -266,7 +266,6 @@ Packet from 192.168.50.10 to 8.8.8.8 (US):
 | File | Purpose |
 |------|---------|
 | `/tmp/tunnel_director/tun_dir_rules.sha256` | Hash of applied TD rules |
-| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Hash of built ipsets |
 
 ## Key Code Locations
 

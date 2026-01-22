@@ -64,7 +64,6 @@ derive_set_name "very_long_set_name..."
 | Path | Purpose |
 |------|---------|
 | `/tmp/ipset_builder/` | Runtime state directory (`IPS_BUILDER_DIR` in lib/ipset.sh) |
-| `/tmp/ipset_builder/tun_dir_ipsets.sha256` | Rules hash after build (for tunnel module sync) |
 | `$IPS_BDR_DIR/ipsets/` | Persistent dump storage (from `data_dir`) |
 
 ## Boot Delay
@@ -103,4 +102,3 @@ Config options in `vpn-director.json` (`advanced.boot`):
 ## Build Steps
 
 1. **Country ipsets**: Parse exclude arrays from JSON → download → create
-2. **Save hash**: Write `TUN_DIR_IPSETS_HASH` for tunnel module sync

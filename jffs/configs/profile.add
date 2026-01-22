@@ -1,2 +1,1 @@
 alias vpd='/jffs/scripts/vpn-director/vpn-director.sh'
-alias ipt='/jffs/scripts/vpn-director/vpn-director.sh apply'  # Backward compatibility
