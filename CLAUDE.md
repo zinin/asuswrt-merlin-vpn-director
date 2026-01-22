@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 {
   "tunnel_director": {
     "tunnels": {
-      "wgc1": { "clients": ["192.168.50.0/24"], "exclude": ["ru"] }
+      "wgc1": { "clients": ["192.168.50.0/24"], "exclude": ["<country_code>"] }
     }
   }
 }
@@ -59,7 +59,7 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 - All traffic from `clients` goes through tunnel
 - Traffic to destinations in `exclude` bypasses VPN (direct)
 
-**IPSet Types**: Country sets — 2-letter ISO codes (us, ca, ru) from multi-source download
+**IPSet Types**: Country sets — 2-letter ISO codes from multi-source download
 
 **IPSet Sources** (priority order):
 1. GeoLite2 via GitHub (firehol/blocklist-ipsets)

@@ -27,7 +27,7 @@ Incoming packet from LAN (br0)
 │              ├─ src NOT in XRAY_CLIENTS? ──► RETURN         │
 │              ├─ dst in XRAY_SERVERS? ──► RETURN (avoid loop)│
 │              ├─ dst is private/local? ──► RETURN            │
-│              ├─ dst in exclude_sets (ru, cn...)? ──► RETURN │
+│              ├─ dst in exclude_sets? ──► RETURN             │
 │              │                                               │
 │              └─ TPROXY redirect to Xray port                │
 │                 + set mark 0x100                             │
@@ -130,11 +130,11 @@ Single chain with rules for all clients:
 ```
 TUN_DIR chain:
   # Client 1 (wgc1)
-  -s 192.168.50.0/24 -m set --match-set ru dst → RETURN
+  -s 192.168.50.0/24 -m set --match-set <country> dst → RETURN
   -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 → MARK 0x10000
 
   # Client 2 (ovpnc1)
-  -s 192.168.1.5 -m set --match-set ru dst → RETURN
+  -s 192.168.1.5 -m set --match-set <country> dst → RETURN
   -s 192.168.1.5 -m mark --mark 0x0/0xff0000 → MARK 0x20000
 ```
 
@@ -171,21 +171,21 @@ ip rule add pref {16384 + idx} fwmark {mark}/{mask} table {wgc1|ovpnc1|main}
 Config:
 ```json
 {
-  "xray": { "clients": ["192.168.50.10"], "exclude_sets": ["ru"] }
+  "xray": { "clients": ["192.168.50.10"], "exclude_sets": ["<country_code>"] }
 }
 ```
 
-Packet from 192.168.50.10 to 8.8.8.8 (US):
+Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? Yes
 2. dst in XRAY_SERVERS? No
 3. dst private? No
-4. dst in "ru"? No
+4. dst in excluded country? No
 5. **TPROXY to Xray port, mark 0x100**
 6. Packet delivered to Xray process
 
-Packet from 192.168.50.10 to 77.88.8.8 (RU):
+Packet from 192.168.50.10 to 203.0.113.1 (excluded country):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? Yes
-2. dst in "ru"? Yes → **RETURN**
+2. dst in excluded country? Yes → **RETURN**
 3. TUN_DIR_*: no rules for this client
 4. **Goes to main table → WAN (direct)**
 
@@ -198,23 +198,23 @@ Config:
     "tunnels": {
       "ovpnc3": {
         "clients": ["192.168.1.5"],
-        "exclude": ["ru"]
+        "exclude": ["<country_code>"]
       }
     }
   }
 }
 ```
 
-Packet from 192.168.1.5 to 8.8.8.8 (US):
+Packet from 192.168.1.5 to 8.8.8.8 (foreign):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
-2. TUN_DIR: src=192.168.1.5 + dst in "ru"? No
+2. TUN_DIR: src=192.168.1.5 + dst in excluded country? No
 3. TUN_DIR: src=192.168.1.5? Yes → **MARK 0x10000**
 4. ip rule pref 16384: fwmark 0x10000 → table ovpnc3
 5. **Goes through OpenVPN tunnel**
 
-Packet from 192.168.1.5 to 77.88.8.8 (RU):
+Packet from 192.168.1.5 to 203.0.113.1 (excluded country):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
-2. TUN_DIR: src=192.168.1.5 + dst in "ru"? Yes → **RETURN** (no mark)
+2. TUN_DIR: src=192.168.1.5 + dst in excluded country? Yes → **RETURN** (no mark)
 3. **Goes to main table → WAN (direct)**
 
 ### Example 3: Client in both Xray and TD
@@ -222,21 +222,21 @@ Packet from 192.168.1.5 to 77.88.8.8 (RU):
 Config:
 ```json
 {
-  "xray": { "clients": ["192.168.50.0/24"], "exclude_sets": ["ru"] },
+  "xray": { "clients": ["192.168.50.0/24"], "exclude_sets": ["<country_code>"] },
   "tunnel_director": {
     "tunnels": {
       "wgc1": {
         "clients": ["192.168.50.10"],
-        "exclude": ["ru"]
+        "exclude": ["<country_code>"]
       }
     }
   }
 }
 ```
 
-Packet from 192.168.50.10 to 8.8.8.8 (US):
+Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 1. XRAY_TPROXY: src in XRAY_CLIENTS (192.168.50.0/24)? Yes
-2. dst in "ru"? No
+2. dst in excluded country? No
 3. **TPROXY to Xray** — TUN_DIR chain never evaluated
 
 **Xray always wins** for overlapping clients.

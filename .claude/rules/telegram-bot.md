@@ -60,7 +60,7 @@ telegram-bot/
 4-step inline keyboard wizard:
 
 1. **Server Selection** — choose Xray server from servers.json
-2. **Exclusions** — select country sets to exclude (ru default)
+2. **Exclusions** — select country sets to exclude (user-configurable)
 3. **Clients** — add LAN clients with route (xray/ovpnc1-5/wgc1-5)
 4. **Confirm** — review and apply
 

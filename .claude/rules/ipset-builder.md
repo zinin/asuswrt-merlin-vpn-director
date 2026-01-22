@@ -33,7 +33,7 @@ Files from GitHub sources contain comment lines (`#`) which are filtered automat
 ## IPSet Types
 
 ### Country Sets
-- Named by 2-letter ISO code: `us`, `ru`, `ca`
+- Named by 2-letter ISO code (e.g., `<country_code>`)
 - Type: `hash:net`
 - Size: auto-calculated (load factor ~0.75)
 
@@ -41,8 +41,7 @@ Files from GitHub sources contain comment lines (`#`) which are filtered automat
 
 Cached dumps stored in `$IPS_BDR_DIR/ipsets/`:
 ```
-ru.dump
-us.dump
+<country>.dump
 ...
 ```
 
