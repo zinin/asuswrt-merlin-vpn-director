@@ -175,7 +175,7 @@ Config:
 }
 ```
 
-Packet from 192.168.50.10 to 8.8.8.8 (US):
+Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? Yes
 2. dst in XRAY_SERVERS? No
 3. dst private? No
@@ -205,7 +205,7 @@ Config:
 }
 ```
 
-Packet from 192.168.1.5 to 8.8.8.8 (US):
+Packet from 192.168.1.5 to 8.8.8.8 (foreign):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? No → RETURN
 2. TUN_DIR: src=192.168.1.5 + dst in excluded country? No
 3. TUN_DIR: src=192.168.1.5? Yes → **MARK 0x10000**
@@ -234,7 +234,7 @@ Config:
 }
 ```
 
-Packet from 192.168.50.10 to 8.8.8.8 (US):
+Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 1. XRAY_TPROXY: src in XRAY_CLIENTS (192.168.50.0/24)? Yes
 2. dst in excluded country? No
 3. **TPROXY to Xray** — TUN_DIR chain never evaluated

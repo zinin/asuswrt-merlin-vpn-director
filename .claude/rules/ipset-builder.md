@@ -33,7 +33,7 @@ Files from GitHub sources contain comment lines (`#`) which are filtered automat
 ## IPSet Types
 
 ### Country Sets
-- Named by 2-letter ISO code (e.g., `us`, `de`, `jp`)
+- Named by 2-letter ISO code (e.g., `<country_code>`)
 - Type: `hash:net`
 - Size: auto-calculated (load factor ~0.75)
 

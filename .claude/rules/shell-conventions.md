@@ -75,9 +75,9 @@ Hash files in `/tmp/` detect config changes; scripts only reapply if changed.
 
 Example: letter `u` (0x75) becomes `l` (0x6c):
 ```bash
-echo "ABC" | tr '[:upper:]' '[:lower:]'
-# Expected: abc
-# Actual:   abl
+echo "SETUP" | tr '[:upper:]' '[:lower:]'
+# Expected: setup
+# Actual:   setlp
 ```
 
 This is a bug in glibc/busybox `tr` with certain locale settings (`LC_ALL=en_US.UTF-8`). Setting `LC_ALL=C` does not fix it.
