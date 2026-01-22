@@ -8,7 +8,7 @@ Selective traffic routing through Xray TPROXY and OpenVPN tunnels.
 
 - **Xray TPROXY**: Transparent proxy for selected LAN clients via VLESS
 - **Tunnel Director**: Route traffic through OpenVPN/WireGuard by destination
-- **Country-based routing**: Exclude Russian IPs from proxy/tunnel
+- **Country-based routing**: Route traffic directly or through VPN based on destination geography
 - **Telegram Bot**: Remote management via Telegram (status, config, restart)
 - **Easy installation**: One-command setup with interactive configuration
 
@@ -119,7 +119,7 @@ Remote management via Telegram with username-based authorization.
 
 The `/configure` command starts a 4-step wizard:
 1. Select Xray server
-2. Choose country exclusions (ru, ua, etc.)
+2. Choose country exclusions (by ISO country code)
 3. Add LAN clients with routing (Xray/OpenVPN/WireGuard)
 4. Review and apply
 
@@ -131,7 +131,7 @@ Traffic from specified LAN clients is transparently redirected through Xray usin
 
 ### Tunnel Director
 
-Routes traffic from specified LAN clients through OpenVPN/WireGuard tunnels based on destination. By default, excludes Russian IPs to allow direct access to local services.
+Routes traffic from specified LAN clients through OpenVPN/WireGuard tunnels based on destination. Configurable exclusions allow direct access to specified countries for optimal performance.
 
 ### Country IPSets
 
