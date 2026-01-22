@@ -103,8 +103,6 @@ Examples:
   vpn-director restart tunnel      # Restart only Tunnel Director
   vpn-director update              # Update ipsets from IPdeny
 
-Alias:
-  vpd                              # Short alias (add to profile.add)
 EOF
 }
 
