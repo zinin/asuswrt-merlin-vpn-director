@@ -27,7 +27,7 @@ Incoming packet from LAN (br0)
 │              ├─ src NOT in XRAY_CLIENTS? ──► RETURN         │
 │              ├─ dst in XRAY_SERVERS? ──► RETURN (avoid loop)│
 │              ├─ dst is private/local? ──► RETURN            │
-│              ├─ dst in exclude_sets (ru, cn...)? ──► RETURN │
+│              ├─ dst in exclude_sets? ──► RETURN             │
 │              │                                               │
 │              └─ TPROXY redirect to Xray port                │
 │                 + set mark 0x100                             │
