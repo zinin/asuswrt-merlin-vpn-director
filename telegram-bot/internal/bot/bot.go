@@ -3,7 +3,7 @@ package bot
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
@@ -22,24 +22,25 @@ type Bot struct {
 	sender telegram.MessageSender
 }
 
-// New creates a new Bot with full dependency injection
-func New(cfg *config.Config, p paths.Paths, version string) (*Bot, error) {
+// New creates a new Bot with full dependency injection.
+// If executor is nil, services use their default executors.
+func New(cfg *config.Config, p paths.Paths, version string, executor service.ShellExecutor) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("[INFO] Authorized as @%s", api.Self.UserName)
+	slog.Info("Authorized", "username", api.Self.UserName)
 
 	// Create sender
 	sender := telegram.NewSender(api)
 
 	// Create services
 	configSvc := service.NewConfigService(p.ScriptsDir, p.DefaultDataDir)
-	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, nil)
+	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, executor)
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
-	networkSvc := service.NewNetworkService(nil)
-	logSvc := service.NewLogService(nil)
+	networkSvc := service.NewNetworkService(executor)
+	logSvc := service.NewLogService(executor)
 
 	// Create handler dependencies
 	deps := &handler.Deps{
@@ -91,7 +92,7 @@ func (b *Bot) RegisterCommands() error {
 		return err
 	}
 
-	log.Printf("[INFO] Registered %d bot commands", len(commands))
+	slog.Info("Registered bot commands", "count", len(commands))
 	return nil
 }
 
@@ -101,17 +102,17 @@ func (b *Bot) Run(ctx context.Context) {
 	u.Timeout = 60
 	updates := b.api.GetUpdatesChan(u)
 
-	log.Println("[INFO] Bot started, waiting for messages...")
+	slog.Info("Bot started, waiting for messages")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[INFO] Shutting down bot...")
+			slog.Info("Shutting down bot")
 			b.api.StopReceivingUpdates()
 			return
 		case update, ok := <-updates:
 			if !ok {
-				log.Println("[WARN] Updates channel closed, stopping bot...")
+				slog.Warn("Updates channel closed, stopping bot")
 				return
 			}
 			if msg := update.Message; msg != nil {
@@ -121,12 +122,12 @@ func (b *Bot) Run(ctx context.Context) {
 				}
 				username := msg.From.UserName
 				if !b.auth.IsAuthorized(username) {
-					log.Printf("[WARN] Unauthorized: %s", username)
+					slog.Warn("Unauthorized access attempt", "username", username)
 					b.sender.SendPlain(msg.Chat.ID, "Access denied")
 					continue
 				}
 				// Log command without arguments for sensitive commands (import may contain tokens)
-				log.Printf("[INFO] Command from %s: %s", username, sanitizeLogMessage(msg))
+				slog.Info("Command received", "username", username, "command", sanitizeLogMessage(msg))
 				b.router.RouteMessage(msg)
 			}
 			if cb := update.CallbackQuery; cb != nil {
@@ -138,10 +139,10 @@ func (b *Bot) Run(ctx context.Context) {
 				b.sender.AckCallback(cb.ID)
 				username := cb.From.UserName
 				if !b.auth.IsAuthorized(username) {
-					log.Printf("[WARN] Unauthorized callback: %s", username)
+					slog.Warn("Unauthorized callback", "username", username)
 					continue
 				}
-				log.Printf("[INFO] Callback from %s: %s", username, cb.Data)
+				slog.Info("Callback received", "username", username, "data", cb.Data)
 				b.router.RouteCallback(cb)
 			}
 		}

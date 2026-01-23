@@ -93,3 +93,52 @@ func TestLoad_EmptyAllowedUsers(t *testing.T) {
 		t.Errorf("expected empty allowed_users, got %d users", len(cfg.AllowedUsers))
 	}
 }
+
+func TestLoad_WithLogLevel(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	jsonContent := `{
+		"bot_token": "test-token",
+		"allowed_users": ["user1"],
+		"log_level": "debug"
+	}`
+
+	err := os.WriteFile(configPath, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.LogLevel != "debug" {
+		t.Errorf("expected log_level 'debug', got '%s'", cfg.LogLevel)
+	}
+}
+
+func TestLoad_DefaultLogLevel(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	jsonContent := `{
+		"bot_token": "test-token",
+		"allowed_users": []
+	}`
+
+	err := os.WriteFile(configPath, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.LogLevel != "" {
+		t.Errorf("expected empty log_level for missing field, got '%s'", cfg.LogLevel)
+	}
+}

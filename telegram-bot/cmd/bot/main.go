@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,8 +13,10 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/bot"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/devmode"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/logging"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/paths"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/service"
 )
 
 var (
@@ -29,25 +32,64 @@ func versionString() string {
 const maxLogSize = 200 * 1024
 
 func main() {
-	p := paths.Default()
+	devFlag := flag.Bool("dev", false, "Run in development mode (local testing)")
+	flag.Parse()
 
-	logger, err := logging.New(p.BotLogPath)
+	var p paths.Paths
+	var executor service.ShellExecutor
+
+	if *devFlag {
+		p = paths.DevPaths()
+		executor = devmode.NewExecutor()
+		// Validate testdata/dev exists before proceeding
+		if _, err := os.Stat(p.ScriptsDir); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: %s not found\n", p.ScriptsDir)
+			fmt.Fprintf(os.Stderr, "Run from telegram-bot/ directory: cd telegram-bot && go run ./cmd/bot --dev\n")
+			os.Exit(1)
+		}
+	} else {
+		p = paths.Default()
+		executor = nil
+	}
+
+	// Initialize logger BEFORE config load (default INFO level)
+	slogger, logger, err := logging.NewSlogLogger(p.BotLogPath)
 	if err != nil {
-		log.Fatalf("[ERROR] Failed to initialize logging: %v", err)
+		// Can't write to log file - fall back to stderr and exit
+		fmt.Fprintf(os.Stderr, "Failed to initialize logging: %v\n", err)
+		os.Exit(1)
 	}
 	defer logger.Close()
 
+	slog.SetDefault(slogger)
+
+	if *devFlag {
+		slog.Info("Running in DEVELOPMENT mode", "config", p.BotConfigPath)
+	}
+
+	// Now load config - errors will be logged to file
 	cfg, err := config.Load(p.BotConfigPath)
 	if os.IsNotExist(err) {
-		log.Println("[INFO] Config not found, run setup_telegram_bot.sh first")
+		if *devFlag {
+			slog.Info("Config not found", "hint", "copy testdata/dev/telegram-bot.json.example to testdata/dev/telegram-bot.json")
+		} else {
+			slog.Info("Config not found, run setup_telegram_bot.sh first")
+		}
 		os.Exit(0)
 	}
 	if err != nil {
-		log.Fatalf("[ERROR] Failed to load config: %v", err)
+		slog.Error("Failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	// Update log level from config
+	if cfg.LogLevel != "" {
+		logger.SetLevel(cfg.LogLevel)
+		slog.Debug("Log level set from config", "level", cfg.LogLevel)
 	}
 
 	if strings.TrimSpace(cfg.BotToken) == "" {
-		log.Println("[INFO] Bot token not configured, skipping")
+		slog.Info("Bot token not configured, skipping")
 		os.Exit(0)
 	}
 
@@ -56,16 +98,17 @@ func main() {
 
 	logger.StartRotation(ctx, []string{p.BotLogPath, p.VPNLogPath}, maxLogSize, time.Minute)
 
-	b, err := bot.New(cfg, p, versionString())
+	b, err := bot.New(cfg, p, versionString(), executor)
 	if err != nil {
-		log.Fatalf("[ERROR] Failed to create bot: %v", err)
+		slog.Error("Failed to create bot", "error", err)
+		os.Exit(1)
 	}
 
 	if err := b.RegisterCommands(); err != nil {
-		log.Printf("[WARN] Failed to register commands: %v", err)
+		slog.Warn("Failed to register commands", "error", err)
 	}
 
-	log.Printf("[INFO] Telegram Bot %s started", versionString())
+	slog.Info("Telegram Bot started", "version", versionString())
 	b.Run(ctx)
-	log.Println("[INFO] Bot stopped")
+	slog.Info("Bot stopped")
 }

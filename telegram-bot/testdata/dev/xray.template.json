@@ -1,0 +1,62 @@
+{
+  "inbounds": [
+    {
+      "port": 12345,
+      "listen": "0.0.0.0",
+      "protocol": "dokodemo-door",
+      "settings": {
+        "network": "tcp,udp",
+        "followRedirect": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": false
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tproxy": "tproxy"
+        }
+      },
+      "tag": "tproxy-in"
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "{{XRAY_SERVER_ADDRESS}}",
+            "port": {{XRAY_SERVER_PORT}},
+            "users": [
+              {
+                "id": "{{XRAY_USER_UUID}}",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["h2"],
+          "serverName": "{{XRAY_SERVER_ADDRESS}}"
+        }
+      },
+      "tag": "proxy-out"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["tproxy-in"],
+        "outboundTag": "proxy-out"
+      }
+    ]
+  }
+}
