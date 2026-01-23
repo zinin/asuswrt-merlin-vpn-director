@@ -111,6 +111,10 @@ func (b *Bot) Run(ctx context.Context) {
 			return
 		case update := <-updates:
 			if msg := update.Message; msg != nil {
+				// Skip messages without sender (channel posts, service messages)
+				if msg.From == nil {
+					continue
+				}
 				username := msg.From.UserName
 				if !b.auth.IsAuthorized(username) {
 					log.Printf("[WARN] Unauthorized: %s", username)
@@ -121,6 +125,10 @@ func (b *Bot) Run(ctx context.Context) {
 				b.router.RouteMessage(msg)
 			}
 			if cb := update.CallbackQuery; cb != nil {
+				// Skip callbacks without sender (should not happen, but be defensive)
+				if cb.From == nil {
+					continue
+				}
 				username := cb.From.UserName
 				if !b.auth.IsAuthorized(username) {
 					log.Printf("[WARN] Unauthorized callback: %s", username)
