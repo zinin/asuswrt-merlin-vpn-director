@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -31,23 +31,36 @@ const maxLogSize = 200 * 1024
 func main() {
 	p := paths.Default()
 
-	logger, err := logging.New(p.BotLogPath)
+	// Initialize logger BEFORE config load (default INFO level)
+	slogger, logger, err := logging.NewSlogLogger(p.BotLogPath)
 	if err != nil {
-		log.Fatalf("[ERROR] Failed to initialize logging: %v", err)
+		// Can't write to log file - fall back to stderr and exit
+		fmt.Fprintf(os.Stderr, "Failed to initialize logging: %v\n", err)
+		os.Exit(1)
 	}
 	defer logger.Close()
 
+	slog.SetDefault(slogger)
+
+	// Now load config - errors will be logged to file
 	cfg, err := config.Load(p.BotConfigPath)
 	if os.IsNotExist(err) {
-		log.Println("[INFO] Config not found, run setup_telegram_bot.sh first")
+		slog.Info("Config not found, run setup_telegram_bot.sh first")
 		os.Exit(0)
 	}
 	if err != nil {
-		log.Fatalf("[ERROR] Failed to load config: %v", err)
+		slog.Error("Failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	// Update log level from config
+	if cfg.LogLevel != "" {
+		logger.SetLevel(cfg.LogLevel)
+		slog.Debug("Log level set from config", "level", cfg.LogLevel)
 	}
 
 	if strings.TrimSpace(cfg.BotToken) == "" {
-		log.Println("[INFO] Bot token not configured, skipping")
+		slog.Info("Bot token not configured, skipping")
 		os.Exit(0)
 	}
 
@@ -58,14 +71,15 @@ func main() {
 
 	b, err := bot.New(cfg, p, versionString())
 	if err != nil {
-		log.Fatalf("[ERROR] Failed to create bot: %v", err)
+		slog.Error("Failed to create bot", "error", err)
+		os.Exit(1)
 	}
 
 	if err := b.RegisterCommands(); err != nil {
-		log.Printf("[WARN] Failed to register commands: %v", err)
+		slog.Warn("Failed to register commands", "error", err)
 	}
 
-	log.Printf("[INFO] Telegram Bot %s started", versionString())
+	slog.Info("Telegram Bot started", "version", versionString())
 	b.Run(ctx)
-	log.Println("[INFO] Bot stopped")
+	slog.Info("Bot stopped")
 }
