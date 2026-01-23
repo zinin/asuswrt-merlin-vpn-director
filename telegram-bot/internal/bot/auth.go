@@ -26,9 +26,3 @@ func (a *Auth) IsAuthorized(username string) bool {
 	}
 	return a.allowedUsers[strings.ToLower(username)]
 }
-
-// isAuthorized is a backward-compatible helper for old code.
-// Deprecated: Use NewAuth().IsAuthorized() instead.
-func isAuthorized(username string, allowedUsers []string) bool {
-	return NewAuth(allowedUsers).IsAuthorized(username)
-}

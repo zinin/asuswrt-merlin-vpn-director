@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -109,14 +108,7 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 		return
 	}
 
-	// Get data directory and ensure it exists
-	dataDir := h.deps.Config.DataDirOrDefault()
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(fmt.Sprintf("Directory creation error: %v", err)))
-		return
-	}
-
-	// Save servers
+	// Save servers (SaveServers creates directory if needed)
 	if err := h.deps.Config.SaveServers(resolved); err != nil {
 		h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(fmt.Sprintf("Save error: %v", err)))
 		return

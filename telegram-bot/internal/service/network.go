@@ -1,7 +1,11 @@
 // internal/service/network.go
 package service
 
-import "strings"
+import (
+	"fmt"
+	"net"
+	"strings"
+)
 
 // NetworkService handles network-related operations
 type NetworkService struct {
@@ -25,5 +29,13 @@ func (s *NetworkService) GetExternalIP() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(result.Output), nil
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("curl failed with exit code %d", result.ExitCode)
+	}
+	ip := strings.TrimSpace(result.Output)
+	// Validate that the result is a valid IP address
+	if net.ParseIP(ip) == nil {
+		return "", fmt.Errorf("invalid IP address: %s", ip)
+	}
+	return ip, nil
 }

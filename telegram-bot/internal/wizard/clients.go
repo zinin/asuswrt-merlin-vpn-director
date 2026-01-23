@@ -81,6 +81,11 @@ func (s *ClientsStep) HandleCallback(cb *tgbotapi.CallbackQuery, state *State) {
 			return
 		}
 		route := strings.TrimPrefix(data, "route:")
+		// Validate route against allowed options
+		if !isValidRoute(route) {
+			s.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2("Invalid route selection"))
+			return
+		}
 		state.AddClient(ClientRoute{
 			IP:    pendingIP,
 			Route: route,
@@ -140,6 +145,16 @@ func (s *ClientsStep) sendRouteSelection(chatID int64, ip string) {
 
 	text := telegram.EscapeMarkdownV2(fmt.Sprintf("Where to route traffic for %s?", ip))
 	s.deps.Sender.SendWithKeyboard(chatID, text, kb.Build())
+}
+
+// isValidRoute checks if the route is in the allowed RouteOptions
+func isValidRoute(route string) bool {
+	for _, r := range RouteOptions {
+		if r == route {
+			return true
+		}
+	}
+	return false
 }
 
 // isValidLANIP validates that the IP is a valid LAN (private) IP address

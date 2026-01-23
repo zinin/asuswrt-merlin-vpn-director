@@ -54,29 +54,38 @@ func (s *Sender) SendPlain(chatID int64, text string) error {
 	return err
 }
 
-// SendLongPlain sends a long plain-text message, splitting into chunks if needed
-// TODO: Consider adding a Markdown-safe variant (or parse-mode param) and UTF-8 safe chunking.
+// SendLongPlain sends a long plain-text message, splitting into chunks if needed.
+// Uses rune-safe chunking to avoid breaking UTF-8 characters.
 func (s *Sender) SendLongPlain(chatID int64, text string) error {
-	for len(text) > 0 {
-		chunk := text
-		if len(chunk) > MaxMessageLength {
-			chunk = text[:MaxMessageLength]
-			// Try to break at newline
-			if idx := lastIndex(chunk, '\n'); idx > MaxMessageLength/2 {
-				chunk = text[:idx+1]
+	runes := []rune(text)
+	for len(runes) > 0 {
+		// Calculate chunk size in runes
+		chunkSize := len(runes)
+		if chunkSize > MaxMessageLength {
+			chunkSize = MaxMessageLength
+		}
+
+		chunk := string(runes[:chunkSize])
+
+		// If we're splitting, try to break at newline for readability
+		if chunkSize < len(runes) {
+			if idx := lastIndexRune(runes[:chunkSize], '\n'); idx > chunkSize/2 {
+				chunk = string(runes[:idx+1])
+				chunkSize = idx + 1
 			}
 		}
+
 		if err := s.SendPlain(chatID, chunk); err != nil {
 			return err
 		}
-		text = text[len(chunk):]
+		runes = runes[chunkSize:]
 	}
 	return nil
 }
 
-func lastIndex(s string, b byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == b {
+func lastIndexRune(runes []rune, r rune) int {
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] == r {
 			return i
 		}
 	}

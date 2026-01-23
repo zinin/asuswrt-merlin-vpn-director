@@ -109,7 +109,11 @@ func (b *Bot) Run(ctx context.Context) {
 			log.Println("[INFO] Shutting down bot...")
 			b.api.StopReceivingUpdates()
 			return
-		case update := <-updates:
+		case update, ok := <-updates:
+			if !ok {
+				log.Println("[WARN] Updates channel closed, stopping bot...")
+				return
+			}
 			if msg := update.Message; msg != nil {
 				// Skip messages without sender (channel posts, service messages)
 				if msg.From == nil {
@@ -121,7 +125,8 @@ func (b *Bot) Run(ctx context.Context) {
 					b.sender.SendPlain(msg.Chat.ID, "Access denied")
 					continue
 				}
-				log.Printf("[INFO] Command from %s: %s", username, msg.Text)
+				// Log command without arguments for sensitive commands (import may contain tokens)
+				log.Printf("[INFO] Command from %s: %s", username, sanitizeLogMessage(msg))
 				b.router.RouteMessage(msg)
 			}
 			if cb := update.CallbackQuery; cb != nil {
@@ -129,6 +134,8 @@ func (b *Bot) Run(ctx context.Context) {
 				if cb.From == nil {
 					continue
 				}
+				// Acknowledge callback to prevent UI spinner hanging
+				b.sender.AckCallback(cb.ID)
 				username := cb.From.UserName
 				if !b.auth.IsAuthorized(username) {
 					log.Printf("[WARN] Unauthorized callback: %s", username)
@@ -139,4 +146,18 @@ func (b *Bot) Run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// sanitizeLogMessage returns a safe-to-log representation of the message.
+// Sensitive commands (like /import) have their arguments redacted.
+func sanitizeLogMessage(msg *tgbotapi.Message) string {
+	if msg.IsCommand() {
+		cmd := msg.Command()
+		// Redact arguments for commands that may contain sensitive data (URLs with tokens)
+		switch cmd {
+		case "import":
+			return "/" + cmd + " [REDACTED]"
+		}
+	}
+	return msg.Text
 }
