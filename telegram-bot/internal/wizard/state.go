@@ -20,7 +20,7 @@ type ClientRoute struct {
 }
 
 type State struct {
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	ChatID      int64
 	Step        Step
 	ServerIndex int
@@ -74,43 +74,43 @@ func (s *State) RemoveLastClient() {
 	}
 }
 
-// Thread-safe getters
+// Thread-safe getters (use RLock for better concurrency)
 func (s *State) GetStep() Step {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.Step
 }
 
 func (s *State) GetServerIndex() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.ServerIndex
 }
 
 func (s *State) GetPendingIP() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.PendingIP
 }
 
 func (s *State) GetExclusions() map[string]bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	copy := make(map[string]bool)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := make(map[string]bool)
 	for k, v := range s.Exclusions {
-		copy[k] = v
+		cp[k] = v
 	}
-	return copy
+	return cp
 }
 
 func (s *State) GetClients() []ClientRoute {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	copy := make([]ClientRoute, len(s.Clients))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := make([]ClientRoute, len(s.Clients))
 	for i, c := range s.Clients {
-		copy[i] = c
+		cp[i] = c
 	}
-	return copy
+	return cp
 }
 
 type Manager struct {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/bot"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/logging"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/paths"
 )
 
 var (
@@ -25,56 +26,18 @@ func versionString() string {
 	return fmt.Sprintf("%s (%s, %s)", Version, Commit, BuildDate)
 }
 
-const configPath = "/opt/vpn-director/telegram-bot.json"
-
-const (
-	botLogPath = "/tmp/telegram-bot.log"
-	vpnLogPath = "/tmp/vpn-director.log"
-	maxLogSize = 200 * 1024 // 200KB
-)
-
-func truncateLogIfNeeded(path string, maxSize int64) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return // File doesn't exist, ignore
-	}
-	if info.Size() > maxSize {
-		if err := os.Truncate(path, 0); err != nil {
-			log.Printf("[WARN] Failed to truncate %s: %v", path, err)
-		} else {
-			log.Printf("[INFO] Truncated log file %s (was %d bytes)", path, info.Size())
-		}
-	}
-}
-
-func startLogRotation(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				ticker.Stop()
-				return
-			case <-ticker.C:
-				truncateLogIfNeeded(botLogPath, maxLogSize)
-				truncateLogIfNeeded(vpnLogPath, maxLogSize)
-			}
-		}
-	}()
-}
+const maxLogSize = 200 * 1024
 
 func main() {
-	// Initialize logging to file + stdout
-	logFile, err := os.OpenFile("/tmp/telegram-bot.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	p := paths.Default()
+
+	logger, err := logging.New(p.BotLogPath)
 	if err != nil {
-		log.Fatalf("[ERROR] Failed to open log file: %v", err)
+		log.Fatalf("[ERROR] Failed to initialize logging: %v", err)
 	}
-	defer logFile.Close()
+	defer logger.Close()
 
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
-	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
-
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(p.BotConfigPath)
 	if os.IsNotExist(err) {
 		log.Println("[INFO] Config not found, run setup_telegram_bot.sh first")
 		os.Exit(0)
@@ -91,11 +54,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	startLogRotation(ctx)
+	logger.StartRotation(ctx, []string{p.BotLogPath, p.VPNLogPath}, maxLogSize, time.Minute)
 
-	b, err := bot.New(cfg, versionString())
+	b, err := bot.New(cfg, p, versionString())
 	if err != nil {
 		log.Fatalf("[ERROR] Failed to create bot: %v", err)
+	}
+
+	if err := b.RegisterCommands(); err != nil {
+		log.Printf("[WARN] Failed to register commands: %v", err)
 	}
 
 	log.Printf("[INFO] Telegram Bot %s started", versionString())

@@ -1,23 +1,29 @@
+// internal/bot/bot.go
 package bot
 
 import (
 	"context"
 	"log"
-	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/handler"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/paths"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/wizard"
 )
 
+// Bot is the main Telegram bot struct with DI
 type Bot struct {
-	api     *tgbotapi.BotAPI
-	config  *config.Config
-	wizard  *wizard.Manager
-	version string
+	api    *tgbotapi.BotAPI
+	auth   *Auth
+	router *Router
+	sender telegram.MessageSender
 }
 
-func New(cfg *config.Config, version string) (*Bot, error) {
+// New creates a new Bot with full dependency injection
+func New(cfg *config.Config, p paths.Paths, version string) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -25,21 +31,48 @@ func New(cfg *config.Config, version string) (*Bot, error) {
 
 	log.Printf("[INFO] Authorized as @%s", api.Self.UserName)
 
-	b := &Bot{
-		api:     api,
-		config:  cfg,
-		wizard:  wizard.NewManager(),
-		version: version,
+	// Create sender
+	sender := telegram.NewSender(api)
+
+	// Create services
+	configSvc := service.NewConfigService(p.ScriptsDir, p.DefaultDataDir)
+	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, nil)
+	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
+	networkSvc := service.NewNetworkService(nil)
+	logSvc := service.NewLogService(nil)
+
+	// Create handler dependencies
+	deps := &handler.Deps{
+		Sender:  sender,
+		Config:  configSvc,
+		VPN:     vpnSvc,
+		Xray:    xraySvc,
+		Network: networkSvc,
+		Logs:    logSvc,
+		Paths:   p,
+		Version: version,
 	}
 
-	if err := b.registerCommands(); err != nil {
-		log.Printf("[WARN] Failed to register commands: %v", err)
-	}
+	// Create handlers
+	statusHandler := handler.NewStatusHandler(deps)
+	serversHandler := handler.NewServersHandler(deps)
+	importHandler := handler.NewImportHandler(deps)
+	miscHandler := handler.NewMiscHandler(deps)
+	wizardHandler := wizard.NewHandler(sender, configSvc, vpnSvc, xraySvc)
 
-	return b, nil
+	// Create router
+	router := NewRouter(statusHandler, serversHandler, importHandler, miscHandler, wizardHandler)
+
+	return &Bot{
+		api:    api,
+		auth:   NewAuth(cfg.AllowedUsers),
+		router: router,
+		sender: sender,
+	}, nil
 }
 
-func (b *Bot) registerCommands() error {
+// RegisterCommands registers bot commands with Telegram
+func (b *Bot) RegisterCommands() error {
 	commands := []tgbotapi.BotCommand{
 		{Command: "status", Description: "Xray status"},
 		{Command: "servers", Description: "Server list"},
@@ -62,14 +95,10 @@ func (b *Bot) registerCommands() error {
 	return nil
 }
 
-func (b *Bot) IsAuthorized(username string) bool {
-	return isAuthorized(username, b.config.AllowedUsers)
-}
-
+// Run starts the bot and processes updates until context is cancelled
 func (b *Bot) Run(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
-
 	updates := b.api.GetUpdatesChan(u)
 
 	log.Println("[INFO] Bot started, waiting for messages...")
@@ -80,70 +109,55 @@ func (b *Bot) Run(ctx context.Context) {
 			log.Println("[INFO] Shutting down bot...")
 			b.api.StopReceivingUpdates()
 			return
-		case update := <-updates:
-			if update.Message != nil {
-				b.handleMessage(update.Message)
+		case update, ok := <-updates:
+			if !ok {
+				log.Println("[WARN] Updates channel closed, stopping bot...")
+				return
 			}
-			if update.CallbackQuery != nil {
-				b.handleCallback(update.CallbackQuery)
+			if msg := update.Message; msg != nil {
+				// Skip messages without sender (channel posts, service messages)
+				if msg.From == nil {
+					continue
+				}
+				username := msg.From.UserName
+				if !b.auth.IsAuthorized(username) {
+					log.Printf("[WARN] Unauthorized: %s", username)
+					b.sender.SendPlain(msg.Chat.ID, "Access denied")
+					continue
+				}
+				// Log command without arguments for sensitive commands (import may contain tokens)
+				log.Printf("[INFO] Command from %s: %s", username, sanitizeLogMessage(msg))
+				b.router.RouteMessage(msg)
+			}
+			if cb := update.CallbackQuery; cb != nil {
+				// Skip callbacks without sender (should not happen, but be defensive)
+				if cb.From == nil {
+					continue
+				}
+				// Acknowledge callback to prevent UI spinner hanging
+				b.sender.AckCallback(cb.ID)
+				username := cb.From.UserName
+				if !b.auth.IsAuthorized(username) {
+					log.Printf("[WARN] Unauthorized callback: %s", username)
+					continue
+				}
+				log.Printf("[INFO] Callback from %s: %s", username, cb.Data)
+				b.router.RouteCallback(cb)
 			}
 		}
 	}
 }
 
-func (b *Bot) handleMessage(msg *tgbotapi.Message) {
-	username := msg.From.UserName
-
-	if !b.IsAuthorized(username) {
-		log.Printf("[WARN] Unauthorized: %s", username)
-		b.sendMessage(msg.Chat.ID, "Access denied")
-		return
+// sanitizeLogMessage returns a safe-to-log representation of the message.
+// Sensitive commands (like /import) have their arguments redacted.
+func sanitizeLogMessage(msg *tgbotapi.Message) string {
+	if msg.IsCommand() {
+		cmd := msg.Command()
+		// Redact arguments for commands that may contain sensitive data (URLs with tokens)
+		switch cmd {
+		case "import":
+			return "/" + cmd + " [REDACTED]"
+		}
 	}
-
-	log.Printf("[INFO] Command from %s: %s", username, msg.Text)
-
-	cmd := msg.Command()
-	switch cmd {
-	case "start":
-		b.handleStart(msg)
-	case "status":
-		b.handleStatus(msg)
-	case "servers":
-		b.handleServers(msg)
-	case "restart":
-		b.handleRestart(msg)
-	case "stop":
-		b.handleStop(msg)
-	case "logs":
-		b.handleLogs(msg)
-	case "ip":
-		b.handleIP(msg)
-	case "import":
-		b.handleImport(msg)
-	case "configure":
-		b.handleConfigure(msg)
-	case "version":
-		b.handleVersion(msg)
-	default:
-		b.handleWizardInput(msg)
-	}
-}
-
-func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) {
-	username := cb.From.UserName
-
-	if !b.IsAuthorized(username) {
-		log.Printf("[WARN] Unauthorized callback: %s", username)
-		return
-	}
-
-	log.Printf("[INFO] Callback from %s: %s", username, cb.Data)
-
-	// Route to appropriate handler
-	if strings.HasPrefix(cb.Data, "servers:") {
-		b.handleServersCallback(cb)
-		return
-	}
-
-	b.handleWizardCallback(cb)
+	return msg.Text
 }
