@@ -1,0 +1,16 @@
+{
+  "data_dir": "testdata/dev/data",
+  "xray": {
+    "clients": ["192.168.50.0/24"],
+    "servers": ["proxy.example.com"],
+    "exclude_sets": ["ru", "by"]
+  },
+  "tunnel_director": {
+    "tunnels": {
+      "wgc1": {
+        "clients": ["192.168.1.100"],
+        "exclude": ["ru"]
+      }
+    }
+  }
+}
