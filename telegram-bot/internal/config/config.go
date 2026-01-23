@@ -8,6 +8,7 @@ import (
 type Config struct {
 	BotToken     string   `json:"bot_token"`
 	AllowedUsers []string `json:"allowed_users"`
+	LogLevel     string   `json:"log_level"`
 }
 
 func Load(path string) (*Config, error) {
