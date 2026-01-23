@@ -63,3 +63,36 @@ func TestDefaultNotEmpty(t *testing.T) {
 		t.Error("VPNLogPath should not be empty")
 	}
 }
+
+func TestDevPaths(t *testing.T) {
+	p := DevPaths()
+
+	tests := []struct {
+		name     string
+		got      string
+		wantPfx  string
+		wantSfx  string
+	}{
+		{"ScriptsDir", p.ScriptsDir, "testdata/dev", ""},
+		{"BotConfigPath", p.BotConfigPath, "testdata/dev/", "telegram-bot.json"},
+		{"DefaultDataDir", p.DefaultDataDir, "testdata/dev/", "data"},
+		{"XrayTemplate", p.XrayTemplate, "testdata/dev/", "xray.template.json"},
+		{"XrayConfig", p.XrayConfig, "testdata/dev/", "xray.json"},
+		{"BotLogPath", p.BotLogPath, "testdata/dev/", "bot.log"},
+		{"VPNLogPath", p.VPNLogPath, "testdata/dev/", "vpn.log"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got == "" {
+				t.Errorf("%s is empty", tt.name)
+			}
+			if tt.wantPfx != "" && !strings.HasPrefix(tt.got, tt.wantPfx) {
+				t.Errorf("%s = %q, want prefix %q", tt.name, tt.got, tt.wantPfx)
+			}
+			if tt.wantSfx != "" && !strings.HasSuffix(tt.got, tt.wantSfx) {
+				t.Errorf("%s = %q, want suffix %q", tt.name, tt.got, tt.wantSfx)
+			}
+		})
+	}
+}

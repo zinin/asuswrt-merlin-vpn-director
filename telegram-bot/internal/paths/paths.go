@@ -24,3 +24,16 @@ func Default() Paths {
 		VPNLogPath:     "/tmp/vpn-director.log",
 	}
 }
+
+// DevPaths returns paths for development mode using testdata/dev/
+func DevPaths() Paths {
+	return Paths{
+		ScriptsDir:     "testdata/dev",
+		BotConfigPath:  "testdata/dev/telegram-bot.json",
+		DefaultDataDir: "testdata/dev/data",
+		XrayTemplate:   "testdata/dev/xray.template.json",
+		XrayConfig:     "testdata/dev/xray.json",
+		BotLogPath:     "testdata/dev/bot.log",
+		VPNLogPath:     "testdata/dev/vpn.log",
+	}
+}
