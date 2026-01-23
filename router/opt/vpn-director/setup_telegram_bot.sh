@@ -52,7 +52,7 @@ USERS_JSON=$(printf '%s\n' "${USERS[@]}" | jq -R . | jq -s .)
 jq -n \
     --arg token "$BOT_TOKEN" \
     --argjson users "$USERS_JSON" \
-    '{bot_token: $token, allowed_users: $users}' > "$CONFIG_FILE"
+    '{bot_token: $token, allowed_users: $users, log_level: "info"}' > "$CONFIG_FILE"
 
 echo
 echo "Config created: $CONFIG_FILE"
