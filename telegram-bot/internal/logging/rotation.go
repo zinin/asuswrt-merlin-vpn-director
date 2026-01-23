@@ -2,7 +2,7 @@ package logging
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -15,9 +15,9 @@ func TruncateIfNeeded(path string, maxSize int64) {
 	}
 	if info.Size() > maxSize {
 		if err := os.Truncate(path, 0); err != nil {
-			log.Printf("[WARN] Failed to truncate %s: %v", path, err)
+			slog.Warn("Failed to truncate log file", "path", path, "error", err)
 		} else {
-			log.Printf("[INFO] Truncated log file %s (was %d bytes)", path, info.Size())
+			slog.Info("Truncated log file", "path", path, "prev_size", info.Size())
 		}
 	}
 }
