@@ -22,8 +22,9 @@ type Bot struct {
 	sender telegram.MessageSender
 }
 
-// New creates a new Bot with full dependency injection
-func New(cfg *config.Config, p paths.Paths, version string) (*Bot, error) {
+// New creates a new Bot with full dependency injection.
+// If executor is nil, services use their default executors.
+func New(cfg *config.Config, p paths.Paths, version string, executor service.ShellExecutor) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -36,10 +37,10 @@ func New(cfg *config.Config, p paths.Paths, version string) (*Bot, error) {
 
 	// Create services
 	configSvc := service.NewConfigService(p.ScriptsDir, p.DefaultDataDir)
-	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, nil)
+	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, executor)
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
-	networkSvc := service.NewNetworkService(nil)
-	logSvc := service.NewLogService(nil)
+	networkSvc := service.NewNetworkService(executor)
+	logSvc := service.NewLogService(executor)
 
 	// Create handler dependencies
 	deps := &handler.Deps{
