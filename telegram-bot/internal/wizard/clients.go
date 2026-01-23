@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -71,9 +72,17 @@ func (s *ClientsStep) HandleCallback(cb *tgbotapi.CallbackQuery, state *State) {
 
 	// Handle route: prefix callbacks
 	if strings.HasPrefix(data, "route:") {
+		// Validate we're in the correct step
+		if state.GetStep() != StepClientRoute {
+			return
+		}
+		pendingIP := state.GetPendingIP()
+		if pendingIP == "" {
+			return
+		}
 		route := strings.TrimPrefix(data, "route:")
 		state.AddClient(ClientRoute{
-			IP:    state.GetPendingIP(),
+			IP:    pendingIP,
 			Route: route,
 		})
 		state.SetPendingIP("")
@@ -143,8 +152,8 @@ func isValidLANIP(ip string) bool {
 	// Validate each part is a number 0-255
 	nums := make([]int, 4)
 	for i, p := range parts {
-		var n int
-		if _, err := fmt.Sscanf(p, "%d", &n); err != nil || n < 0 || n > 255 {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 {
 			return false
 		}
 		nums[i] = n

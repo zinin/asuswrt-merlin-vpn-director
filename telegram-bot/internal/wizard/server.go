@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -54,8 +55,12 @@ func (s *ServerStep) HandleCallback(cb *tgbotapi.CallbackQuery, state *State) {
 		return
 	}
 
-	var idx int
-	fmt.Sscanf(data, "server:%d", &idx)
+	idxStr := strings.TrimPrefix(data, "server:")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		s.deps.Sender.Send(cb.Message.Chat.ID, telegram.EscapeMarkdownV2("Invalid server index"))
+		return
+	}
 
 	// Validate server index bounds
 	servers, err := s.deps.Config.LoadServers()

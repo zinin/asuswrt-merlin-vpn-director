@@ -23,7 +23,11 @@ func NewConfirmStep(deps *StepDeps) *ConfirmStep {
 
 // Render displays the confirmation UI with summary of selections
 func (s *ConfirmStep) Render(chatID int64, state *State) {
-	servers, _ := s.deps.Config.LoadServers()
+	servers, err := s.deps.Config.LoadServers()
+	if err != nil {
+		s.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2("Failed to load servers"))
+		return
+	}
 
 	serverIndex := state.GetServerIndex()
 	exclusions := state.GetExclusions()
@@ -33,7 +37,7 @@ func (s *ConfirmStep) Render(chatID int64, state *State) {
 	sb.WriteString(telegram.EscapeMarkdownV2("Step 4/4: Confirmation") + "\n\n")
 
 	// Show selected server
-	if serverIndex < len(servers) {
+	if serverIndex >= 0 && serverIndex < len(servers) {
 		srv := servers[serverIndex]
 		sb.WriteString(telegram.EscapeMarkdownV2(fmt.Sprintf("Xray server: %s (%s)", srv.Name, srv.IP)) + "\n")
 	}

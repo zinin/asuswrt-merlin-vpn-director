@@ -47,6 +47,18 @@ func (s *ExclusionsStep) HandleCallback(cb *tgbotapi.CallbackQuery, state *State
 		return
 	}
 
+	// Validate exclusion code exists in DefaultExclusions
+	valid := false
+	for _, code := range DefaultExclusions {
+		if code == ex {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return // Ignore unknown exclusion codes
+	}
+
 	// Toggle the exclusion
 	state.ToggleExclusion(ex)
 
