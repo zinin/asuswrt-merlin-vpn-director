@@ -482,6 +482,121 @@ func TestClientsStep_HandleCallback_IgnoresUnrelated(t *testing.T) {
 	})
 }
 
+func TestClientsStep_HandleCallback_InvalidRoute(t *testing.T) {
+	t.Run("rejects invalid route with error message", func(t *testing.T) {
+		sender := &mockSender{}
+		deps := &StepDeps{
+			Sender: sender,
+		}
+
+		step := NewClientsStep(deps, nil)
+
+		state := &State{
+			ChatID:     123,
+			Step:       StepClientRoute,
+			Exclusions: make(map[string]bool),
+			Clients:    []ClientRoute{},
+			PendingIP:  "192.168.1.100",
+		}
+
+		cb := &tgbotapi.CallbackQuery{
+			Data: "route:invalid_route",
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{ID: 123},
+			},
+		}
+
+		step.HandleCallback(cb, state)
+
+		// Should NOT add client
+		clients := state.GetClients()
+		if len(clients) != 0 {
+			t.Errorf("expected 0 clients for invalid route, got %d", len(clients))
+		}
+
+		// Should stay in StepClientRoute
+		if state.GetStep() != StepClientRoute {
+			t.Errorf("expected step to remain %s, got %s", StepClientRoute, state.GetStep())
+		}
+
+		// Should send error message
+		if !strings.Contains(sender.lastText, "Invalid") {
+			t.Errorf("expected error message about invalid route, got '%s'", sender.lastText)
+		}
+	})
+}
+
+func TestClientsStep_HandleCallback_RouteWrongStep(t *testing.T) {
+	t.Run("ignores route callback when not in StepClientRoute", func(t *testing.T) {
+		sender := &mockSender{}
+		deps := &StepDeps{
+			Sender: sender,
+		}
+
+		step := NewClientsStep(deps, nil)
+
+		state := &State{
+			ChatID:     123,
+			Step:       StepClients, // Wrong step for route callback
+			Exclusions: make(map[string]bool),
+			Clients:    []ClientRoute{},
+			PendingIP:  "192.168.1.100",
+		}
+
+		cb := &tgbotapi.CallbackQuery{
+			Data: "route:xray",
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{ID: 123},
+			},
+		}
+
+		step.HandleCallback(cb, state)
+
+		// Should NOT add client
+		clients := state.GetClients()
+		if len(clients) != 0 {
+			t.Errorf("expected 0 clients when in wrong step, got %d", len(clients))
+		}
+
+		// Should stay in StepClients
+		if state.GetStep() != StepClients {
+			t.Errorf("expected step to remain %s, got %s", StepClients, state.GetStep())
+		}
+	})
+
+	t.Run("ignores route callback when pendingIP is empty", func(t *testing.T) {
+		sender := &mockSender{}
+		deps := &StepDeps{
+			Sender: sender,
+		}
+
+		step := NewClientsStep(deps, nil)
+
+		state := &State{
+			ChatID:     123,
+			Step:       StepClientRoute,
+			Exclusions: make(map[string]bool),
+			Clients:    []ClientRoute{},
+			PendingIP:  "", // Empty pending IP
+		}
+
+		cb := &tgbotapi.CallbackQuery{
+			Data: "route:xray",
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{ID: 123},
+			},
+		}
+
+		step.HandleCallback(cb, state)
+
+		// Should NOT add client
+		clients := state.GetClients()
+		if len(clients) != 0 {
+			t.Errorf("expected 0 clients when pendingIP is empty, got %d", len(clients))
+		}
+	})
+}
+
 func TestClientsStep_HandleMessage_ValidIP(t *testing.T) {
 	t.Run("accepts valid IP and moves to StepClientRoute", func(t *testing.T) {
 		sender := &mockSender{}
