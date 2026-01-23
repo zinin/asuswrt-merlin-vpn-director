@@ -9,7 +9,10 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
 )
 
-const defaultLogLines = 20
+const (
+	defaultLogLines = 20
+	maxLogLines     = 500
+)
 
 // MiscHandler handles miscellaneous commands
 type MiscHandler struct {
@@ -81,6 +84,11 @@ func (h *MiscHandler) HandleLogs(msg *tgbotapi.Message) {
 		if n, err := strconv.Atoi(args[1]); err == nil && n > 0 {
 			lines = n
 		}
+	}
+
+	// Limit maximum lines to prevent resource exhaustion
+	if lines > maxLogLines {
+		lines = maxLogLines
 	}
 
 	if source == "bot" || source == "all" {

@@ -440,3 +440,26 @@ func TestServersHandler_HandleCallback_LoadError(t *testing.T) {
 		t.Errorf("expected no message edit on error")
 	}
 }
+
+func TestServersHandler_HandleCallback_NilMessage(t *testing.T) {
+	sender := &mockSenderWithKeyboard{}
+	config := &mockConfigStore{}
+
+	deps := &Deps{Sender: sender, Config: config}
+	h := NewServersHandler(deps)
+
+	// Inline callbacks may have nil Message
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "callback_nil",
+		Data:    "servers:page:0",
+		Message: nil,
+	}
+
+	// Should not panic
+	h.HandleCallback(cb)
+
+	// Should still acknowledge callback
+	if sender.lastAckID != "callback_nil" {
+		t.Errorf("expected callback to be acknowledged even with nil Message")
+	}
+}

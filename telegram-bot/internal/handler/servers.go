@@ -42,11 +42,16 @@ func (h *ServersHandler) HandleServers(msg *tgbotapi.Message) {
 
 // HandleCallback handles servers pagination callbacks (servers:page:N)
 func (h *ServersHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
-	chatID := cb.Message.Chat.ID
-	data := cb.Data
-
 	// Acknowledge callback
 	h.deps.Sender.AckCallback(cb.ID)
+
+	// Guard against nil Message (inline mode callbacks)
+	if cb.Message == nil {
+		return
+	}
+
+	chatID := cb.Message.Chat.ID
+	data := cb.Data
 
 	// Parse page number from "servers:page:N"
 	var page int

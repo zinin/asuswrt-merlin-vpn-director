@@ -278,3 +278,32 @@ func TestMiscHandler_HandleLogs_LinesOnly(t *testing.T) {
 		t.Errorf("expected 30 lines, got %d", logReader.calls[0].lines)
 	}
 }
+
+func TestMiscHandler_HandleLogs_MaxLinesLimit(t *testing.T) {
+	sender := &mockSender{}
+	logReader := &mockLogReader{output: "log"}
+	testPaths := paths.Paths{
+		BotLogPath: "/tmp/bot.log",
+		VPNLogPath: "/tmp/vpn.log",
+	}
+	deps := &Deps{Sender: sender, Logs: logReader, Paths: testPaths}
+	h := NewMiscHandler(deps)
+
+	// Request more than maxLogLines (500)
+	msg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 100},
+		Text: "/logs bot 99999",
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "bot_command", Offset: 0, Length: 5},
+		},
+	}
+	h.HandleLogs(msg)
+
+	if len(logReader.calls) != 1 {
+		t.Fatalf("expected 1 log read call, got %d", len(logReader.calls))
+	}
+	// Should be capped at maxLogLines (500)
+	if logReader.calls[0].lines != 500 {
+		t.Errorf("expected 500 lines (maxLogLines), got %d", logReader.calls[0].lines)
+	}
+}
