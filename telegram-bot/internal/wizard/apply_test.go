@@ -483,5 +483,334 @@ func TestApplier_Apply_SkipsXrayGenForInvalidServerIndex(t *testing.T) {
 		if !vpnDirector.applyCalled {
 			t.Error("expected Apply to be called even with invalid server index")
 		}
+
+		// Should have warning message about invalid server
+		hasWarning := false
+		for _, msg := range sender.messages {
+			if msg == "Warning: Invalid server selection, Xray config not updated" {
+				hasWarning = true
+				break
+			}
+		}
+		if !hasWarning {
+			t.Error("expected warning message about invalid server selection")
+		}
+	})
+}
+
+func TestApplier_Apply_XrayGenerateError(t *testing.T) {
+	t.Run("continues on Xray generation error", func(t *testing.T) {
+		manager := &trackingManager{}
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers: []vpnconfig.Server{
+				{Name: "Server1", IP: "1.2.3.4"},
+			},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{
+				DataDir: "/opt/vpn-director/data",
+				Xray:    vpnconfig.XrayConfig{},
+				TunnelDirector: vpnconfig.TunnelDirectorConfig{
+					Tunnels: make(map[string]vpnconfig.TunnelConfig),
+				},
+			},
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{
+			generateErr: errors.New("template error"),
+		}
+
+		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
+
+		state := &State{
+			ChatID:      123,
+			Step:        StepConfirm,
+			ServerIndex: 0,
+			Exclusions:  map[string]bool{"ru": true},
+			Clients:     []ClientRoute{},
+		}
+
+		err := applier.Apply(123, state)
+
+		// Should succeed despite xray generation error
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+
+		// Xray generation was attempted
+		if !xrayGen.generateCalled {
+			t.Error("expected GenerateConfig to be called")
+		}
+
+		// VPN apply should still be called
+		if !vpnDirector.applyCalled {
+			t.Error("expected Apply to be called despite xray error")
+		}
+
+		// Should have error message about xray generation
+		hasError := false
+		for _, msg := range sender.messages {
+			if msg == "Xray config generation error: template error" {
+				hasError = true
+				break
+			}
+		}
+		if !hasError {
+			t.Error("expected error message about xray generation failure")
+		}
+	})
+}
+
+func TestApplier_Apply_SaveConfigError(t *testing.T) {
+	t.Run("returns error on save config failure", func(t *testing.T) {
+		manager := &trackingManager{}
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers: []vpnconfig.Server{
+				{Name: "Server1", IP: "1.2.3.4"},
+			},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{
+				DataDir: "/opt/vpn-director/data",
+				Xray:    vpnconfig.XrayConfig{},
+				TunnelDirector: vpnconfig.TunnelDirectorConfig{
+					Tunnels: make(map[string]vpnconfig.TunnelConfig),
+				},
+			},
+			saveErr: errors.New("disk full"),
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{}
+
+		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
+
+		state := &State{
+			ChatID:      123,
+			Step:        StepConfirm,
+			ServerIndex: 0,
+			Exclusions:  map[string]bool{"ru": true},
+			Clients:     []ClientRoute{},
+		}
+
+		err := applier.Apply(123, state)
+
+		// Should return error
+		if err == nil {
+			t.Error("expected error, got nil")
+		}
+
+		// State should still be cleared
+		if len(manager.clearedChatIDs) != 1 {
+			t.Error("expected state to be cleared on save error")
+		}
+
+		// VPN apply should NOT be called
+		if vpnDirector.applyCalled {
+			t.Error("expected Apply NOT to be called on save error")
+		}
+
+		// Should have error message
+		hasError := false
+		for _, msg := range sender.messages {
+			if msg == "Save error: disk full" {
+				hasError = true
+				break
+			}
+		}
+		if !hasError {
+			t.Error("expected error message about save failure")
+		}
+	})
+}
+
+func TestApplier_Apply_RestartXrayError(t *testing.T) {
+	t.Run("returns error on Xray restart failure", func(t *testing.T) {
+		manager := &trackingManager{}
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers: []vpnconfig.Server{
+				{Name: "Server1", IP: "1.2.3.4"},
+			},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{
+				DataDir: "/opt/vpn-director/data",
+				Xray:    vpnconfig.XrayConfig{},
+				TunnelDirector: vpnconfig.TunnelDirectorConfig{
+					Tunnels: make(map[string]vpnconfig.TunnelConfig),
+				},
+			},
+		}
+		vpnDirector := &mockVPNDirector{
+			restartXrayErr: errors.New("xray not running"),
+		}
+		xrayGen := &mockXrayGenerator{}
+
+		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
+
+		state := &State{
+			ChatID:      123,
+			Step:        StepConfirm,
+			ServerIndex: 0,
+			Exclusions:  map[string]bool{"ru": true},
+			Clients:     []ClientRoute{},
+		}
+
+		err := applier.Apply(123, state)
+
+		// Should return error
+		if err == nil {
+			t.Error("expected error, got nil")
+		}
+
+		// VPN apply was called
+		if !vpnDirector.applyCalled {
+			t.Error("expected Apply to be called before restart error")
+		}
+
+		// RestartXray was called
+		if !vpnDirector.restartXrayCalled {
+			t.Error("expected RestartXray to be called")
+		}
+
+		// State should still be cleared
+		if len(manager.clearedChatIDs) != 1 {
+			t.Error("expected state to be cleared on restart error")
+		}
+	})
+}
+
+func TestApplier_Apply_ExclusionsSorted(t *testing.T) {
+	t.Run("exclusions are sorted for deterministic config", func(t *testing.T) {
+		manager := &trackingManager{}
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers: []vpnconfig.Server{
+				{Name: "Server1", IP: "1.2.3.4"},
+			},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{
+				DataDir: "/opt/vpn-director/data",
+				Xray:    vpnconfig.XrayConfig{},
+				TunnelDirector: vpnconfig.TunnelDirectorConfig{
+					Tunnels: make(map[string]vpnconfig.TunnelConfig),
+				},
+			},
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{}
+
+		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
+
+		state := &State{
+			ChatID:      123,
+			Step:        StepConfirm,
+			ServerIndex: 0,
+			Exclusions:  map[string]bool{"ua": true, "by": true, "ru": true},
+			Clients: []ClientRoute{
+				{IP: "192.168.1.10", Route: "wgc1"},
+			},
+		}
+
+		_ = applier.Apply(123, state)
+
+		// Verify exclusions are sorted
+		expected := []string{"by", "ru", "ua"}
+		if len(configStore.savedConfig.Xray.ExcludeSets) != 3 {
+			t.Fatalf("expected 3 exclusions, got %d", len(configStore.savedConfig.Xray.ExcludeSets))
+		}
+		for i, exp := range expected {
+			if configStore.savedConfig.Xray.ExcludeSets[i] != exp {
+				t.Errorf("expected exclusion[%d]='%s', got '%s'", i, exp, configStore.savedConfig.Xray.ExcludeSets[i])
+			}
+		}
+	})
+}
+
+func TestApplier_Apply_FiltersEmptyServerIPs(t *testing.T) {
+	t.Run("filters out empty server IPs", func(t *testing.T) {
+		manager := &trackingManager{}
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers: []vpnconfig.Server{
+				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server2", IP: ""},          // Empty IP
+				{Name: "Server3", IP: "5.6.7.8"},
+			},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{
+				DataDir: "/opt/vpn-director/data",
+				Xray:    vpnconfig.XrayConfig{},
+				TunnelDirector: vpnconfig.TunnelDirectorConfig{
+					Tunnels: make(map[string]vpnconfig.TunnelConfig),
+				},
+			},
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{}
+
+		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
+
+		state := &State{
+			ChatID:      123,
+			Step:        StepConfirm,
+			ServerIndex: 0,
+			Exclusions:  map[string]bool{"ru": true},
+			Clients:     []ClientRoute{},
+		}
+
+		_ = applier.Apply(123, state)
+
+		// Should have only 2 server IPs (empty filtered out)
+		if len(configStore.savedConfig.Xray.Servers) != 2 {
+			t.Errorf("expected 2 server IPs, got %d: %v", len(configStore.savedConfig.Xray.Servers), configStore.savedConfig.Xray.Servers)
+		}
+	})
+}
+
+func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
+	t.Run("skips clients with invalid routes", func(t *testing.T) {
+		manager := &trackingManager{}
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers: []vpnconfig.Server{
+				{Name: "Server1", IP: "1.2.3.4"},
+			},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{
+				DataDir: "/opt/vpn-director/data",
+				Xray:    vpnconfig.XrayConfig{},
+				TunnelDirector: vpnconfig.TunnelDirectorConfig{
+					Tunnels: make(map[string]vpnconfig.TunnelConfig),
+				},
+			},
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{}
+
+		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
+
+		state := &State{
+			ChatID:      123,
+			Step:        StepConfirm,
+			ServerIndex: 0,
+			Exclusions:  map[string]bool{"ru": true},
+			Clients: []ClientRoute{
+				{IP: "192.168.1.10", Route: "xray"},
+				{IP: "192.168.1.20", Route: "invalid_route"}, // Invalid
+				{IP: "192.168.1.30", Route: "wgc1"},
+			},
+		}
+
+		_ = applier.Apply(123, state)
+
+		// Should have 1 xray client
+		if len(configStore.savedConfig.Xray.Clients) != 1 {
+			t.Errorf("expected 1 xray client, got %d", len(configStore.savedConfig.Xray.Clients))
+		}
+
+		// Should have 1 tunnel (wgc1 only, invalid_route skipped)
+		if len(configStore.savedConfig.TunnelDirector.Tunnels) != 1 {
+			t.Errorf("expected 1 tunnel, got %d", len(configStore.savedConfig.TunnelDirector.Tunnels))
+		}
+		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["wgc1"]; !ok {
+			t.Error("expected tunnel 'wgc1' to exist")
+		}
+		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["invalid_route"]; ok {
+			t.Error("expected tunnel 'invalid_route' NOT to exist")
+		}
 	})
 }

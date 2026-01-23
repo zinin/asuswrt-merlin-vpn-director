@@ -70,15 +70,22 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	exclusions := state.GetExclusions()
 	serverIndex := state.GetServerIndex()
 
-	// Build exclusion list
+	// Build exclusion list (sorted for deterministic config)
 	var excl []string
 	for k, v := range exclusions {
 		if v {
 			excl = append(excl, k)
 		}
 	}
+	sort.Strings(excl)
 	if len(excl) == 0 {
 		excl = []string{"ru"}
+	}
+
+	// Build valid routes set for validation
+	validRoutes := make(map[string]bool)
+	for _, r := range RouteOptions {
+		validRoutes[r] = true
 	}
 
 	// Build new configuration
@@ -86,6 +93,10 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	tunnels := make(map[string]vpnconfig.TunnelConfig)
 
 	for _, c := range clients {
+		// Skip clients with invalid routes
+		if !validRoutes[c.Route] {
+			continue
+		}
 		if c.Route == "xray" {
 			xrayClients = append(xrayClients, c.IP)
 		} else {
@@ -107,11 +118,11 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		}
 	}
 
-	// Server IPs (unique and sorted)
+	// Server IPs (unique, non-empty, sorted)
 	seen := make(map[string]bool)
 	var serverIPs []string
 	for _, s := range servers {
-		if !seen[s.IP] {
+		if s.IP != "" && !seen[s.IP] {
 			seen[s.IP] = true
 			serverIPs = append(serverIPs, s.IP)
 		}
@@ -140,6 +151,8 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		} else {
 			a.sender.SendPlain(chatID, "xray/config.json updated")
 		}
+	} else {
+		a.sender.SendPlain(chatID, "Warning: Invalid server selection, Xray config not updated")
 	}
 
 	// Apply configuration via vpn-director

@@ -75,6 +75,11 @@ func (h *Handler) Start(chatID int64) {
 func (h *Handler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 	h.sender.AckCallback(cb.ID) // Convention: always first
 
+	// Guard against nil Message (inline mode or channel callbacks)
+	if cb.Message == nil || cb.Message.Chat == nil {
+		return
+	}
+
 	chatID := cb.Message.Chat.ID
 	data := cb.Data
 

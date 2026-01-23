@@ -281,3 +281,89 @@ func TestHandler_GetManager(t *testing.T) {
 		}
 	})
 }
+
+func TestHandler_HandleCallback_NilMessage(t *testing.T) {
+	t.Run("handles nil Message gracefully", func(t *testing.T) {
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers:   []vpnconfig.Server{},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{},
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{}
+
+		handler := NewHandler(sender, configStore, vpnDirector, xrayGen)
+
+		// Callback with nil Message (can happen in inline mode)
+		cb := &tgbotapi.CallbackQuery{
+			ID:      "cb1",
+			Data:    "server:0",
+			Message: nil,
+		}
+
+		// Should not panic
+		handler.HandleCallback(cb)
+
+		// No messages should be sent (except maybe AckCallback)
+		// This just verifies no panic occurred
+	})
+
+	t.Run("handles nil Chat gracefully", func(t *testing.T) {
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers:   []vpnconfig.Server{},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{},
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{}
+
+		handler := NewHandler(sender, configStore, vpnDirector, xrayGen)
+
+		// Callback with nil Chat
+		cb := &tgbotapi.CallbackQuery{
+			ID:      "cb1",
+			Data:    "server:0",
+			Message: &tgbotapi.Message{Chat: nil},
+		}
+
+		// Should not panic
+		handler.HandleCallback(cb)
+	})
+}
+
+func TestHandler_HandleCallback_CancelWithoutSession(t *testing.T) {
+	t.Run("cancel works even without active session", func(t *testing.T) {
+		sender := &trackingSender{}
+		configStore := &trackingConfigStore{
+			servers:   []vpnconfig.Server{},
+			vpnConfig: &vpnconfig.VPNDirectorConfig{},
+		}
+		vpnDirector := &mockVPNDirector{}
+		xrayGen := &mockXrayGenerator{}
+
+		handler := NewHandler(sender, configStore, vpnDirector, xrayGen)
+
+		// No Start() called - no session exists
+
+		cb := &tgbotapi.CallbackQuery{
+			ID:      "cb1",
+			Data:    "cancel",
+			Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}},
+		}
+
+		// Should not panic and should send cancellation message
+		handler.HandleCallback(cb)
+
+		// Verify cancellation message was sent
+		found := false
+		for _, msg := range sender.messages {
+			if msg == "Configuration cancelled" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected 'Configuration cancelled' message, got: %v", sender.messages)
+		}
+	})
+}
