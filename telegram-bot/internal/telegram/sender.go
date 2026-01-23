@@ -1,7 +1,7 @@
 package telegram
 
 import (
-	"log"
+	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -39,7 +39,7 @@ func (s *Sender) Send(chatID int64, text string) error {
 	msg.ParseMode = "MarkdownV2"
 	_, err := s.api.Send(msg)
 	if err != nil {
-		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
+		slog.Error("Failed to send message", "chat_id", chatID, "error", err)
 	}
 	return err
 }
@@ -49,7 +49,7 @@ func (s *Sender) SendPlain(chatID int64, text string) error {
 	msg := tgbotapi.NewMessage(chatID, text)
 	_, err := s.api.Send(msg)
 	if err != nil {
-		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
+		slog.Error("Failed to send message", "chat_id", chatID, "error", err)
 	}
 	return err
 }
@@ -99,7 +99,7 @@ func (s *Sender) SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.I
 	msg.ReplyMarkup = keyboard
 	_, err := s.api.Send(msg)
 	if err != nil {
-		log.Printf("[ERROR] Failed to send message with keyboard to %d: %v", chatID, err)
+		slog.Error("Failed to send message with keyboard", "chat_id", chatID, "error", err)
 	}
 	return err
 }
@@ -116,7 +116,7 @@ func (s *Sender) EditMessage(chatID int64, msgID int, text string, keyboard tgbo
 	edit.ParseMode = "MarkdownV2"
 	_, err := s.api.Send(edit)
 	if err != nil {
-		log.Printf("[ERROR] Failed to edit message %d: %v", msgID, err)
+		slog.Error("Failed to edit message", "msg_id", msgID, "error", err)
 	}
 	return err
 }
@@ -125,7 +125,7 @@ func (s *Sender) EditMessage(chatID int64, msgID int, text string, keyboard tgbo
 func (s *Sender) AckCallback(callbackID string) error {
 	_, err := s.api.Request(tgbotapi.NewCallback(callbackID, ""))
 	if err != nil {
-		log.Printf("[ERROR] Failed to acknowledge callback: %v", err)
+		slog.Error("Failed to acknowledge callback", "error", err)
 	}
 	return err
 }
