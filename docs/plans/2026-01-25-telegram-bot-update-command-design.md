@@ -2,35 +2,145 @@
 
 ## Overview
 
-Implement `/update` command for the Telegram bot that updates all VPN Director components (scripts, templates, bot binary) to the latest GitHub release.
+Implement `/update` command for the Telegram bot that updates all VPN Director components to the latest GitHub release:
+- Shell scripts (`vpn-director.sh`, `lib/*.sh`, etc.)
+- Configuration templates (`*.template`)
+- Init.d scripts and JFFS hooks
+- Telegram bot binary
 
 ## Requirements
 
-- Update all components: scripts, templates, and bot binary
-- Source: GitHub Releases API for version info, raw.githubusercontent.com for scripts by tag, release assets for binary
-- Compare versions semantically (major.minor.patch) - only update if latest > current
+- Update all components in one operation
+- Source: GitHub Releases API + raw.githubusercontent.com
+- Semantic version comparison - only update if latest > current
 - Command disabled in dev mode (CLI flag `--dev`)
 - Lock file prevents concurrent updates
-- Bot remains responsive during downloads (async), external script handles restart
+- Bot remains responsive during downloads
+- External shell script handles bot restart
+
+## Architecture Overview
+
+### Why External Script?
+
+Bot cannot replace its own binary while running. Solution:
+
+1. Bot downloads all files to `/tmp/`
+2. Bot generates and launches a shell script (detached)
+3. Shell script stops the bot, replaces files, restarts bot
+4. Bot reads notification file on startup and reports success
+
+### Why Hybrid Download Approach?
+
+GitHub releases contain only binary assets (`telegram-bot-arm64`, `telegram-bot-arm`). Scripts are in the repository.
+
+Solution:
+- **Binary**: Download from release assets (`releases/latest/download/telegram-bot-arm64`)
+- **Scripts**: Download from raw.githubusercontent.com by tag (`refs/tags/v1.2.0/router/opt/...`)
+
+This avoids changing CI to bundle scripts into release archives.
+
+### Why Download Before Stop?
+
+Downloading can fail (network issues, GitHub unavailable). If we stop the bot first and then download fails, user is left without a working bot.
+
+Solution: Download everything to `/tmp/` first, validate all files exist, only then stop and replace.
 
 ## Design Decisions
 
-Decisions made during design review:
+### Security: Integrity Verification
 
-| Topic | Decision | Rationale |
-|-------|----------|-----------|
-| **Integrity verification** | Trust HTTPS/GitHub | Same approach as install.sh; checksums/signatures can be added later |
-| **Download blocking** | Run in goroutine | Bot stays responsive during downloads |
-| **Version string** | Use raw `Version`, not `versionString()` | Handler receives clean tag (e.g., "v1.2.0"), not formatted string with commit/date |
-| **Script errors** | Fail-fast with `set -e` | If something fails, user investigates manually |
-| **File list sync** | Manual duplication | List duplicated in install.sh and bot; sync manually when adding files |
-| **Missing binary** | Fail entirely | Only arm64/arm supported, assets always present in releases |
-| **Lock file** | Contains PID | Check if process alive to detect stale locks |
-| **pgrep dependency** | Required | Part of project dependencies (procps-ng-pgrep) |
-| **jffs/scripts/** | Overwrite | Same as install.sh; user customizations will be lost |
-| **VPN Director restart** | Not automatic | User restarts manually if needed after update |
-| **Dev mode signal** | CLI flag `--dev` only | Not based on Version value |
-| **Semver format** | Strict `vX.Y.Z` only | No pre-release suffixes; GitHub releases/latest excludes pre-releases anyway |
+**Decision:** Trust HTTPS/GitHub (same as `install.sh`)
+
+**Rationale:** HTTPS guarantees files come from GitHub, not a MITM attacker. This is the same trust model as the current installer. Adding checksums/signatures would protect against GitHub account compromise but adds complexity. Can be added later if needed.
+
+### Concurrency: Download Blocking
+
+**Decision:** Run downloads in a goroutine
+
+**Rationale:** Downloads may take time on slow connections. Running synchronously would block all bot commands. With goroutine, bot stays responsive and can process other commands while downloading.
+
+**Implementation:** Handler starts goroutine, sends progress messages back to chat via channel or callback.
+
+### Version Handling
+
+**Decision:** Pass raw `Version` (e.g., "v1.2.0") to handler, not `versionString()` (e.g., "v1.2.0 (abc1234, 2026-01-25)")
+
+**Rationale:** Semver parser expects clean version string. The formatted version string with commit and date would fail to parse.
+
+**Implementation:** `Deps` struct receives separate `Version` field with raw tag value from ldflags.
+
+### Shell Script Error Handling
+
+**Decision:** Fail-fast with `set -e`
+
+**Rationale:** If any step fails (stop, copy, start), continuing could leave system in inconsistent state. Better to fail immediately and let user investigate. Lock file remains, preventing retries until manual cleanup.
+
+**Alternative considered:** Trap with cleanup - but this adds complexity and may mask the actual error.
+
+### File List Synchronization
+
+**Decision:** Manual duplication between `install.sh` and bot
+
+**Rationale:** Files rarely change. When adding new files, developer must update both places. A shared manifest would add complexity for little benefit.
+
+### Missing Binary Asset
+
+**Decision:** Fail update entirely if binary not found for architecture
+
+**Rationale:** Only arm64 and arm are supported. These assets will always be present in releases. Proceeding with scripts-only would leave bot at old version, which is confusing.
+
+### Lock File Format
+
+**Decision:** Lock file contains PID of bot process
+
+**Rationale:** If bot crashes after creating lock but before script runs, lock becomes stale. By storing PID, we can check if the process is still alive and remove stale locks automatically.
+
+**Format:**
+```
+12345
+```
+
+**Check logic:**
+1. Lock doesn't exist → proceed
+2. Lock exists, read PID
+3. `kill -0 $PID` succeeds → update in progress, reject
+4. `kill -0 $PID` fails → stale lock, remove and proceed
+
+### Dependencies
+
+**Decision:** Require `pgrep` (from `procps-ng-pgrep`)
+
+**Rationale:** Already in project dependencies per README. Script uses `pgrep -f telegram-bot` to wait for process exit. No fallback to `pidof` needed.
+
+### JFFS Scripts Handling
+
+**Decision:** Overwrite `firewall-start` and `wan-event`
+
+**Rationale:** Same behavior as `install.sh`. Users who customize these files should know that updates will overwrite them. Merging user changes is too complex and error-prone.
+
+### VPN Director Restart
+
+**Decision:** Do not restart VPN Director/Xray after update
+
+**Rationale:** Updated scripts/templates don't affect running configuration. User can restart manually if needed via `/restart` command or `vpn-director.sh restart`.
+
+### Dev Mode Detection
+
+**Decision:** Check CLI flag `--dev` only, not `Version == "dev"`
+
+**Rationale:** Dev mode is an explicit choice when starting the bot. A release build without proper tag shouldn't accidentally enable dev mode. The `--dev` flag is already used throughout the bot for this purpose.
+
+### Semver Format
+
+**Decision:** Strict `vX.Y.Z` format only, no pre-release tags
+
+**Rationale:** GitHub API `releases/latest` already excludes pre-releases. Parser only needs to handle stable versions. Simpler implementation.
+
+### Access Control
+
+**Decision:** All authorized users can run `/update`
+
+**Rationale:** Consistent with other commands. No separate "admin" concept exists in the bot. If someone is in `allowed_users`, they have full control.
 
 ## Flow
 
@@ -50,60 +160,78 @@ User: /update
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  2. Get latest release from GitHub API                          │
-│     GET api.github.com/repos/.../releases/latest                │
+│     GET api.github.com/repos/zinin/asuswrt-merlin-vpn-director/ │
+│         releases/latest                                         │
+│     Extract: tag_name, assets[].browser_download_url            │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. Compare versions (semver)                                   │
+│     Parse current version (from ldflags Version variable)       │
+│     Parse latest version (from tag_name)                        │
 │     current >= latest? → "Already running the latest version"   │
 │     Parse error? → Fail with error message                      │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  4. Create lock (with PID), send "Starting update..."           │
+│  4. Create lock file (write current PID)                        │
+│     Send: "Starting update v1.1.0 → v1.2.0..."                  │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  5. Download all files in GOROUTINE                             │
+│  5. Download all files in GOROUTINE to /tmp/vpn-director-update/│
 │     - Scripts from raw.githubusercontent.com/refs/tags/{tag}/   │
-│     - Binary from release assets (arm64 or arm)                 │
-│     - Missing binary asset → Fail entirely                      │
+│     - Binary from release assets (arm64 or arm by runtime.GOARCH│
+│     - Missing binary asset? → Remove lock, fail with error      │
+│     - Any download fails? → Remove lock, fail with error        │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  6. Send "Files downloaded, starting update..."                 │
+│  6. Send: "Files downloaded, starting update..."                │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  7. Generate and run update.sh (detached)                       │
-│     Bot writes chat_id, versions into script body via template  │
+│  7. Generate update.sh from Go template                         │
+│     Embed into script body:                                     │
+│       CHAT_ID=123456789                                         │
+│       OLD_VERSION="v1.1.0"                                      │
+│       NEW_VERSION="v1.2.0"                                      │
+│     Run script detached: nohup /bin/sh update.sh &              │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  8. Send "Update script started, bot will restart..."           │
-│     (bot continues running, script will kill it)                │
+│  8. Send: "Update script started, bot will restart in a few     │
+│           seconds..."                                           │
+│     (bot continues running, script will stop it)                │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Shell Script Flow
 
-Script uses `set -e` for fail-fast behavior. If any step fails, script exits immediately.
+Script uses `set -e` for fail-fast behavior. Variables are embedded by bot when generating the script.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  0. set -e (fail-fast on any error)                             │
+│  0. Header                                                      │
+│     #!/bin/sh                                                   │
+│     set -e                                                      │
+│     CHAT_ID=123456789  (embedded by bot)                        │
+│     OLD_VERSION="v1.1.0"                                        │
+│     NEW_VERSION="v1.2.0"                                        │
+│     UPDATE_DIR="/tmp/vpn-director-update"                       │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Unmonitor in monit (if available)                           │
-│     command -v monit && monit unmonitor telegram-bot            │
+│  1. Unmonitor in monit (if installed)                           │
+│     Prevents monit from restarting bot during file replacement  │
+│     command -v monit >/dev/null && monit unmonitor telegram-bot │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -111,138 +239,207 @@ Script uses `set -e` for fail-fast behavior. If any step fails, script exits imm
 │  2. Stop bot via init.d                                         │
 │     /opt/etc/init.d/S98telegram-bot stop                        │
 │     Wait for process to exit (poll via pgrep, max 30s)          │
+│     If still running after 30s → pkill -9                       │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. Copy files to target locations                              │
-│     Set permissions (chmod +x)                                  │
-│     Overwrites jffs/scripts/* (user customizations lost)        │
+│     cp files/opt/vpn-director/*.sh → /opt/vpn-director/         │
+│     cp files/opt/vpn-director/lib/*.sh → /opt/vpn-director/lib/ │
+│     cp files/*.template → respective locations                  │
+│     cp files/telegram-bot → /opt/vpn-director/telegram-bot      │
+│     cp files/jffs/scripts/* → /jffs/scripts/                    │
+│     chmod +x on all scripts and binary                          │
+│     NOTE: Overwrites any user customizations in jffs/scripts/   │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  4. Create notify.json with chat_id and versions                │
+│  4. Create notify.json for bot to read on startup               │
+│     {"chat_id":123456789,                                       │
+│      "old_version":"v1.1.0",                                    │
+│      "new_version":"v1.2.0"}                                    │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  5. Remove lock file                                            │
+│     rm -f $UPDATE_DIR/lock                                      │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  6. Re-monitor in monit (if available)                          │
-│     command -v monit && monit monitor telegram-bot              │
+│  6. Re-monitor in monit (if was unmonitored)                    │
+│     command -v monit >/dev/null && monit monitor telegram-bot   │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  7. Start bot via init.d                                        │
 │     /opt/etc/init.d/S98telegram-bot start                       │
-│     (VPN Director NOT restarted - user does manually if needed) │
+│     NOTE: VPN Director is NOT restarted automatically           │
+│           User runs /restart or vpn-director.sh restart if needed│
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  8. Cleanup: remove files/, update.sh                           │
+│  8. Cleanup                                                     │
+│     rm -rf $UPDATE_DIR/files/                                   │
+│     rm -f $UPDATE_DIR/update.sh                                 │
+│     (keep notify.json for bot, keep update.log for debugging)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Bot Startup
+## Bot Startup Notification
 
-On startup, bot checks for `/tmp/vpn-director-update/notify.json`:
-- If exists: read chat_id and versions, send "Update complete: v1.0.0 → v1.1.0", delete file and directory
-- If not exists: normal startup
+On every startup, bot checks for pending update notification:
+
+```go
+// In cmd/bot/main.go, before starting message polling
+if err := startup.CheckAndSendNotify(bot); err != nil {
+    slog.Warn("Failed to send update notification", "error", err)
+}
+```
+
+**Logic:**
+1. Check if `/tmp/vpn-director-update/notify.json` exists
+2. If not exists → normal startup, do nothing
+3. If exists → read JSON, parse chat_id and versions
+4. Send message: "Update complete: v1.1.0 → v1.2.0"
+5. Delete notify.json
+6. Delete `/tmp/vpn-director-update/` directory (cleanup)
+
+**notify.json format:**
+```json
+{
+  "chat_id": 123456789,
+  "old_version": "v1.1.0",
+  "new_version": "v1.2.0"
+}
+```
 
 ## Temporary Files
 
+All update-related files in single directory for easy cleanup:
+
 ```
 /tmp/vpn-director-update/
-├── lock                        # Lock file (contains PID)
-├── notify.json                 # Notification for bot after restart
-├── update.sh                   # Generated update script
-├── update.log                  # Script execution log
-└── files/                      # Downloaded files
-    ├── opt/vpn-director/       # Scripts
-    ├── opt/etc/xray/           # Templates
-    ├── jffs/scripts/           # Hooks
-    └── telegram-bot            # Binary
+├── lock                        # Lock file (contains PID, e.g., "12345")
+├── notify.json                 # Created by script, read by bot on startup
+├── update.sh                   # Generated shell script
+├── update.log                  # Script execution log for debugging
+└── files/                      # Downloaded files (mirrors target structure)
+    ├── opt/
+    │   ├── vpn-director/
+    │   │   ├── vpn-director.sh
+    │   │   ├── configure.sh
+    │   │   ├── import_server_list.sh
+    │   │   ├── setup_telegram_bot.sh
+    │   │   ├── vpn-director.json.template
+    │   │   └── lib/
+    │   │       ├── common.sh
+    │   │       ├── firewall.sh
+    │   │       ├── config.sh
+    │   │       ├── ipset.sh
+    │   │       ├── tunnel.sh
+    │   │       ├── tproxy.sh
+    │   │       └── send-email.sh
+    │   └── etc/
+    │       ├── init.d/
+    │       │   ├── S98telegram-bot
+    │       │   └── S99vpn-director
+    │       └── xray/
+    │           └── config.json.template
+    ├── jffs/
+    │   └── scripts/
+    │       ├── firewall-start
+    │       └── wan-event
+    └── telegram-bot            # Binary for current architecture
 ```
-
-## Lock File Format
-
-Lock file contains PID of the bot process that created it:
-
-```
-12345
-```
-
-When checking lock:
-1. If lock file doesn't exist → no update in progress
-2. If lock file exists, read PID
-3. Check if process with that PID is alive (`kill -0 $PID`)
-4. If alive → update in progress, reject new update
-5. If dead → stale lock, remove and proceed
 
 ## Version Comparison
 
-Strict semver only (`vX.Y.Z` or `X.Y.Z`). Pre-release tags not supported.
+Strict semver only. Pre-release tags (v1.2.3-rc1) not supported.
 
 ```go
 type Version struct {
     Major int
     Minor int
     Patch int
-    Raw   string
+    Raw   string  // Original string for display ("v1.2.3")
 }
 
 // ParseVersion parses "v1.2.3" or "1.2.3"
-// Returns error for invalid formats (e.g., "v1.2.3-rc1", "dev")
+// Returns error for:
+//   - "dev" (dev builds)
+//   - "v1.2.3-rc1" (pre-release)
+//   - "v1.2" (incomplete)
+//   - "invalid" (non-numeric)
 func ParseVersion(s string) (Version, error)
+
+// Compare returns:
+//   -1 if v < other
+//    0 if v == other
+//    1 if v > other
+func (v Version) Compare(other Version) int
 
 // IsOlderThan returns true if v < other
 func (v Version) IsOlderThan(other Version) bool
 ```
 
-**Important:** Handler must use raw `Version` variable (e.g., "v1.2.0"), NOT `versionString()` which includes commit and date.
-
 ## Makefile Changes
 
+Current Makefile produces version like "v1.2.0-5-gabc1234" when not exactly on a tag.
+
 ```makefile
-# Before: includes -N-gHASH suffix
+# Before: includes -N-gHASH suffix after tag
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
-# After: only tag name
+# After: only the tag name, or "dev" if no tags
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 ```
 
+This ensures `Version` variable contains clean semver that can be parsed.
+
 ## Files to Download
 
-Scripts (from raw.githubusercontent.com by tag):
-- `router/opt/vpn-director/vpn-director.sh`
-- `router/opt/vpn-director/configure.sh`
-- `router/opt/vpn-director/import_server_list.sh`
-- `router/opt/vpn-director/setup_telegram_bot.sh`
-- `router/opt/vpn-director/lib/common.sh`
-- `router/opt/vpn-director/lib/firewall.sh`
-- `router/opt/vpn-director/lib/config.sh`
-- `router/opt/vpn-director/lib/ipset.sh`
-- `router/opt/vpn-director/lib/tunnel.sh`
-- `router/opt/vpn-director/lib/tproxy.sh`
-- `router/opt/vpn-director/lib/send-email.sh`
-- `router/opt/vpn-director/vpn-director.json.template`
-- `router/opt/etc/xray/config.json.template`
-- `router/opt/etc/init.d/S99vpn-director`
-- `router/opt/etc/init.d/S98telegram-bot`
-- `router/jffs/scripts/firewall-start`
-- `router/jffs/scripts/wan-event`
+### Scripts (from raw.githubusercontent.com)
 
-Binary (from release assets):
-- `telegram-bot-arm64` or `telegram-bot-arm` (by architecture)
-- If asset not found → fail update entirely (don't proceed with scripts-only)
+URL pattern: `https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/refs/tags/{tag}/{path}`
 
-**Note:** File list is duplicated in install.sh. Keep in sync manually when adding new files.
+| Source Path | Target Path |
+|-------------|-------------|
+| `router/opt/vpn-director/vpn-director.sh` | `/opt/vpn-director/vpn-director.sh` |
+| `router/opt/vpn-director/configure.sh` | `/opt/vpn-director/configure.sh` |
+| `router/opt/vpn-director/import_server_list.sh` | `/opt/vpn-director/import_server_list.sh` |
+| `router/opt/vpn-director/setup_telegram_bot.sh` | `/opt/vpn-director/setup_telegram_bot.sh` |
+| `router/opt/vpn-director/vpn-director.json.template` | `/opt/vpn-director/vpn-director.json.template` |
+| `router/opt/vpn-director/lib/common.sh` | `/opt/vpn-director/lib/common.sh` |
+| `router/opt/vpn-director/lib/firewall.sh` | `/opt/vpn-director/lib/firewall.sh` |
+| `router/opt/vpn-director/lib/config.sh` | `/opt/vpn-director/lib/config.sh` |
+| `router/opt/vpn-director/lib/ipset.sh` | `/opt/vpn-director/lib/ipset.sh` |
+| `router/opt/vpn-director/lib/tunnel.sh` | `/opt/vpn-director/lib/tunnel.sh` |
+| `router/opt/vpn-director/lib/tproxy.sh` | `/opt/vpn-director/lib/tproxy.sh` |
+| `router/opt/vpn-director/lib/send-email.sh` | `/opt/vpn-director/lib/send-email.sh` |
+| `router/opt/etc/xray/config.json.template` | `/opt/etc/xray/config.json.template` |
+| `router/opt/etc/init.d/S99vpn-director` | `/opt/etc/init.d/S99vpn-director` |
+| `router/opt/etc/init.d/S98telegram-bot` | `/opt/etc/init.d/S98telegram-bot` |
+| `router/jffs/scripts/firewall-start` | `/jffs/scripts/firewall-start` |
+| `router/jffs/scripts/wan-event` | `/jffs/scripts/wan-event` |
+
+### Binary (from release assets)
+
+URL: From `assets[].browser_download_url` in releases/latest response
+
+| Architecture (`runtime.GOARCH`) | Asset Name |
+|--------------------------------|------------|
+| `arm64` | `telegram-bot-arm64` |
+| `arm` | `telegram-bot-arm` |
+
+If asset for current architecture not found → fail update entirely.
+
+**Note:** File list is duplicated in `install.sh`. Keep in sync manually when adding new files.
 
 ## User Messages (English)
 
@@ -262,12 +459,19 @@ Binary (from release assets):
 
 ## Error Handling
 
-- All downloads complete before stopping bot (minimizes risk)
-- Downloads run in goroutine (bot stays responsive)
-- Lock file contains PID to detect stale locks from crashed updates
-- Shell script uses `set -e` for fail-fast behavior
-- If bot fails to start after update: user must investigate manually (monit may restart)
-- Missing binary asset for architecture → fail entirely, don't proceed with scripts-only
+| Error | Handling |
+|-------|----------|
+| Dev mode enabled | Reject immediately with message |
+| Lock exists, process alive | Reject with "already in progress" |
+| Lock exists, process dead | Remove stale lock, proceed |
+| GitHub API fails | Remove lock, report error |
+| Version parse fails | Remove lock, report error |
+| Download fails | Remove lock, report error |
+| Binary asset missing | Remove lock, report error |
+| Script generation fails | Remove lock, report error |
+| init.d stop fails | Script exits (set -e), lock remains |
+| File copy fails | Script exits (set -e), lock remains |
+| init.d start fails | Logged, user must investigate (monit may restart) |
 
 ## New Files
 
@@ -275,34 +479,34 @@ Binary (from release assets):
 |------|-------------|
 | `internal/updater/updater.go` | Service struct, interface, constructor |
 | `internal/updater/version.go` | Semver parsing and comparison (strict format) |
-| `internal/updater/github.go` | GitHub API client |
+| `internal/updater/github.go` | GitHub API client (releases/latest) |
 | `internal/updater/downloader.go` | File download logic (runs in goroutine) |
 | `internal/updater/script.go` | Script generation, lock file with PID |
-| `internal/updater/update_script.sh.tmpl` | Shell script template (with set -e) |
+| `internal/updater/update_script.sh.tmpl` | Go template for shell script |
 | `internal/handler/update.go` | /update command handler |
-| `internal/startup/notify.go` | Startup notification check |
+| `internal/startup/notify.go` | Startup notification check and send |
 
 ## Modified Files
 
 | File | Changes |
 |------|---------|
-| `Makefile` | `--abbrev=0` for VERSION |
-| `internal/handler/handler.go` | Add Updater and Version (raw) to Deps |
-| `internal/bot/router.go` | Route for /update |
-| `internal/bot/bot.go` | Register command with BotFather |
-| `cmd/bot/main.go` | Init updater, call startup.CheckAndSendNotify, pass raw Version to Deps |
+| `Makefile` | `--abbrev=0` for VERSION (clean tag only) |
+| `internal/handler/handler.go` | Add `Updater` and `Version` (raw string) to Deps |
+| `internal/bot/router.go` | Add route for `/update` command |
+| `internal/bot/bot.go` | Register `/update` in BotFather commands list |
+| `cmd/bot/main.go` | Init updater service, call `startup.CheckAndSendNotify`, pass raw `Version` to Deps |
 
 ## Implementation Order
 
-1. Modify Makefile (VERSION with --abbrev=0)
-2. Create `updater/version.go` (strict semver parsing)
-3. Create `updater/updater.go` (struct, interface)
-4. Create `updater/github.go` (API client)
-5. Create `updater/downloader.go` (downloading in goroutine)
-6. Create `updater/update_script.sh.tmpl` (template with set -e)
-7. Create `updater/script.go` (script generation, lock with PID)
-8. Create `startup/notify.go` (startup notification)
-9. Create `handler/update.go` (handler)
-10. Modify `handler/handler.go` (Deps with raw Version)
-11. Modify `bot/router.go` and `bot/bot.go` (registration)
+1. Modify `Makefile` (VERSION with --abbrev=0)
+2. Create `internal/updater/version.go` (strict semver parsing with tests)
+3. Create `internal/updater/updater.go` (struct, interface)
+4. Create `internal/updater/github.go` (API client)
+5. Create `internal/updater/downloader.go` (async downloading)
+6. Create `internal/updater/update_script.sh.tmpl` (Go template)
+7. Create `internal/updater/script.go` (script generation, lock with PID)
+8. Create `internal/startup/notify.go` (startup notification)
+9. Create `internal/handler/update.go` (command handler)
+10. Modify `internal/handler/handler.go` (add to Deps)
+11. Modify `internal/bot/router.go` and `internal/bot/bot.go` (registration)
 12. Modify `cmd/bot/main.go` (integration)
