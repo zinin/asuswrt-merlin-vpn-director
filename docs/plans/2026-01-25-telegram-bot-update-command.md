@@ -31,7 +31,7 @@
 **Clarified Decisions (from review):**
 - `/update` is allowed in any chat (private or group) for users in `allowed_users`
 - File replacement is in-place (no atomic swap or staging)
-- Lock remains on any script failure; manual cleanup required
+- Lock remains if failure happens before lock removal; after lock removal it may be gone (manual cleanup still required)
 - Stale lock detection is PID-only (no cmdline/token validation)
 
 ---
@@ -468,8 +468,8 @@ type Updater interface {
 	// GetLatestRelease fetches the latest release info from GitHub.
 	GetLatestRelease(ctx context.Context) (*Release, error)
 
-	// ShouldUpdate checks if currentVersion is older than latestTag.
-	// Returns false for "dev" versions.
+// ShouldUpdate checks if currentVersion is older than latestTag.
+// Returns an error if either version can't be parsed (dev handled by caller).
 	ShouldUpdate(currentVersion, latestTag string) (bool, error)
 
 	// IsUpdateInProgress checks if lock file exists and process is alive.
@@ -724,12 +724,11 @@ func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
 }
 
 // ShouldUpdate checks if currentVersion is older than latestTag.
-// Returns false for "dev" versions (cannot parse).
+// Returns an error if either version can't be parsed (dev handled by caller).
 func (s *Service) ShouldUpdate(currentVersion, latestTag string) (bool, error) {
 	current, err := ParseVersion(currentVersion)
 	if err != nil {
-		// "dev" or unparseable version - don't update
-		return false, nil
+		return false, fmt.Errorf("parse current version %q: %w", currentVersion, err)
 	}
 
 	latest, err := ParseVersion(latestTag)
@@ -833,10 +832,16 @@ func TestShouldUpdate(t *testing.T) {
 			want:           false,
 		},
 		{
-			name:           "dev version should not update",
+			name:           "dev version should error",
 			currentVersion: "dev",
 			latestTag:      "v1.1.0",
-			want:           false,
+			wantErr:        true,
+		},
+		{
+			name:           "invalid current version",
+			currentVersion: "v1.2.3-rc1",
+			latestTag:      "v1.2.4",
+			wantErr:        true,
 		},
 		{
 			name:           "invalid latest tag",
@@ -875,7 +880,7 @@ git add telegram-bot/internal/updater/github.go telegram-bot/internal/updater/gi
 git commit -m "feat(telegram-bot): add GitHub API client for releases
 
 Fetches latest release info including tag name and asset download URLs.
-ShouldUpdate() compares versions, returns false for dev builds.
+ShouldUpdate() compares versions, returns errors for parse failures.
 Injectable baseURL enables httptest testing.
 Uses per-request timeout (30s) for API calls."
 ```

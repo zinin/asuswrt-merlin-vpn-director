@@ -160,9 +160,9 @@ b, err := bot.New(cfg, p, version, versionFull, commit, buildDate,
 
 **Decision:** Accept risk of bot being down if script fails after stopping bot
 
-**Rationale:** This is a rare edge case — files are already downloaded and validated before script runs. Adding rollback complexity (backup, restore) is not worth it. If script fails mid-copy, user must investigate manually. Lock file remains to prevent retry loops.
+**Rationale:** This is a rare edge case — files are already downloaded and validated before script runs. Adding rollback complexity (backup, restore) is not worth it. If script fails mid-copy, user must investigate manually. The lock remains only if failure happens before the lock removal step; failures after lock removal leave no lock.
 
-**Known risk:** If script fails between stop and start, bot is down with no notification. User must SSH to router and check `/tmp/vpn-director-update/update.log`.
+**Known risk:** If script fails after lock removal (e.g., during monit re-monitor or init.d start), bot is down with no notification and no lock. User must SSH to router and check `/tmp/vpn-director-update/update.log`.
 
 ### Lock File Format
 
@@ -397,7 +397,7 @@ Script uses `set -e` for strict fail-fast behavior. Variables are embedded by bo
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  5. Remove lock file                                            │
+│  5. Remove lock file (after this, failures won't keep lock)      │
 │     rm -f $UPDATE_DIR/lock                                      │
 └─────────────────────────────────────────────────────────────────┘
        │
@@ -624,7 +624,7 @@ If asset for current architecture not found → fail update entirely.
 | Lock exists, process alive | Reject with "already in progress" |
 | Lock exists, process dead | Remove stale lock, proceed |
 | GitHub API fails | Remove lock, report error |
-| Version parse fails | Remove lock, report error |
+| Version parse fails (current or latest) | Remove lock, report error |
 | Version validation fails | Remove lock, report error (invalid characters) |
 | Download fails | Clean files/, remove lock, report error |
 | Download size exceeded | Clean files/, remove lock, report error |
@@ -632,10 +632,10 @@ If asset for current architecture not found → fail update entirely.
 | Script generation fails | Clean files/, remove lock, report error |
 | init.d stop fails | Script exits (set -e), lock remains, no notification |
 | File copy fails | Script exits (set -e), lock remains, no notification |
-| init.d start fails | Logged in update.log, user must investigate manually |
+| init.d start fails | Logged in update.log, lock already removed; user must investigate manually |
 | Startup notification send fails | Log warning, keep notify.json for retry |
 
-**Recovery from script failure:** If script fails after stopping bot, bot remains down. User must SSH to router, check `/tmp/vpn-director-update/update.log`, fix manually, and remove lock file. This is a rare edge case.
+**Recovery from script failure:** If script fails after stopping bot, bot remains down. User must SSH to router, check `/tmp/vpn-director-update/update.log`, fix manually, and remove the lock file **if it still exists** (if already removed, clean the update directory). This is a rare edge case.
 
 ## New Files
 
