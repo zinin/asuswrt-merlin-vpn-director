@@ -19,12 +19,14 @@
 - Injectable `baseURL` for GitHub API testing
 - Add `/update` to `/start` help text
 - Strict `set -e` in shell script (no `|| true` except monit)
-- Delete entire update directory on success
+- Bot removes update directory after successful startup notification (script leaves it)
 - Version string validation before shell script embedding
 - Per-request timeout (2 min) instead of global client timeout
 - Download size limit (50MB)
 - Full path in pgrep (`/opt/vpn-director/telegram-bot`)
 - Use `telegram.MessageSender` for startup notification (call in `Bot.Run()`)
+- Require `procps-ng-pgrep` + `procps-ng-pkill` for pgrep/pkill usage
+- Update `S98telegram-bot` to launch `/opt/vpn-director/telegram-bot` so full-path pgrep is reliable
 
 ---
 
@@ -1159,9 +1161,8 @@ fi
 log "Starting telegram-bot"
 /opt/etc/init.d/S98telegram-bot start
 
-# 10. Cleanup - delete entire update directory
-log "Update complete, cleaning up"
-rm -rf "$UPDATE_DIR"
+# 10. Cleanup deferred to bot after successful startup notification
+# (leave $UPDATE_DIR for notify.json and update.log)
 ```
 
 **Step 2: Verify file is created**
@@ -1179,7 +1180,7 @@ git commit -m "feat(telegram-bot): add shell script template for /update
 Go template that generates update script. Uses strict set -e.
 Only monit commands use || true (monit is optional).
 Uses full path in pgrep to avoid matching unrelated processes.
-Deletes entire update directory on success."
+Leaves update directory for bot cleanup after successful notify."
 ```
 
 ---
@@ -1419,12 +1420,12 @@ type UpdateNotification struct {
 // DefaultNotifyFile is the default path to the notification file.
 const DefaultNotifyFile = "/tmp/vpn-director-update/notify.json"
 
-// DefaultUpdateDir is the default update directory to clean up.
+// DefaultUpdateDir is the default update directory to clean up after success.
 const DefaultUpdateDir = "/tmp/vpn-director-update"
 
 // CheckAndSendNotify checks for pending update notification and sends it.
 // Uses telegram.MessageSender interface, calling SendPlain for plain text.
-// Cleans up the entire update directory after sending.
+// Cleans up the update directory only after a successful send.
 func CheckAndSendNotify(sender telegram.MessageSender, notifyFile, updateDir string) error {
 	data, err := os.ReadFile(notifyFile)
 	if os.IsNotExist(err) {
@@ -1445,7 +1446,7 @@ func CheckAndSendNotify(sender telegram.MessageSender, notifyFile, updateDir str
 		return fmt.Errorf("send notification: %w", err)
 	}
 
-	// Cleanup entire update directory
+	// Cleanup entire update directory after successful send
 	os.RemoveAll(updateDir)
 
 	return nil
@@ -1579,7 +1580,8 @@ git add telegram-bot/internal/startup/notify.go telegram-bot/internal/startup/no
 git commit -m "feat(telegram-bot): add startup notification for /update
 
 Checks for notify.json on startup, sends completion message to chat
-using telegram.MessageSender.SendPlain(), cleans up update directory."
+using telegram.MessageSender.SendPlain(), cleans up update directory
+only after successful send."
 ```
 
 ---
@@ -2184,7 +2186,32 @@ git commit -m "feat(telegram-bot): integrate /update command
 
 ---
 
-## Task 15: Final Testing
+## Task 15: Update init.d to Use Absolute Bot Path
+
+**Files:**
+- Modify: `router/opt/etc/init.d/S98telegram-bot`
+
+**Step 1: Update startup to use absolute path**
+
+Ensure the bot is started via `/opt/vpn-director/telegram-bot` (not PATH lookup), so `pgrep -f /opt/vpn-director/telegram-bot` matches the running process reliably.
+
+**Step 2: Verify script still starts the bot**
+
+No behavior change expected besides the command line containing the absolute path.
+
+**Step 3: Commit**
+
+```bash
+git add router/opt/etc/init.d/S98telegram-bot
+git commit -m "fix(init.d): start telegram-bot via absolute path
+
+Ensures the command line includes /opt/vpn-director/telegram-bot so
+update script process checks (pgrep -f) are reliable."
+```
+
+---
+
+## Task 16: Final Testing
 
 **Step 1: Run all tests**
 
@@ -2218,6 +2245,7 @@ Implements self-update functionality via /update command:
 - Version validation prevents shell injection
 - Per-request timeouts and size limits for downloads
 - Full path in pgrep for accurate process matching
+- init.d starts telegram-bot via absolute path for reliable process checks
 
 Design: docs/plans/2026-01-25-telegram-bot-update-command-design.md
 ```
@@ -2242,4 +2270,5 @@ Design: docs/plans/2026-01-25-telegram-bot-update-command-design.md
 | 12 | /start help text + HandleVersion | `handler/misc.go` |
 | 13 | Router integration | `bot/router.go` |
 | 14 | Main integration | `cmd/bot/main.go` |
-| 15 | Final testing | Tests, builds |
+| 15 | init.d uses absolute bot path | `router/opt/etc/init.d/S98telegram-bot` |
+| 16 | Final testing | Tests, builds |

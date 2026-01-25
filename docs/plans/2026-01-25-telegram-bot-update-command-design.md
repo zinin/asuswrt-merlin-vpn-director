@@ -199,9 +199,9 @@ b, err := bot.New(cfg, p, version, versionFull, commit, buildDate,
 
 ### Dependencies
 
-**Decision:** Require `pgrep` (from `procps-ng-pgrep`)
+**Decision:** Require `pgrep` and `pkill` (from `procps-ng-pgrep` and `procps-ng-pkill`)
 
-**Rationale:** Already in project dependencies per README. Script uses `pgrep -f "/opt/vpn-director/telegram-bot"` to wait for process exit. No fallback to `pidof` needed.
+**Rationale:** Already in project dependencies per README. Script uses `pgrep -f "/opt/vpn-director/telegram-bot"` to wait for process exit and `pkill -9 -f` for a final force-stop. Keeping both explicit avoids silent failures under `set -e`.
 
 ### JFFS Scripts Handling
 
@@ -257,7 +257,7 @@ b, err := bot.New(cfg, p, version, versionFull, commit, buildDate,
 
 **Decision:** Use full path in pgrep: `pgrep -f "/opt/vpn-director/telegram-bot"`
 
-**Rationale:** Simple `pgrep -f telegram-bot` could match unrelated processes (e.g., `vim telegram-bot.log`, `tail -f telegram-bot.log`). Full path ensures only the actual bot process is matched.
+**Rationale:** Simple `pgrep -f telegram-bot` could match unrelated processes (e.g., `vim telegram-bot.log`, `tail -f telegram-bot.log`). Full path ensures only the actual bot process is matched. Update `S98telegram-bot` to start the bot via `/opt/vpn-director/telegram-bot` so the full-path match is reliable.
 
 ## Flow
 
@@ -408,8 +408,8 @@ Script uses `set -e` for strict fail-fast behavior. Variables are embedded by bo
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  8. Cleanup — delete entire update directory                    │
-│     rm -rf $UPDATE_DIR                                          │
+│  8. Exit, leave update directory for notification               │
+│     (bot removes it after successful startup notification)      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -434,7 +434,8 @@ func (b *Bot) Run(ctx context.Context) {
 2. If not exists → normal startup, do nothing
 3. If exists → read JSON, parse chat_id and versions
 4. Send message via `sender.SendPlain()`: "Update complete: v1.1.0 → v1.2.0"
-5. Delete `/tmp/vpn-director-update/` directory (entire cleanup)
+5. If send succeeds → delete `/tmp/vpn-director-update/` directory (entire cleanup)
+   If send fails → keep `notify.json` for retry on next startup
 
 **notify.json format:**
 ```json
@@ -456,7 +457,7 @@ All update-related files in single directory for easy cleanup:
 ├── lock                        # Lock file (contains PID, e.g., "12345")
 ├── notify.json                 # Created by script, read by bot on startup
 ├── update.sh                   # Generated shell script
-├── update.log                  # Script execution log (deleted on success)
+├── update.log                  # Script execution log (deleted on successful notify)
 └── files/                      # Downloaded files (mirrors target structure)
     ├── opt/
     │   ├── vpn-director/
@@ -486,7 +487,7 @@ All update-related files in single directory for easy cleanup:
     └── telegram-bot            # Binary for current architecture
 ```
 
-**Note:** On successful update, entire `/tmp/vpn-director-update/` is deleted including `update.log`. On failure, directory remains for debugging.
+**Note:** On successful update notification, bot deletes the entire `/tmp/vpn-director-update/` directory including `update.log`. If notification fails, directory remains for retry and debugging.
 
 ## Version Comparison
 
@@ -622,6 +623,7 @@ If asset for current architecture not found → fail update entirely.
 | init.d stop fails | Script exits (set -e), lock remains, no notification |
 | File copy fails | Script exits (set -e), lock remains, no notification |
 | init.d start fails | Logged in update.log, user must investigate manually |
+| Startup notification send fails | Log warning, keep notify.json for retry |
 
 **Recovery from script failure:** If script fails after stopping bot, bot remains down. User must SSH to router, check `/tmp/vpn-director-update/update.log`, fix manually, and remove lock file. This is a rare edge case.
 
@@ -649,6 +651,7 @@ If asset for current architecture not found → fail update entirely.
 | `internal/bot/bot.go` | Options pattern: `WithDevMode()`, `WithUpdater()`. Register `/update` in BotFather commands. Call `CheckAndSendNotify` in `Run()` |
 | `internal/bot/router.go` | Add route for `/update` command, add `UpdateRouterHandler` interface |
 | `cmd/bot/main.go` | Use Options pattern, pass Version/VersionFull/Commit/BuildDate, init updater service |
+| `router/opt/etc/init.d/S98telegram-bot` | Start bot via absolute path so full-path `pgrep -f` matches reliably |
 
 ## Implementation Order
 
@@ -667,3 +670,4 @@ If asset for current architecture not found → fail update entirely.
 13. Modify `internal/handler/misc.go` (add /update to /start help, update HandleVersion)
 14. Modify `internal/bot/router.go` (add route and interface)
 15. Modify `cmd/bot/main.go` (integration with Options)
+16. Modify `router/opt/etc/init.d/S98telegram-bot` (start bot via `/opt/vpn-director/telegram-bot`)
