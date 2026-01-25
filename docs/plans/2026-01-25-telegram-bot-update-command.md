@@ -10,6 +10,17 @@
 
 **Design Document:** `docs/plans/2026-01-25-telegram-bot-update-command-design.md`
 
+**Review Changes Applied:**
+- Options pattern for `bot.New()` instead of extending parameter list
+- `HandleUpdate(msg)` without Context (use `context.Background()` internally)
+- Three separate ldflags: Version, Commit, BuildDate
+- Check `version == "dev"` with dedicated message
+- Clean `files/` before downloading and on error
+- Injectable `baseURL` for GitHub API testing
+- Add `/update` to `/start` help text
+- Strict `set -e` in shell script (no `|| true` except monit)
+- Delete entire update directory on success
+
 ---
 
 ## Task 1: Modify Makefile for Clean Version Tag
@@ -365,7 +376,12 @@ package updater
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -400,9 +416,11 @@ type Updater interface {
 	// RemoveLock removes the lock file.
 	RemoveLock()
 
+	// CleanFiles removes the files/ directory.
+	CleanFiles()
+
 	// DownloadRelease downloads all files for the given release.
-	// Runs in a goroutine, reports progress via callback.
-	DownloadRelease(ctx context.Context, release *Release, onProgress func(msg string)) error
+	DownloadRelease(ctx context.Context, release *Release) error
 
 	// RunUpdateScript generates and runs the update shell script.
 	RunUpdateScript(chatID int64, oldVersion, newVersion string) error
@@ -423,26 +441,120 @@ type Asset struct {
 // Service implements the Updater interface.
 type Service struct {
 	httpClient *http.Client
+	baseURL    string // Injectable for testing, empty = default GitHub API
+	lockFile   string // Configurable for testing
+	updateDir  string // Configurable for testing
+	scriptFile string // Configurable for testing
 }
 
 // New creates a new updater service.
 func New() *Service {
 	return &Service{
 		httpClient: &http.Client{
-			Timeout: 5 * time.Minute, // Long timeout for downloads
+			Timeout: 5 * time.Minute,
 		},
 	}
 }
 
+// NewWithBaseURL creates an updater service with custom base URL (for testing).
+func NewWithBaseURL(baseURL string) *Service {
+	s := New()
+	s.baseURL = baseURL
+	return s
+}
+
 // Ensure Service implements Updater.
 var _ Updater = (*Service)(nil)
+
+// IsUpdateInProgress checks if lock file exists and the process is still alive.
+// Removes stale locks (process no longer exists).
+func (s *Service) IsUpdateInProgress() bool {
+	lockPath := s.getLockFile()
+
+	data, err := os.ReadFile(lockPath)
+	if os.IsNotExist(err) {
+		return false
+	}
+	if err != nil {
+		// Can't read lock file, assume no update in progress
+		return false
+	}
+
+	pid, err := strconv.Atoi(string(data))
+	if err != nil {
+		// Invalid PID in lock file, remove it
+		os.Remove(lockPath)
+		return false
+	}
+
+	// Check if process is alive using kill -0
+	if err := syscall.Kill(pid, 0); err != nil {
+		// Process doesn't exist, stale lock
+		os.Remove(lockPath)
+		return false
+	}
+
+	return true
+}
+
+// CreateLock creates the lock file with current process PID.
+func (s *Service) CreateLock() error {
+	lockPath := s.getLockFile()
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+		return fmt.Errorf("create lock directory: %w", err)
+	}
+
+	pid := os.Getpid()
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		return fmt.Errorf("write lock file: %w", err)
+	}
+
+	return nil
+}
+
+// RemoveLock removes the lock file.
+func (s *Service) RemoveLock() {
+	os.Remove(s.getLockFile())
+}
+
+// CleanFiles removes the files/ directory.
+func (s *Service) CleanFiles() {
+	os.RemoveAll(s.getFilesDir())
+}
+
+func (s *Service) getLockFile() string {
+	if s.lockFile != "" {
+		return s.lockFile
+	}
+	return LockFile
+}
+
+func (s *Service) getUpdateDir() string {
+	if s.updateDir != "" {
+		return s.updateDir
+	}
+	return UpdateDir
+}
+
+func (s *Service) getFilesDir() string {
+	return filepath.Join(s.getUpdateDir(), "files")
+}
+
+func (s *Service) getScriptFile() string {
+	if s.scriptFile != "" {
+		return s.scriptFile
+	}
+	return ScriptFile
+}
 ```
 
 **Step 2: Verify it compiles**
 
 Run: `cd telegram-bot && go build ./internal/updater/...`
 
-Expected: Build succeeds (methods not implemented yet, but interface is defined)
+Expected: Build succeeds
 
 **Step 3: Commit**
 
@@ -450,14 +562,14 @@ Expected: Build succeeds (methods not implemented yet, but interface is defined)
 git add telegram-bot/internal/updater/updater.go
 git commit -m "feat(telegram-bot): add Updater interface and Service struct
 
-Defines constants for update directory paths and the Updater interface
-with methods for GitHub API, version comparison, locking, downloading,
-and script execution."
+Defines constants for update directory paths and the Updater interface.
+Includes lock file management with PID-based stale detection.
+Injectable baseURL for testing GitHub API calls."
 ```
 
 ---
 
-## Task 4: Implement GitHub API Client
+## Task 4: Implement GitHub API Client with Tests
 
 **Files:**
 - Create: `telegram-bot/internal/updater/github.go`
@@ -478,9 +590,10 @@ import (
 )
 
 const (
-	repoOwner = "zinin"
-	repoName  = "asuswrt-merlin-vpn-director"
-	apiURL    = "https://api.github.com/repos/%s/%s/releases/latest"
+	repoOwner        = "zinin"
+	repoName         = "asuswrt-merlin-vpn-director"
+	defaultAPIURL    = "https://api.github.com"
+	releasesEndpoint = "/repos/%s/%s/releases/latest"
 )
 
 // githubRelease represents the GitHub API response for releases/latest.
@@ -497,7 +610,11 @@ type githubAsset struct {
 
 // GetLatestRelease fetches the latest release info from GitHub API.
 func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
-	url := fmt.Sprintf(apiURL, repoOwner, repoName)
+	baseURL := s.baseURL
+	if baseURL == "" {
+		baseURL = defaultAPIURL
+	}
+	url := baseURL + fmt.Sprintf(releasesEndpoint, repoOwner, repoName)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -553,7 +670,7 @@ func (s *Service) ShouldUpdate(currentVersion, latestTag string) (bool, error) {
 }
 ```
 
-**Step 2: Write tests**
+**Step 2: Write tests with httptest**
 
 Create `telegram-bot/internal/updater/github_test.go`:
 
@@ -572,6 +689,9 @@ func TestGetLatestRelease(t *testing.T) {
 		if r.Header.Get("Accept") != "application/vnd.github.v3+json" {
 			t.Errorf("Expected Accept header, got %s", r.Header.Get("Accept"))
 		}
+		if r.Header.Get("User-Agent") != "vpn-director-telegram-bot" {
+			t.Errorf("Expected User-Agent header, got %s", r.Header.Get("User-Agent"))
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{
 			"tag_name": "v1.2.3",
@@ -583,13 +703,34 @@ func TestGetLatestRelease(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create service with custom HTTP client pointing to test server
-	s := &Service{
-		httpClient: server.Client(),
+	s := NewWithBaseURL(server.URL)
+	release, err := s.GetLatestRelease(context.Background())
+	if err != nil {
+		t.Fatalf("GetLatestRelease() error = %v", err)
 	}
 
-	// Override the API URL for testing (we can't easily do this, so skip this test)
-	t.Skip("Integration test - requires mocking apiURL")
+	if release.TagName != "v1.2.3" {
+		t.Errorf("TagName = %q, want %q", release.TagName, "v1.2.3")
+	}
+	if len(release.Assets) != 2 {
+		t.Fatalf("len(Assets) = %d, want 2", len(release.Assets))
+	}
+	if release.Assets[0].Name != "telegram-bot-arm64" {
+		t.Errorf("Assets[0].Name = %q, want %q", release.Assets[0].Name, "telegram-bot-arm64")
+	}
+}
+
+func TestGetLatestRelease_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	s := NewWithBaseURL(server.URL)
+	_, err := s.GetLatestRelease(context.Background())
+	if err == nil {
+		t.Error("Expected error for 404 response")
+	}
 }
 
 func TestShouldUpdate(t *testing.T) {
@@ -663,271 +804,13 @@ git add telegram-bot/internal/updater/github.go telegram-bot/internal/updater/gi
 git commit -m "feat(telegram-bot): add GitHub API client for releases
 
 Fetches latest release info including tag name and asset download URLs.
-ShouldUpdate() compares versions, returns false for dev builds."
+ShouldUpdate() compares versions, returns false for dev builds.
+Injectable baseURL enables httptest testing."
 ```
 
 ---
 
-## Task 5: Implement Lock File with PID
-
-**Files:**
-- Modify: `telegram-bot/internal/updater/updater.go` (add lock methods)
-- Create: `telegram-bot/internal/updater/lock_test.go`
-
-**Step 1: Write failing tests**
-
-Create `telegram-bot/internal/updater/lock_test.go`:
-
-```go
-package updater
-
-import (
-	"os"
-	"path/filepath"
-	"strconv"
-	"testing"
-)
-
-func TestLockFile(t *testing.T) {
-	// Use temp directory for tests
-	tmpDir := t.TempDir()
-	lockFile := filepath.Join(tmpDir, "lock")
-
-	// Override LockFile for testing - we need to make it configurable
-	s := &Service{lockFile: lockFile}
-
-	// Test: no lock initially
-	if s.IsUpdateInProgress() {
-		t.Error("Expected no lock initially")
-	}
-
-	// Test: create lock
-	if err := s.CreateLock(); err != nil {
-		t.Fatalf("CreateLock() error = %v", err)
-	}
-
-	// Test: lock exists
-	if !s.IsUpdateInProgress() {
-		t.Error("Expected lock to exist after CreateLock()")
-	}
-
-	// Test: lock contains current PID
-	data, err := os.ReadFile(lockFile)
-	if err != nil {
-		t.Fatalf("Failed to read lock file: %v", err)
-	}
-	pid, err := strconv.Atoi(string(data))
-	if err != nil {
-		t.Fatalf("Lock file doesn't contain valid PID: %v", err)
-	}
-	if pid != os.Getpid() {
-		t.Errorf("Lock PID = %d, want %d", pid, os.Getpid())
-	}
-
-	// Test: remove lock
-	s.RemoveLock()
-	if s.IsUpdateInProgress() {
-		t.Error("Expected no lock after RemoveLock()")
-	}
-}
-
-func TestStaleLockRemoval(t *testing.T) {
-	tmpDir := t.TempDir()
-	lockFile := filepath.Join(tmpDir, "lock")
-
-	s := &Service{lockFile: lockFile}
-
-	// Create lock with non-existent PID (stale lock)
-	if err := os.WriteFile(lockFile, []byte("999999999"), 0644); err != nil {
-		t.Fatalf("Failed to create stale lock: %v", err)
-	}
-
-	// IsUpdateInProgress should detect stale lock and remove it
-	if s.IsUpdateInProgress() {
-		t.Error("Expected stale lock to be detected and removed")
-	}
-
-	// Lock file should be removed
-	if _, err := os.Stat(lockFile); !os.IsNotExist(err) {
-		t.Error("Expected stale lock file to be removed")
-	}
-}
-```
-
-**Step 2: Run tests to verify they fail**
-
-Run: `cd telegram-bot && go test ./internal/updater/... -v -run TestLock`
-
-Expected: FAIL (lockFile field doesn't exist)
-
-**Step 3: Update updater.go with lock implementation**
-
-Update `telegram-bot/internal/updater/updater.go`, add lockFile field and methods:
-
-```go
-package updater
-
-import (
-	"context"
-	"fmt"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
-	"syscall"
-	"time"
-)
-
-const (
-	// UpdateDir is the base directory for update files.
-	UpdateDir = "/tmp/vpn-director-update"
-	// FilesDir is where downloaded files are stored.
-	FilesDir = UpdateDir + "/files"
-	// LockFile prevents concurrent updates.
-	LockFile = UpdateDir + "/lock"
-	// NotifyFile is read by bot on startup to send completion message.
-	NotifyFile = UpdateDir + "/notify.json"
-	// ScriptFile is the generated update shell script.
-	ScriptFile = UpdateDir + "/update.sh"
-)
-
-// Updater defines the interface for the update service.
-type Updater interface {
-	// GetLatestRelease fetches the latest release info from GitHub.
-	GetLatestRelease(ctx context.Context) (*Release, error)
-
-	// ShouldUpdate checks if currentVersion is older than latestTag.
-	// Returns false for "dev" versions.
-	ShouldUpdate(currentVersion, latestTag string) (bool, error)
-
-	// IsUpdateInProgress checks if lock file exists and process is alive.
-	IsUpdateInProgress() bool
-
-	// CreateLock creates lock file with current PID.
-	CreateLock() error
-
-	// RemoveLock removes the lock file.
-	RemoveLock()
-
-	// DownloadRelease downloads all files for the given release.
-	// Runs in a goroutine, reports progress via callback.
-	DownloadRelease(ctx context.Context, release *Release, onProgress func(msg string)) error
-
-	// RunUpdateScript generates and runs the update shell script.
-	RunUpdateScript(chatID int64, oldVersion, newVersion string) error
-}
-
-// Release contains information about a GitHub release.
-type Release struct {
-	TagName string
-	Assets  []Asset
-}
-
-// Asset represents a downloadable file in a release.
-type Asset struct {
-	Name        string
-	DownloadURL string
-}
-
-// Service implements the Updater interface.
-type Service struct {
-	httpClient *http.Client
-	lockFile   string // Configurable for testing, defaults to LockFile
-}
-
-// New creates a new updater service.
-func New() *Service {
-	return &Service{
-		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
-		lockFile: LockFile,
-	}
-}
-
-// Ensure Service implements Updater.
-var _ Updater = (*Service)(nil)
-
-// IsUpdateInProgress checks if lock file exists and the process is still alive.
-// Removes stale locks (process no longer exists).
-func (s *Service) IsUpdateInProgress() bool {
-	lockPath := s.getLockFile()
-
-	data, err := os.ReadFile(lockPath)
-	if os.IsNotExist(err) {
-		return false
-	}
-	if err != nil {
-		// Can't read lock file, assume no update in progress
-		return false
-	}
-
-	pid, err := strconv.Atoi(string(data))
-	if err != nil {
-		// Invalid PID in lock file, remove it
-		os.Remove(lockPath)
-		return false
-	}
-
-	// Check if process is alive using kill -0
-	if err := syscall.Kill(pid, 0); err != nil {
-		// Process doesn't exist, stale lock
-		os.Remove(lockPath)
-		return false
-	}
-
-	return true
-}
-
-// CreateLock creates the lock file with current process PID.
-func (s *Service) CreateLock() error {
-	lockPath := s.getLockFile()
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		return fmt.Errorf("create lock directory: %w", err)
-	}
-
-	pid := os.Getpid()
-	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		return fmt.Errorf("write lock file: %w", err)
-	}
-
-	return nil
-}
-
-// RemoveLock removes the lock file.
-func (s *Service) RemoveLock() {
-	os.Remove(s.getLockFile())
-}
-
-func (s *Service) getLockFile() string {
-	if s.lockFile != "" {
-		return s.lockFile
-	}
-	return LockFile
-}
-```
-
-**Step 4: Run tests**
-
-Run: `cd telegram-bot && go test ./internal/updater/... -v -run TestLock`
-
-Expected: PASS
-
-**Step 5: Commit**
-
-```bash
-git add telegram-bot/internal/updater/updater.go telegram-bot/internal/updater/lock_test.go
-git commit -m "feat(telegram-bot): add lock file with PID for /update
-
-Lock file contains PID to detect stale locks. IsUpdateInProgress()
-uses kill -0 to check if process is alive, removes stale locks."
-```
-
----
-
-## Task 6: Implement File Downloader
+## Task 5: Implement File Downloader
 
 **Files:**
 - Create: `telegram-bot/internal/updater/downloader.go`
@@ -976,8 +859,12 @@ var scriptFiles = []string{
 }
 
 // DownloadRelease downloads all files for the given release.
-func (s *Service) DownloadRelease(ctx context.Context, release *Release, onProgress func(msg string)) error {
+// Cleans files/ directory before starting.
+func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 	filesDir := s.getFilesDir()
+
+	// Clean before download to ensure fresh state
+	os.RemoveAll(filesDir)
 
 	// Create directory structure
 	if err := os.MkdirAll(filesDir, 0755); err != nil {
@@ -985,21 +872,13 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release, onProgr
 	}
 
 	// Download scripts
-	for i, file := range scriptFiles {
-		if onProgress != nil {
-			onProgress(fmt.Sprintf("Downloading scripts (%d/%d)...", i+1, len(scriptFiles)))
-		}
-
+	for _, file := range scriptFiles {
 		if err := s.downloadScriptFile(ctx, release.TagName, file); err != nil {
 			return fmt.Errorf("download %s: %w", file, err)
 		}
 	}
 
 	// Download bot binary
-	if onProgress != nil {
-		onProgress("Downloading bot binary...")
-	}
-
 	if err := s.downloadBotBinary(ctx, release); err != nil {
 		return fmt.Errorf("download bot binary: %w", err)
 	}
@@ -1079,10 +958,6 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 
 	return nil
 }
-
-func (s *Service) getFilesDir() string {
-	return FilesDir
-}
 ```
 
 **Step 2: Verify it compiles**
@@ -1098,12 +973,12 @@ git add telegram-bot/internal/updater/downloader.go
 git commit -m "feat(telegram-bot): add file downloader for /update
 
 Downloads scripts from raw.githubusercontent.com by tag and bot binary
-from release assets. Reports progress via callback for UI feedback."
+from release assets. Cleans files/ directory before downloading."
 ```
 
 ---
 
-## Task 7: Create Update Script Template
+## Task 6: Create Update Script Template
 
 **Files:**
 - Create: `telegram-bot/internal/updater/update_script.sh.tmpl`
@@ -1134,7 +1009,7 @@ log() {
 
 log "Starting update from $OLD_VERSION to $NEW_VERSION"
 
-# 1. Unmonitor in monit (if available)
+# 1. Unmonitor in monit (if available) - optional, continue on failure
 if command -v monit >/dev/null 2>&1; then
     log "Unmonitoring telegram-bot in monit"
     monit unmonitor telegram-bot 2>/dev/null || true
@@ -1142,7 +1017,7 @@ fi
 
 # 2. Stop bot
 log "Stopping telegram-bot"
-/opt/etc/init.d/S98telegram-bot stop || log "Warning: stop returned error"
+/opt/etc/init.d/S98telegram-bot stop
 sleep 1
 
 # 3. Wait for process to exit (max 30 seconds)
@@ -1154,15 +1029,15 @@ done
 
 if pgrep -f telegram-bot >/dev/null 2>&1; then
     log "WARNING: telegram-bot still running after 30s, killing"
-    pkill -9 -f telegram-bot || true
+    pkill -9 -f telegram-bot
     sleep 1
 fi
 
-# 4. Copy files
+# 4. Copy files - NO || true, fail on error
 log "Copying files"
-cp -f "$FILES_DIR/opt/vpn-director/"*.sh /opt/vpn-director/ 2>/dev/null || true
+cp -f "$FILES_DIR/opt/vpn-director/"*.sh /opt/vpn-director/
 cp -f "$FILES_DIR/opt/vpn-director/lib/"*.sh /opt/vpn-director/lib/
-cp -f "$FILES_DIR/opt/vpn-director/"*.template /opt/vpn-director/ 2>/dev/null || true
+cp -f "$FILES_DIR/opt/vpn-director/"*.template /opt/vpn-director/
 cp -f "$FILES_DIR/opt/etc/xray/"*.template /opt/etc/xray/
 cp -f "$FILES_DIR/opt/etc/init.d/"* /opt/etc/init.d/
 cp -f "$FILES_DIR/jffs/scripts/"* /jffs/scripts/
@@ -1186,7 +1061,7 @@ EOF
 # 7. Remove lock
 rm -f "$LOCK_FILE"
 
-# 8. Re-monitor in monit (if available)
+# 8. Re-monitor in monit (if available) - optional, continue on failure
 if command -v monit >/dev/null 2>&1; then
     log "Re-monitoring telegram-bot in monit"
     monit monitor telegram-bot 2>/dev/null || true
@@ -1194,14 +1069,11 @@ fi
 
 # 9. Start bot
 log "Starting telegram-bot"
-/opt/etc/init.d/S98telegram-bot start || log "ERROR: Failed to start telegram-bot"
+/opt/etc/init.d/S98telegram-bot start
 
-# 10. Cleanup
+# 10. Cleanup - delete entire update directory
 log "Update complete, cleaning up"
-rm -rf "$FILES_DIR"
-rm -f "$UPDATE_DIR/update.sh"
-
-log "Done"
+rm -rf "$UPDATE_DIR"
 ```
 
 **Step 2: Verify file is created**
@@ -1216,99 +1088,20 @@ Expected: File exists
 git add telegram-bot/internal/updater/update_script.sh.tmpl
 git commit -m "feat(telegram-bot): add shell script template for /update
 
-Go template that generates update script. Uses set -e for fail-fast.
-Handles monit, stops/starts bot via init.d, copies files, creates
-notification JSON for bot to read on startup."
+Go template that generates update script. Uses strict set -e.
+Only monit commands use || true (monit is optional).
+Deletes entire update directory on success."
 ```
 
 ---
 
-## Task 8: Implement Script Generator
+## Task 7: Implement Script Generator
 
 **Files:**
 - Create: `telegram-bot/internal/updater/script.go`
 - Create: `telegram-bot/internal/updater/script_test.go`
 
-**Step 1: Write failing test**
-
-Create `telegram-bot/internal/updater/script_test.go`:
-
-```go
-package updater
-
-import (
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-)
-
-func TestGenerateScript(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	s := &Service{
-		updateDir: tmpDir,
-	}
-
-	script, err := s.generateScript(123456789, "v1.0.0", "v1.1.0")
-	if err != nil {
-		t.Fatalf("generateScript() error = %v", err)
-	}
-
-	// Check that variables are embedded
-	if !strings.Contains(script, "CHAT_ID=123456789") {
-		t.Error("Script missing CHAT_ID")
-	}
-	if !strings.Contains(script, `OLD_VERSION="v1.0.0"`) {
-		t.Error("Script missing OLD_VERSION")
-	}
-	if !strings.Contains(script, `NEW_VERSION="v1.1.0"`) {
-		t.Error("Script missing NEW_VERSION")
-	}
-	if !strings.Contains(script, "set -e") {
-		t.Error("Script missing set -e")
-	}
-	if !strings.Contains(script, "S98telegram-bot stop") {
-		t.Error("Script missing bot stop command")
-	}
-	if !strings.Contains(script, "S98telegram-bot start") {
-		t.Error("Script missing bot start command")
-	}
-}
-
-func TestRunUpdateScript(t *testing.T) {
-	tmpDir := t.TempDir()
-	scriptFile := filepath.Join(tmpDir, "update.sh")
-
-	s := &Service{
-		updateDir:  tmpDir,
-		scriptFile: scriptFile,
-	}
-
-	// This will fail because nohup tries to run the script
-	// But we can at least verify the script file is created
-	_ = s.RunUpdateScript(123456789, "v1.0.0", "v1.1.0")
-
-	// Check script file was created
-	if _, err := os.Stat(scriptFile); os.IsNotExist(err) {
-		t.Error("Script file was not created")
-	}
-
-	// Check script is executable
-	info, _ := os.Stat(scriptFile)
-	if info.Mode()&0111 == 0 {
-		t.Error("Script file is not executable")
-	}
-}
-```
-
-**Step 2: Run tests to verify they fail**
-
-Run: `cd telegram-bot && go test ./internal/updater/... -v -run TestScript`
-
-Expected: FAIL (generateScript method doesn't exist)
-
-**Step 3: Write the implementation**
+**Step 1: Write the implementation**
 
 Create `telegram-bot/internal/updater/script.go`:
 
@@ -1395,62 +1188,152 @@ func (s *Service) generateScript(chatID int64, oldVersion, newVersion string) (s
 
 	return buf.String(), nil
 }
-
-func (s *Service) getUpdateDir() string {
-	if s.updateDir != "" {
-		return s.updateDir
-	}
-	return UpdateDir
-}
-
-func (s *Service) getScriptFile() string {
-	if s.scriptFile != "" {
-		return s.scriptFile
-	}
-	return ScriptFile
-}
 ```
 
-**Step 4: Update Service struct in updater.go**
+**Step 2: Write tests**
 
-Add fields to Service struct in `telegram-bot/internal/updater/updater.go`:
+Create `telegram-bot/internal/updater/script_test.go`:
 
 ```go
-// Service implements the Updater interface.
-type Service struct {
-	httpClient *http.Client
-	lockFile   string // Configurable for testing
-	updateDir  string // Configurable for testing
-	scriptFile string // Configurable for testing
+package updater
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestGenerateScript(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	s := &Service{
+		updateDir: tmpDir,
+	}
+
+	script, err := s.generateScript(123456789, "v1.0.0", "v1.1.0")
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	// Check that variables are embedded
+	checks := []string{
+		"CHAT_ID=123456789",
+		`OLD_VERSION="v1.0.0"`,
+		`NEW_VERSION="v1.1.0"`,
+		"set -e",
+		"S98telegram-bot stop",
+		"S98telegram-bot start",
+	}
+
+	for _, check := range checks {
+		if !strings.Contains(script, check) {
+			t.Errorf("Script missing %q", check)
+		}
+	}
+
+	// Check that monit commands have || true
+	if !strings.Contains(script, "monit unmonitor telegram-bot 2>/dev/null || true") {
+		t.Error("Script missing || true for monit unmonitor")
+	}
+
+	// Check that cp commands do NOT have || true
+	if strings.Contains(script, "cp -f") && strings.Contains(script, "cp -f \"$FILES_DIR") {
+		// Find a cp line and check it doesn't end with || true
+		for _, line := range strings.Split(script, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "cp -f") {
+				if strings.HasSuffix(strings.TrimSpace(line), "|| true") {
+					t.Errorf("cp command should not have || true: %s", line)
+				}
+			}
+		}
+	}
 }
 ```
 
-**Step 5: Run tests**
+**Step 3: Run tests**
 
 Run: `cd telegram-bot && go test ./internal/updater/... -v`
 
 Expected: PASS
 
-**Step 6: Commit**
+**Step 4: Commit**
 
 ```bash
-git add telegram-bot/internal/updater/script.go telegram-bot/internal/updater/script_test.go telegram-bot/internal/updater/updater.go
+git add telegram-bot/internal/updater/script.go telegram-bot/internal/updater/script_test.go
 git commit -m "feat(telegram-bot): add script generator for /update
 
 Uses go:embed to load template, generates script with embedded
-variables, runs it detached via nohup. Script will stop the bot
-and replace files."
+variables, runs it detached via nohup."
 ```
 
 ---
 
-## Task 9: Create Startup Notification Handler
+## Task 8: Create Startup Notification Handler
 
 **Files:**
 - Create: `telegram-bot/internal/startup/notify.go`
 - Create: `telegram-bot/internal/startup/notify_test.go`
 
-**Step 1: Write failing test**
+**Step 1: Write the implementation**
+
+Create `telegram-bot/internal/startup/notify.go`:
+
+```go
+package startup
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+// MessageSender is the interface for sending Telegram messages.
+type MessageSender interface {
+	Send(chatID int64, text string) error
+}
+
+// UpdateNotification is the JSON structure in notify.json.
+type UpdateNotification struct {
+	ChatID     int64  `json:"chat_id"`
+	OldVersion string `json:"old_version"`
+	NewVersion string `json:"new_version"`
+}
+
+// DefaultNotifyFile is the default path to the notification file.
+const DefaultNotifyFile = "/tmp/vpn-director-update/notify.json"
+
+// DefaultUpdateDir is the default update directory to clean up.
+const DefaultUpdateDir = "/tmp/vpn-director-update"
+
+// CheckAndSendNotify checks for pending update notification and sends it.
+// Cleans up the entire update directory after sending.
+func CheckAndSendNotify(sender MessageSender, notifyFile, updateDir string) error {
+	data, err := os.ReadFile(notifyFile)
+	if os.IsNotExist(err) {
+		return nil // No notification pending
+	}
+	if err != nil {
+		return fmt.Errorf("read notify file: %w", err)
+	}
+
+	var n UpdateNotification
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("parse notify file: %w", err)
+	}
+
+	// Send message
+	text := fmt.Sprintf("Update complete: %s → %s", n.OldVersion, n.NewVersion)
+	if err := sender.Send(n.ChatID, text); err != nil {
+		return fmt.Errorf("send notification: %w", err)
+	}
+
+	// Cleanup entire update directory
+	os.RemoveAll(updateDir)
+
+	return nil
+}
+```
+
+**Step 2: Write tests**
 
 Create `telegram-bot/internal/startup/notify_test.go`:
 
@@ -1507,11 +1390,6 @@ func TestCheckAndSendNotify(t *testing.T) {
 		t.Errorf("text = %q, want 'Update complete: v1.0.0 → v1.1.0'", msg.text)
 	}
 
-	// Check notify file was deleted
-	if _, err := os.Stat(notifyFile); !os.IsNotExist(err) {
-		t.Error("notify file should be deleted")
-	}
-
 	// Check update dir was deleted
 	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
 		t.Error("update dir should be deleted")
@@ -1537,92 +1415,25 @@ func TestCheckAndSendNotify_NoFile(t *testing.T) {
 }
 ```
 
-**Step 2: Run tests to verify they fail**
-
-Run: `cd telegram-bot && go test ./internal/startup/... -v`
-
-Expected: FAIL (package doesn't exist)
-
-**Step 3: Write the implementation**
-
-Create `telegram-bot/internal/startup/notify.go`:
-
-```go
-package startup
-
-import (
-	"encoding/json"
-	"fmt"
-	"os"
-)
-
-// MessageSender is the interface for sending Telegram messages.
-type MessageSender interface {
-	Send(chatID int64, text string) error
-}
-
-// UpdateNotification is the JSON structure in notify.json.
-type UpdateNotification struct {
-	ChatID     int64  `json:"chat_id"`
-	OldVersion string `json:"old_version"`
-	NewVersion string `json:"new_version"`
-}
-
-// DefaultNotifyFile is the default path to the notification file.
-const DefaultNotifyFile = "/tmp/vpn-director-update/notify.json"
-
-// DefaultUpdateDir is the default update directory to clean up.
-const DefaultUpdateDir = "/tmp/vpn-director-update"
-
-// CheckAndSendNotify checks for pending update notification and sends it.
-// Cleans up the notification file and update directory after sending.
-func CheckAndSendNotify(sender MessageSender, notifyFile, updateDir string) error {
-	data, err := os.ReadFile(notifyFile)
-	if os.IsNotExist(err) {
-		return nil // No notification pending
-	}
-	if err != nil {
-		return fmt.Errorf("read notify file: %w", err)
-	}
-
-	var n UpdateNotification
-	if err := json.Unmarshal(data, &n); err != nil {
-		return fmt.Errorf("parse notify file: %w", err)
-	}
-
-	// Send message
-	text := fmt.Sprintf("Update complete: %s → %s", n.OldVersion, n.NewVersion)
-	if err := sender.Send(n.ChatID, text); err != nil {
-		return fmt.Errorf("send notification: %w", err)
-	}
-
-	// Cleanup
-	os.Remove(notifyFile)
-	os.RemoveAll(updateDir)
-
-	return nil
-}
-```
-
-**Step 4: Run tests**
+**Step 3: Run tests**
 
 Run: `cd telegram-bot && go test ./internal/startup/... -v`
 
 Expected: PASS
 
-**Step 5: Commit**
+**Step 4: Commit**
 
 ```bash
 git add telegram-bot/internal/startup/notify.go telegram-bot/internal/startup/notify_test.go
 git commit -m "feat(telegram-bot): add startup notification for /update
 
 Checks for notify.json on startup, sends completion message to chat,
-cleans up update directory. Called before bot starts polling."
+cleans up entire update directory."
 ```
 
 ---
 
-## Task 10: Create Update Command Handler
+## Task 9: Create Update Command Handler
 
 **Files:**
 - Create: `telegram-bot/internal/handler/update.go`
@@ -1663,7 +1474,7 @@ func NewUpdateHandler(sender telegram.MessageSender, upd updater.Updater, devMod
 }
 
 // HandleUpdate processes the /update command.
-func (h *UpdateHandler) HandleUpdate(ctx context.Context, msg *tgbotapi.Message) {
+func (h *UpdateHandler) HandleUpdate(msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 
 	// 1. Dev mode check
@@ -1672,20 +1483,27 @@ func (h *UpdateHandler) HandleUpdate(ctx context.Context, msg *tgbotapi.Message)
 		return
 	}
 
-	// 2. Lock check
+	// 2. Dev version check
+	if h.version == "dev" {
+		h.send(chatID, "Cannot check updates for dev build")
+		return
+	}
+
+	// 3. Lock check
 	if h.updater.IsUpdateInProgress() {
 		h.send(chatID, "Update is already in progress, please wait...")
 		return
 	}
 
-	// 3. Get latest release
+	// 4. Get latest release
+	ctx := context.Background()
 	release, err := h.updater.GetLatestRelease(ctx)
 	if err != nil {
 		h.send(chatID, fmt.Sprintf("Failed to check for updates: %v", err))
 		return
 	}
 
-	// 4. Compare versions
+	// 5. Compare versions
 	shouldUpdate, err := h.updater.ShouldUpdate(h.version, release.TagName)
 	if err != nil {
 		h.send(chatID, fmt.Sprintf("Failed to parse version: %v", err))
@@ -1696,41 +1514,43 @@ func (h *UpdateHandler) HandleUpdate(ctx context.Context, msg *tgbotapi.Message)
 		return
 	}
 
-	// 5. Create lock
+	// 6. Create lock
 	if err := h.updater.CreateLock(); err != nil {
 		h.send(chatID, fmt.Sprintf("Failed to start update: %v", err))
 		return
 	}
 
-	// 6. Notify start
+	// 7. Notify start
 	h.send(chatID, fmt.Sprintf("Starting update %s → %s...", h.version, release.TagName))
 
-	// 7. Download in goroutine
-	go h.downloadAndUpdate(ctx, chatID, release)
+	// 8. Download in goroutine
+	go h.downloadAndUpdate(chatID, release)
 }
 
-func (h *UpdateHandler) downloadAndUpdate(ctx context.Context, chatID int64, release *updater.Release) {
-	// Download with progress callback
-	err := h.updater.DownloadRelease(ctx, release, func(msg string) {
-		// Could send progress messages here, but keep it simple
-	})
+func (h *UpdateHandler) downloadAndUpdate(chatID int64, release *updater.Release) {
+	ctx := context.Background()
+
+	// Download files
+	err := h.updater.DownloadRelease(ctx, release)
 	if err != nil {
+		h.updater.CleanFiles()
 		h.updater.RemoveLock()
 		h.send(chatID, fmt.Sprintf("Download failed: %v", err))
 		return
 	}
 
-	// 8. Notify downloaded
+	// 9. Notify downloaded
 	h.send(chatID, "Files downloaded, starting update...")
 
-	// 9. Run update script
+	// 10. Run update script
 	if err := h.updater.RunUpdateScript(chatID, h.version, release.TagName); err != nil {
+		h.updater.CleanFiles()
 		h.updater.RemoveLock()
 		h.send(chatID, fmt.Sprintf("Failed to run update script: %v", err))
 		return
 	}
 
-	// 10. Notify script started
+	// 11. Notify script started
 	h.send(chatID, "Update script started, bot will restart in a few seconds...")
 }
 
@@ -1751,84 +1571,233 @@ Expected: Build succeeds
 git add telegram-bot/internal/handler/update.go
 git commit -m "feat(telegram-bot): add /update command handler
 
-Checks dev mode, lock, version comparison. Downloads files in goroutine
-for responsiveness. Sends progress messages. Runs update script detached."
+Checks dev mode, dev version, lock, version comparison.
+Downloads files in goroutine for responsiveness.
+Cleans files/ on error. Sends progress messages."
 ```
 
 ---
 
-## Task 11: Integrate into Bot
+## Task 10: Refactor bot.New() to Options Pattern
 
 **Files:**
-- Modify: `telegram-bot/internal/handler/handler.go`
-- Modify: `telegram-bot/internal/bot/router.go`
 - Modify: `telegram-bot/internal/bot/bot.go`
-- Modify: `telegram-bot/cmd/bot/main.go`
 
-**Step 1: Add to Deps struct**
+**Step 1: Read current bot.go structure**
 
-In `telegram-bot/internal/handler/handler.go`, add to Deps:
+Read the file to understand current implementation.
+
+**Step 2: Add Options pattern**
+
+Add at the top of bot.go after imports:
 
 ```go
-type Deps struct {
-	Sender  telegram.MessageSender
-	Config  service.ConfigStore
-	VPN     service.VPNDirector
-	Xray    service.XrayGenerator
-	Network service.NetworkInfo
-	Logs    service.LogReader
-	Paths   paths.Paths
-	Version string
-	DevMode bool              // ADD
-	Updater updater.Updater   // ADD
+// Option configures the Bot.
+type Option func(*Bot)
+
+// WithDevMode enables development mode with custom executor.
+func WithDevMode(executor shell.Executor) Option {
+	return func(b *Bot) {
+		b.devMode = true
+		b.executor = executor
+	}
+}
+
+// WithUpdater sets the updater service.
+func WithUpdater(u updater.Updater) Option {
+	return func(b *Bot) {
+		b.updater = u
+	}
 }
 ```
 
-Add import for updater package.
+**Step 3: Update Bot struct**
 
-**Step 2: Add route in router.go**
-
-In `telegram-bot/internal/bot/router.go`:
-
-1. Add to Router struct:
+Add fields:
 ```go
-update *handler.UpdateHandler
+type Bot struct {
+	// ... existing fields ...
+	devMode bool
+	updater updater.Updater
+}
 ```
 
-2. Add to NewRouter:
+**Step 4: Update New() function**
+
+Change signature to accept options:
 ```go
-update: handler.NewUpdateHandler(deps.Sender, deps.Updater, deps.DevMode, deps.Version),
+func New(cfg *config.Config, paths paths.Paths, version, commit, buildDate string, opts ...Option) (*Bot, error)
 ```
 
-3. Add case in RouteMessage:
+Apply options after creating bot:
 ```go
-case "update":
-    r.update.HandleUpdate(ctx, msg)
+for _, opt := range opts {
+    opt(b)
+}
 ```
 
-**Step 3: Register command in bot.go**
-
-In `telegram-bot/internal/bot/bot.go`, add to commands slice:
+**Step 5: Add /update to commands list**
 
 ```go
 {Command: "update", Description: "Update VPN Director to latest release"},
 ```
 
-**Step 4: Update main.go**
+**Step 6: Pass values to Deps**
 
-In `telegram-bot/cmd/bot/main.go`:
-
-1. Add imports:
 ```go
-"telegram-bot/internal/startup"
-"telegram-bot/internal/updater"
+deps := &handler.Deps{
+    // ... existing ...
+    DevMode:   b.devMode,
+    Updater:   b.updater,
+    Version:   version,
+    Commit:    commit,
+    BuildDate: buildDate,
+}
 ```
 
-2. After creating bot API, add notification check:
+**Step 7: Commit**
+
+```bash
+git add telegram-bot/internal/bot/bot.go
+git commit -m "refactor(telegram-bot): use Options pattern for bot.New()
+
+Add WithDevMode() and WithUpdater() options for cleaner configuration.
+Register /update command with BotFather."
+```
+
+---
+
+## Task 11: Update Handler Deps
+
+**Files:**
+- Modify: `telegram-bot/internal/handler/handler.go`
+
+**Step 1: Add new fields to Deps**
+
+```go
+type Deps struct {
+	Sender    telegram.MessageSender
+	Config    service.ConfigStore
+	VPN       service.VPNDirector
+	Xray      service.XrayGenerator
+	Network   service.NetworkInfo
+	Logs      service.LogReader
+	Paths     paths.Paths
+	Version   string
+	Commit    string    // ADD
+	BuildDate string    // ADD
+	DevMode   bool      // ADD
+	Updater   updater.Updater // ADD
+}
+```
+
+**Step 2: Add import for updater**
+
+```go
+import "telegram-bot/internal/updater"
+```
+
+**Step 3: Commit**
+
+```bash
+git add telegram-bot/internal/handler/handler.go
+git commit -m "feat(telegram-bot): add Updater and version fields to Deps
+
+Add DevMode, Updater, Commit, BuildDate to handler dependencies
+for /update command and improved /version display."
+```
+
+---
+
+## Task 12: Add /update to /start Help Text
+
+**Files:**
+- Modify: `telegram-bot/internal/handler/misc.go`
+
+**Step 1: Find HandleStart function and add /update**
+
+Add to the help text in HandleStart():
+```go
+"/update - Update VPN Director to latest release"
+```
+
+**Step 2: Update HandleVersion to use separate fields**
+
+If HandleVersion uses versionString(), update it to format from Deps.Version, Deps.Commit, Deps.BuildDate.
+
+**Step 3: Commit**
+
+```bash
+git add telegram-bot/internal/handler/misc.go
+git commit -m "feat(telegram-bot): add /update to /start help text
+
+Users can now discover the /update command from /start help."
+```
+
+---
+
+## Task 13: Add Route for /update
+
+**Files:**
+- Modify: `telegram-bot/internal/bot/router.go`
+
+**Step 1: Add UpdateRouterHandler interface**
+
+```go
+// UpdateRouterHandler defines methods for update command
+type UpdateRouterHandler interface {
+	HandleUpdate(msg *tgbotapi.Message)
+}
+```
+
+**Step 2: Add to Router struct**
+
+```go
+update UpdateRouterHandler
+```
+
+**Step 3: Add to NewRouter parameters and initialization**
+
+**Step 4: Add case in RouteMessage**
+
+```go
+case "update":
+    r.update.HandleUpdate(msg)
+```
+
+**Step 5: Commit**
+
+```bash
+git add telegram-bot/internal/bot/router.go
+git commit -m "feat(telegram-bot): add /update route
+
+Register UpdateRouterHandler and route /update command."
+```
+
+---
+
+## Task 14: Update main.go for Integration
+
+**Files:**
+- Modify: `telegram-bot/cmd/bot/main.go`
+
+**Step 1: Add imports**
+
+```go
+import (
+    "telegram-bot/internal/startup"
+    "telegram-bot/internal/updater"
+)
+```
+
+**Step 2: Add startup notification check**
+
+After creating bot API, before creating Bot:
+
 ```go
 // Check for update notification before starting
 if err := startup.CheckAndSendNotify(
-    &simpleSender{api: bot},
+    &simpleSender{api: botAPI},
     startup.DefaultNotifyFile,
     startup.DefaultUpdateDir,
 ); err != nil {
@@ -1836,7 +1805,8 @@ if err := startup.CheckAndSendNotify(
 }
 ```
 
-3. Add simpleSender adapter:
+**Step 3: Add simpleSender adapter**
+
 ```go
 type simpleSender struct {
     api *tgbotapi.BotAPI
@@ -1849,33 +1819,32 @@ func (s *simpleSender) Send(chatID int64, text string) error {
 }
 ```
 
-4. Add to Deps initialization:
+**Step 4: Use Options pattern**
+
 ```go
-DevMode: *devFlag,
-Updater: updater.New(),
+var opts []bot.Option
+if *devFlag {
+    opts = append(opts, bot.WithDevMode(devmode.NewExecutor()))
+}
+opts = append(opts, bot.WithUpdater(updater.New()))
+
+b, err := bot.New(cfg, p, Version, Commit, BuildDate, opts...)
 ```
 
-**Step 5: Verify it compiles**
-
-Run: `cd telegram-bot && go build ./cmd/bot/...`
-
-Expected: Build succeeds
-
-**Step 6: Commit**
+**Step 5: Commit**
 
 ```bash
-git add telegram-bot/internal/handler/handler.go telegram-bot/internal/bot/router.go telegram-bot/internal/bot/bot.go telegram-bot/cmd/bot/main.go
+git add telegram-bot/cmd/bot/main.go
 git commit -m "feat(telegram-bot): integrate /update command
 
-- Add DevMode and Updater to Deps
-- Register /update route and BotFather command
-- Check for startup notification before polling
+- Add startup notification check for update completion
+- Use Options pattern for bot configuration
 - Initialize updater service"
 ```
 
 ---
 
-## Task 12: Final Testing and Documentation
+## Task 15: Final Testing
 
 **Step 1: Run all tests**
 
@@ -1889,30 +1858,10 @@ Run: `cd telegram-bot && make build-arm64 && make build-arm`
 
 Expected: Both binaries created in `bin/`
 
-**Step 3: Verify command registration**
+**Step 3: Commit all changes**
 
-Run: `cd telegram-bot && go run ./cmd/bot --help`
+Create final PR commit message:
 
-Expected: Help output shows (bot won't start without config)
-
-**Step 4: Update CLAUDE.md with new command**
-
-Add `/update` to the Bot Commands table in `.claude/rules/telegram-bot.md`:
-
-```markdown
-| `/update` | `UpdateHandler` | Update VPN Director to latest release |
-```
-
-**Step 5: Commit documentation**
-
-```bash
-git add .claude/rules/telegram-bot.md
-git commit -m "docs: add /update command to telegram-bot documentation"
-```
-
-**Step 6: Final commit message for PR**
-
-Create PR with summary:
 ```
 feat(telegram-bot): add /update command for self-updating
 
@@ -1924,8 +1873,10 @@ Implements self-update functionality via /update command:
 - Bot sends completion notification on startup after update
 - Lock file with PID prevents concurrent updates
 - Dev mode check prevents updates in development
+- Options pattern for bot.New() configuration
+- Injectable GitHub API URL for testing
 
-Closes #XX
+Design: docs/plans/2026-01-25-telegram-bot-update-command-design.md
 ```
 
 ---
@@ -1938,11 +1889,14 @@ Closes #XX
 | 2 | Version parser | `updater/version.go`, `version_test.go` |
 | 3 | Updater interface | `updater/updater.go` |
 | 4 | GitHub API client | `updater/github.go`, `github_test.go` |
-| 5 | Lock file with PID | `updater/updater.go`, `lock_test.go` |
-| 6 | File downloader | `updater/downloader.go` |
-| 7 | Script template | `updater/update_script.sh.tmpl` |
-| 8 | Script generator | `updater/script.go`, `script_test.go` |
-| 9 | Startup notification | `startup/notify.go`, `notify_test.go` |
-| 10 | Update handler | `handler/update.go` |
-| 11 | Bot integration | `handler.go`, `router.go`, `bot.go`, `main.go` |
-| 12 | Testing & docs | Tests, documentation |
+| 5 | File downloader | `updater/downloader.go` |
+| 6 | Script template | `updater/update_script.sh.tmpl` |
+| 7 | Script generator | `updater/script.go`, `script_test.go` |
+| 8 | Startup notification | `startup/notify.go`, `notify_test.go` |
+| 9 | Update handler | `handler/update.go` |
+| 10 | Options pattern | `bot/bot.go` |
+| 11 | Handler Deps | `handler/handler.go` |
+| 12 | /start help text | `handler/misc.go` |
+| 13 | Router integration | `bot/router.go` |
+| 14 | Main integration | `cmd/bot/main.go` |
+| 15 | Final testing | Tests, builds |

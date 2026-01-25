@@ -43,7 +43,7 @@ This avoids changing CI to bundle scripts into release archives.
 
 Downloading can fail (network issues, GitHub unavailable). If we stop the bot first and then download fails, user is left without a working bot.
 
-Solution: Download everything to `/tmp/` first, validate all files exist, only then stop and replace.
+Solution: Download everything to `/tmp/` first, only then stop and replace.
 
 ## Design Decisions
 
@@ -59,35 +59,55 @@ Solution: Download everything to `/tmp/` first, validate all files exist, only t
 
 **Rationale:** Downloads may take time on slow connections. Running synchronously would block all bot commands. With goroutine, bot stays responsive and can process other commands while downloading.
 
-**Implementation:** Handler starts goroutine, sends progress messages back to chat via channel or callback.
+**Implementation:** Handler starts goroutine, sends progress messages back to chat.
+
+### Handler Context
+
+**Decision:** `HandleUpdate(msg *tgbotapi.Message)` without `context.Context`
+
+**Rationale:** Current bot handlers don't use Context. HTTP timeouts are configured via `http.Client.Timeout`. Update runs in goroutine and script is detached — cancellation via Context provides no benefit. Use `context.Background()` internally for HTTP calls.
 
 ### Version Handling
 
-**Decision:** Pass raw `Version` (e.g., "v1.2.0") to handler, not `versionString()` (e.g., "v1.2.0 (abc1234, 2026-01-25)")
+**Decision:** Pass `Version`, `Commit`, `BuildDate` separately via ldflags, format where needed
 
-**Rationale:** Semver parser expects clean version string. The formatted version string with commit and date would fail to parse.
+**Rationale:** Semver parser expects clean version string. The `/version` command needs formatted output. Keeping them separate allows both use cases.
 
-**Implementation:** `Deps` struct receives separate `Version` field with raw tag value from ldflags.
+**Implementation:** `Deps` struct receives `Version` (raw tag), `Commit`, `BuildDate` separately. Handler formats for display, updater uses raw Version for comparison.
+
+### Dependency Injection: Options Pattern
+
+**Decision:** Use Options pattern for `bot.New()`
+
+**Rationale:** `bot.New()` already has many parameters. Adding `devMode` and `updater` would make it unwieldy. Options pattern allows clean extension:
+
+```go
+b, err := bot.New(cfg, p, version,
+    bot.WithDevMode(executor),  // sets devMode=true + custom executor
+    bot.WithUpdater(updater.New()),
+)
+```
+
+**Benefits:**
+- Related settings grouped (devMode + executor)
+- Easy to add new options without changing signature
+- Idiomatic Go pattern
 
 ### Shell Script Error Handling
 
-**Decision:** Fail-fast with `set -e`
+**Decision:** Strict fail-fast with `set -e`, no `|| true` on critical operations
 
-**Rationale:** If any step fails (stop, copy, start), continuing could leave system in inconsistent state. Better to fail immediately and let user investigate. Lock file remains, preventing retries until manual cleanup.
+**Rationale:** If any step fails (stop, copy, start), continuing could leave system in inconsistent state. All files in the download list are mandatory — if a file doesn't copy, it's a release error and update should fail.
 
-**Alternative considered:** Trap with cleanup - but this adds complexity and may mask the actual error.
+**Exception:** `monit unmonitor/monitor` uses `|| true` because monit is optional.
 
-### File List Synchronization
+### No Rollback on Script Failure
 
-**Decision:** Manual duplication between `install.sh` and bot
+**Decision:** Accept risk of bot being down if script fails after stopping bot
 
-**Rationale:** Files rarely change. When adding new files, developer must update both places. A shared manifest would add complexity for little benefit.
+**Rationale:** This is a rare edge case — files are already downloaded and validated before script runs. Adding rollback complexity (backup, restore) is not worth it. If script fails mid-copy, user must investigate manually. Lock file remains to prevent retry loops.
 
-### Missing Binary Asset
-
-**Decision:** Fail update entirely if binary not found for architecture
-
-**Rationale:** Only arm64 and arm are supported. These assets will always be present in releases. Proceeding with scripts-only would leave bot at old version, which is confusing.
+**Known risk:** If script fails between stop and start, bot is down with no notification. User must SSH to router and check `/tmp/vpn-director-update/update.log`.
 
 ### Lock File Format
 
@@ -106,6 +126,26 @@ Solution: Download everything to `/tmp/` first, validate all files exist, only t
 3. `kill -0 $PID` succeeds → update in progress, reject
 4. `kill -0 $PID` fails → stale lock, remove and proceed
 
+**Known limitation:** If bot restarts during update (e.g., monit), new bot may remove lock while script is still running. This is unlikely — monit only restarts if process dies, and process dies from the script which then continues to completion.
+
+### Download Cleanup
+
+**Decision:** Clean `files/` directory before downloading and on error
+
+**Rationale:** Failed downloads can leave partial files. Subsequent update attempts could use stale/corrupt files. Clean before download ensures fresh state. Clean on error ensures no garbage remains.
+
+### File List Synchronization
+
+**Decision:** Manual duplication between `install.sh` and bot
+
+**Rationale:** Files rarely change. When adding new files, developer must update both places. A shared manifest or archive would add complexity (CI changes) for little benefit.
+
+### Missing Binary Asset
+
+**Decision:** Fail update entirely if binary not found for architecture
+
+**Rationale:** Only arm64 and arm are supported. These assets will always be present in releases. Proceeding with scripts-only would leave bot at old version, which is confusing.
+
 ### Dependencies
 
 **Decision:** Require `pgrep` (from `procps-ng-pgrep`)
@@ -114,7 +154,7 @@ Solution: Download everything to `/tmp/` first, validate all files exist, only t
 
 ### JFFS Scripts Handling
 
-**Decision:** Overwrite `firewall-start` and `wan-event`
+**Decision:** Overwrite `firewall-start` and `wan-event` without warning
 
 **Rationale:** Same behavior as `install.sh`. Users who customize these files should know that updates will overwrite them. Merging user changes is too complex and error-prone.
 
@@ -130,6 +170,8 @@ Solution: Download everything to `/tmp/` first, validate all files exist, only t
 
 **Rationale:** Dev mode is an explicit choice when starting the bot. A release build without proper tag shouldn't accidentally enable dev mode. The `--dev` flag is already used throughout the bot for this purpose.
 
+**Note:** If `Version == "dev"` (unparseable), `ShouldUpdate()` returns false and handler shows "Cannot check updates for dev build" message.
+
 ### Semver Format
 
 **Decision:** Strict `vX.Y.Z` format only, no pre-release tags
@@ -140,7 +182,25 @@ Solution: Download everything to `/tmp/` first, validate all files exist, only t
 
 **Decision:** All authorized users can run `/update`
 
-**Rationale:** Consistent with other commands. No separate "admin" concept exists in the bot. If someone is in `allowed_users`, they have full control.
+**Rationale:** Consistent with other commands. No separate "admin" concept exists in the bot. If someone is in `allowed_users`, they have full control. No confirmation step needed.
+
+### Monit Handling
+
+**Decision:** Continue update if monit unmonitor/monitor fails
+
+**Rationale:** Monit is optional. Its absence or failure to unmonitor shouldn't block updates. Use `|| true` for monit commands only.
+
+### Progress Messages
+
+**Decision:** Send multiple separate messages for progress
+
+**Rationale:** Simpler than editing a single message. Three messages ("Starting...", "Files downloaded...", "Script started...") is acceptable UX.
+
+### Testability
+
+**Decision:** Make GitHub API base URL injectable for testing
+
+**Rationale:** Allows using `httptest.NewServer()` in tests instead of skipping GitHub client tests.
 
 ## Flow
 
@@ -152,6 +212,7 @@ User: /update
 │  1. Checks                                                      │
 │     - Dev mode (--dev flag)? → "Command /update is not          │
 │       available in dev mode"                                    │
+│     - Version == "dev"? → "Cannot check updates for dev build"  │
 │     - Lock exists AND process alive? → "Update is already       │
 │       in progress..."                                           │
 │     - Lock exists BUT process dead? → Remove stale lock         │
@@ -177,6 +238,7 @@ User: /update
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  4. Create lock file (write current PID)                        │
+│     Clean files/ directory (remove stale downloads)             │
 │     Send: "Starting update v1.1.0 → v1.2.0..."                  │
 └─────────────────────────────────────────────────────────────────┘
        │
@@ -185,8 +247,8 @@ User: /update
 │  5. Download all files in GOROUTINE to /tmp/vpn-director-update/│
 │     - Scripts from raw.githubusercontent.com/refs/tags/{tag}/   │
 │     - Binary from release assets (arm64 or arm by runtime.GOARCH│
-│     - Missing binary asset? → Remove lock, fail with error      │
-│     - Any download fails? → Remove lock, fail with error        │
+│     - Missing binary asset? → Clean files/, remove lock, error  │
+│     - Any download fails? → Clean files/, remove lock, error    │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -214,7 +276,7 @@ User: /update
 
 ## Shell Script Flow
 
-Script uses `set -e` for fail-fast behavior. Variables are embedded by bot when generating the script.
+Script uses `set -e` for strict fail-fast behavior. Variables are embedded by bot when generating the script. No `|| true` on critical operations.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -229,9 +291,10 @@ Script uses `set -e` for fail-fast behavior. Variables are embedded by bot when 
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Unmonitor in monit (if installed)                           │
+│  1. Unmonitor in monit (if installed) — OPTIONAL, uses || true  │
 │     Prevents monit from restarting bot during file replacement  │
 │     command -v monit >/dev/null && monit unmonitor telegram-bot │
+│       || true                                                   │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -244,7 +307,7 @@ Script uses `set -e` for fail-fast behavior. Variables are embedded by bot when 
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  3. Copy files to target locations                              │
+│  3. Copy files to target locations — NO || true, fails on error │
 │     cp files/opt/vpn-director/*.sh → /opt/vpn-director/         │
 │     cp files/opt/vpn-director/lib/*.sh → /opt/vpn-director/lib/ │
 │     cp files/*.template → respective locations                  │
@@ -270,8 +333,9 @@ Script uses `set -e` for fail-fast behavior. Variables are embedded by bot when 
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  6. Re-monitor in monit (if was unmonitored)                    │
+│  6. Re-monitor in monit (if was unmonitored) — uses || true     │
 │     command -v monit >/dev/null && monit monitor telegram-bot   │
+│       || true                                                   │
 └─────────────────────────────────────────────────────────────────┘
        │
        ▼
@@ -284,10 +348,8 @@ Script uses `set -e` for fail-fast behavior. Variables are embedded by bot when 
        │
        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  8. Cleanup                                                     │
-│     rm -rf $UPDATE_DIR/files/                                   │
-│     rm -f $UPDATE_DIR/update.sh                                 │
-│     (keep notify.json for bot, keep update.log for debugging)   │
+│  8. Cleanup — delete entire update directory                    │
+│     rm -rf $UPDATE_DIR                                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -307,8 +369,7 @@ if err := startup.CheckAndSendNotify(bot); err != nil {
 2. If not exists → normal startup, do nothing
 3. If exists → read JSON, parse chat_id and versions
 4. Send message: "Update complete: v1.1.0 → v1.2.0"
-5. Delete notify.json
-6. Delete `/tmp/vpn-director-update/` directory (cleanup)
+5. Delete `/tmp/vpn-director-update/` directory (entire cleanup)
 
 **notify.json format:**
 ```json
@@ -328,7 +389,7 @@ All update-related files in single directory for easy cleanup:
 ├── lock                        # Lock file (contains PID, e.g., "12345")
 ├── notify.json                 # Created by script, read by bot on startup
 ├── update.sh                   # Generated shell script
-├── update.log                  # Script execution log for debugging
+├── update.log                  # Script execution log (deleted on success)
 └── files/                      # Downloaded files (mirrors target structure)
     ├── opt/
     │   ├── vpn-director/
@@ -357,6 +418,8 @@ All update-related files in single directory for easy cleanup:
     │       └── wan-event
     └── telegram-bot            # Binary for current architecture
 ```
+
+**Note:** On successful update, entire `/tmp/vpn-director-update/` is deleted including `update.log`. On failure, directory remains for debugging.
 
 ## Version Comparison
 
@@ -445,7 +508,8 @@ If asset for current architecture not found → fail update entirely.
 
 | Situation | Message |
 |-----------|---------|
-| Dev mode | `Command /update is not available in dev mode` |
+| Dev mode (--dev flag) | `Command /update is not available in dev mode` |
+| Dev version (unparseable) | `Cannot check updates for dev build` |
 | Lock exists (active) | `Update is already in progress, please wait...` |
 | GitHub API error | `Failed to check for updates: {error}` |
 | Version parse error | `Failed to parse version: {error}` |
@@ -461,17 +525,20 @@ If asset for current architecture not found → fail update entirely.
 
 | Error | Handling |
 |-------|----------|
-| Dev mode enabled | Reject immediately with message |
+| Dev mode enabled (--dev) | Reject immediately with message |
+| Dev version (unparseable) | Reject with "Cannot check updates for dev build" |
 | Lock exists, process alive | Reject with "already in progress" |
 | Lock exists, process dead | Remove stale lock, proceed |
 | GitHub API fails | Remove lock, report error |
 | Version parse fails | Remove lock, report error |
-| Download fails | Remove lock, report error |
-| Binary asset missing | Remove lock, report error |
-| Script generation fails | Remove lock, report error |
-| init.d stop fails | Script exits (set -e), lock remains |
-| File copy fails | Script exits (set -e), lock remains |
-| init.d start fails | Logged, user must investigate (monit may restart) |
+| Download fails | Clean files/, remove lock, report error |
+| Binary asset missing | Clean files/, remove lock, report error |
+| Script generation fails | Clean files/, remove lock, report error |
+| init.d stop fails | Script exits (set -e), lock remains, no notification |
+| File copy fails | Script exits (set -e), lock remains, no notification |
+| init.d start fails | Logged in update.log, user must investigate manually |
+
+**Recovery from script failure:** If script fails after stopping bot, bot remains down. User must SSH to router, check `/tmp/vpn-director-update/update.log`, fix manually, and remove lock file. This is a rare edge case.
 
 ## New Files
 
@@ -479,7 +546,7 @@ If asset for current architecture not found → fail update entirely.
 |------|-------------|
 | `internal/updater/updater.go` | Service struct, interface, constructor |
 | `internal/updater/version.go` | Semver parsing and comparison (strict format) |
-| `internal/updater/github.go` | GitHub API client (releases/latest) |
+| `internal/updater/github.go` | GitHub API client (releases/latest), injectable baseURL |
 | `internal/updater/downloader.go` | File download logic (runs in goroutine) |
 | `internal/updater/script.go` | Script generation, lock file with PID |
 | `internal/updater/update_script.sh.tmpl` | Go template for shell script |
@@ -491,22 +558,25 @@ If asset for current architecture not found → fail update entirely.
 | File | Changes |
 |------|---------|
 | `Makefile` | `--abbrev=0` for VERSION (clean tag only) |
-| `internal/handler/handler.go` | Add `Updater` and `Version` (raw string) to Deps |
-| `internal/bot/router.go` | Add route for `/update` command |
-| `internal/bot/bot.go` | Register `/update` in BotFather commands list |
-| `cmd/bot/main.go` | Init updater service, call `startup.CheckAndSendNotify`, pass raw `Version` to Deps |
+| `internal/handler/handler.go` | Add `Updater`, `Version`, `Commit`, `BuildDate` to Deps |
+| `internal/handler/misc.go` | Add `/update` to `/start` help text |
+| `internal/bot/bot.go` | Options pattern: `WithDevMode()`, `WithUpdater()`. Register `/update` in BotFather commands |
+| `internal/bot/router.go` | Add route for `/update` command, add `UpdateRouterHandler` interface |
+| `cmd/bot/main.go` | Use Options pattern, init updater service, call `startup.CheckAndSendNotify` |
 
 ## Implementation Order
 
 1. Modify `Makefile` (VERSION with --abbrev=0)
 2. Create `internal/updater/version.go` (strict semver parsing with tests)
 3. Create `internal/updater/updater.go` (struct, interface)
-4. Create `internal/updater/github.go` (API client)
-5. Create `internal/updater/downloader.go` (async downloading)
-6. Create `internal/updater/update_script.sh.tmpl` (Go template)
+4. Create `internal/updater/github.go` (API client with injectable baseURL)
+5. Create `internal/updater/downloader.go` (async downloading with cleanup)
+6. Create `internal/updater/update_script.sh.tmpl` (Go template, strict set -e)
 7. Create `internal/updater/script.go` (script generation, lock with PID)
 8. Create `internal/startup/notify.go` (startup notification)
-9. Create `internal/handler/update.go` (command handler)
-10. Modify `internal/handler/handler.go` (add to Deps)
-11. Modify `internal/bot/router.go` and `internal/bot/bot.go` (registration)
-12. Modify `cmd/bot/main.go` (integration)
+9. Create `internal/handler/update.go` (command handler without Context)
+10. Refactor `internal/bot/bot.go` to use Options pattern
+11. Modify `internal/handler/handler.go` (add to Deps)
+12. Modify `internal/handler/misc.go` (add /update to /start help)
+13. Modify `internal/bot/router.go` (add route and interface)
+14. Modify `cmd/bot/main.go` (integration with Options)
