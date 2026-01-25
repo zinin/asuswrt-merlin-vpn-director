@@ -53,6 +53,33 @@ Solution: Download everything to `/tmp/` first, only then stop and replace.
 
 **Rationale:** HTTPS guarantees files come from GitHub, not a MITM attacker. This is the same trust model as the current installer. Adding checksums/signatures would protect against GitHub account compromise but adds complexity. Can be added later if needed.
 
+### Security: Version String Validation
+
+**Decision:** Validate version strings before using in shell script template
+
+**Rationale:** Version strings are embedded into shell script. Malicious tag names could inject shell commands. Validate that versions contain only safe characters `[a-zA-Z0-9.v-]`.
+
+**Implementation:**
+```go
+func isValidVersion(s string) bool {
+    for _, r := range s {
+        if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+             (r >= '0' && r <= '9') || r == '.' || r == '-' || r == 'v') {
+            return false
+        }
+    }
+    return len(s) > 0 && len(s) < 50
+}
+```
+
+### Security: Download Size Limit
+
+**Decision:** Limit downloaded file size to 50MB
+
+**Rationale:** Prevent memory exhaustion if GitHub returns unexpectedly large response (compromise or error). Normal bot binary is ~10MB, scripts are <100KB each.
+
+**Implementation:** Use `io.LimitReader(resp.Body, 50*1024*1024)` when copying response to file.
+
 ### Concurrency: Download Blocking
 
 **Decision:** Run downloads in a goroutine
@@ -65,15 +92,37 @@ Solution: Download everything to `/tmp/` first, only then stop and replace.
 
 **Decision:** `HandleUpdate(msg *tgbotapi.Message)` without `context.Context`
 
-**Rationale:** Current bot handlers don't use Context. HTTP timeouts are configured via `http.Client.Timeout`. Update runs in goroutine and script is detached — cancellation via Context provides no benefit. Use `context.Background()` internally for HTTP calls.
+**Rationale:** Current bot handlers don't use Context. Update runs in goroutine and script is detached — cancellation via Context provides no benefit. Use `context.Background()` internally for HTTP calls.
+
+### HTTP Timeouts
+
+**Decision:** Per-request timeout instead of global client timeout
+
+**Rationale:** Global `http.Client.Timeout` applies to all requests combined. If one file download takes 4 minutes, only 1 minute remains for all other files. Per-request timeout is more predictable.
+
+**Implementation:**
+```go
+func (s *Service) downloadFile(ctx context.Context, url, target string) error {
+    ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+    defer cancel()
+    req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+    // ...
+}
+```
 
 ### Version Handling
 
-**Decision:** Pass `Version`, `Commit`, `BuildDate` separately via ldflags, format where needed
+**Decision:** Pass `Version`, `VersionFull`, `Commit`, `BuildDate` separately via ldflags
 
-**Rationale:** Semver parser expects clean version string. The `/version` command needs formatted output. Keeping them separate allows both use cases.
+**Rationale:** Semver parser needs clean version (`v1.2.0`). The `/version` command needs full info (`v1.2.0-5-gabc1234`). Keeping them separate allows both use cases without parsing in code.
 
-**Implementation:** `Deps` struct receives `Version` (raw tag), `Commit`, `BuildDate` separately. Handler formats for display, updater uses raw Version for comparison.
+**Implementation:**
+- `Version` = clean tag for semver parsing (`v1.2.0`)
+- `VersionFull` = full git describe output (`v1.2.0-5-gabc1234-dirty`)
+- `Commit` = short hash (`abc1234`)
+- `BuildDate` = build date (`2026-01-25`)
+
+`Deps` struct receives all four. Handler uses `Version` for update comparison, `VersionFull`/`Commit`/`BuildDate` for display.
 
 ### Dependency Injection: Options Pattern
 
@@ -82,7 +131,7 @@ Solution: Download everything to `/tmp/` first, only then stop and replace.
 **Rationale:** `bot.New()` already has many parameters. Adding `devMode` and `updater` would make it unwieldy. Options pattern allows clean extension:
 
 ```go
-b, err := bot.New(cfg, p, version,
+b, err := bot.New(cfg, p, version, versionFull, commit, buildDate,
     bot.WithDevMode(executor),  // sets devMode=true + custom executor
     bot.WithUpdater(updater.New()),
 )
@@ -140,6 +189,8 @@ b, err := bot.New(cfg, p, version,
 
 **Rationale:** Files rarely change. When adding new files, developer must update both places. A shared manifest or archive would add complexity (CI changes) for little benefit.
 
+**Note:** Add comments in both `install.sh` and `updater/downloader.go` referencing each other for maintainability.
+
 ### Missing Binary Asset
 
 **Decision:** Fail update entirely if binary not found for architecture
@@ -150,7 +201,7 @@ b, err := bot.New(cfg, p, version,
 
 **Decision:** Require `pgrep` (from `procps-ng-pgrep`)
 
-**Rationale:** Already in project dependencies per README. Script uses `pgrep -f telegram-bot` to wait for process exit. No fallback to `pidof` needed.
+**Rationale:** Already in project dependencies per README. Script uses `pgrep -f "/opt/vpn-director/telegram-bot"` to wait for process exit. No fallback to `pidof` needed.
 
 ### JFFS Scripts Handling
 
@@ -202,6 +253,12 @@ b, err := bot.New(cfg, p, version,
 
 **Rationale:** Allows using `httptest.NewServer()` in tests instead of skipping GitHub client tests.
 
+### Process Detection in Script
+
+**Decision:** Use full path in pgrep: `pgrep -f "/opt/vpn-director/telegram-bot"`
+
+**Rationale:** Simple `pgrep -f telegram-bot` could match unrelated processes (e.g., `vim telegram-bot.log`, `tail -f telegram-bot.log`). Full path ensures only the actual bot process is matched.
+
 ## Flow
 
 ```
@@ -231,6 +288,7 @@ User: /update
 │  3. Compare versions (semver)                                   │
 │     Parse current version (from ldflags Version variable)       │
 │     Parse latest version (from tag_name)                        │
+│     Validate both versions (safe characters only)               │
 │     current >= latest? → "Already running the latest version"   │
 │     Parse error? → Fail with error message                      │
 └─────────────────────────────────────────────────────────────────┘
@@ -247,6 +305,7 @@ User: /update
 │  5. Download all files in GOROUTINE to /tmp/vpn-director-update/│
 │     - Scripts from raw.githubusercontent.com/refs/tags/{tag}/   │
 │     - Binary from release assets (arm64 or arm by runtime.GOARCH│
+│     - Per-request timeout (2 min), size limit (50MB)            │
 │     - Missing binary asset? → Clean files/, remove lock, error  │
 │     - Any download fails? → Clean files/, remove lock, error    │
 └─────────────────────────────────────────────────────────────────┘
@@ -302,6 +361,7 @@ Script uses `set -e` for strict fail-fast behavior. Variables are embedded by bo
 │  2. Stop bot via init.d                                         │
 │     /opt/etc/init.d/S98telegram-bot stop                        │
 │     Wait for process to exit (poll via pgrep, max 30s)          │
+│     pgrep -f "/opt/vpn-director/telegram-bot" (full path!)      │
 │     If still running after 30s → pkill -9                       │
 └─────────────────────────────────────────────────────────────────┘
        │
@@ -355,12 +415,17 @@ Script uses `set -e` for strict fail-fast behavior. Variables are embedded by bo
 
 ## Bot Startup Notification
 
-On every startup, bot checks for pending update notification:
+On every startup, bot checks for pending update notification in `Bot.Run()` before starting the polling loop:
 
 ```go
-// In cmd/bot/main.go, before starting message polling
-if err := startup.CheckAndSendNotify(bot); err != nil {
-    slog.Warn("Failed to send update notification", "error", err)
+// In internal/bot/bot.go, at the start of Run()
+func (b *Bot) Run(ctx context.Context) {
+    // Check for pending update notification
+    if err := startup.CheckAndSendNotify(b.sender, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
+        slog.Warn("Failed to send update notification", "error", err)
+    }
+
+    // ... existing polling code ...
 }
 ```
 
@@ -368,7 +433,7 @@ if err := startup.CheckAndSendNotify(bot); err != nil {
 1. Check if `/tmp/vpn-director-update/notify.json` exists
 2. If not exists → normal startup, do nothing
 3. If exists → read JSON, parse chat_id and versions
-4. Send message: "Update complete: v1.1.0 → v1.2.0"
+4. Send message via `sender.SendPlain()`: "Update complete: v1.1.0 → v1.2.0"
 5. Delete `/tmp/vpn-director-update/` directory (entire cleanup)
 
 **notify.json format:**
@@ -379,6 +444,8 @@ if err := startup.CheckAndSendNotify(bot); err != nil {
   "new_version": "v1.2.0"
 }
 ```
+
+**Interface:** `startup.CheckAndSendNotify` uses `telegram.MessageSender` interface directly, calling `SendPlain()` for plain text message.
 
 ## Temporary Files
 
@@ -449,21 +516,37 @@ func (v Version) Compare(other Version) int
 
 // IsOlderThan returns true if v < other
 func (v Version) IsOlderThan(other Version) bool
+
+// isValidVersion checks version contains only safe characters
+// for shell script embedding: [a-zA-Z0-9.v-]
+func isValidVersion(s string) bool
 ```
 
 ## Makefile Changes
 
-Current Makefile produces version like "v1.2.0-5-gabc1234" when not exactly on a tag.
+Makefile passes two version variables: clean tag for semver parsing and full describe output for display.
 
 ```makefile
-# Before: includes -N-gHASH suffix after tag
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-
-# After: only the tag name, or "dev" if no tags
+# VERSION: clean tag only for semver parsing
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+
+# VERSION_FULL: full git describe for display (includes commit count, hash, dirty)
+VERSION_FULL ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
+
+LDFLAGS = -ldflags "-s -w \
+    -X main.Version=$(VERSION) \
+    -X main.VersionFull=$(VERSION_FULL) \
+    -X main.Commit=$(COMMIT) \
+    -X main.BuildDate=$(BUILD_DATE)"
 ```
 
-This ensures `Version` variable contains clean semver that can be parsed.
+**Examples:**
+- On exact tag `v1.2.0`: VERSION=`v1.2.0`, VERSION_FULL=`v1.2.0`
+- After 5 commits: VERSION=`v1.2.0`, VERSION_FULL=`v1.2.0-5-gabc1234`
+- With local changes: VERSION=`v1.2.0`, VERSION_FULL=`v1.2.0-5-gabc1234-dirty`
 
 ## Files to Download
 
@@ -502,7 +585,7 @@ URL: From `assets[].browser_download_url` in releases/latest response
 
 If asset for current architecture not found → fail update entirely.
 
-**Note:** File list is duplicated in `install.sh`. Keep in sync manually when adding new files.
+**Note:** File list is duplicated in `install.sh`. Keep in sync manually when adding new files. Add cross-reference comments in both files.
 
 ## User Messages (English)
 
@@ -531,7 +614,9 @@ If asset for current architecture not found → fail update entirely.
 | Lock exists, process dead | Remove stale lock, proceed |
 | GitHub API fails | Remove lock, report error |
 | Version parse fails | Remove lock, report error |
+| Version validation fails | Remove lock, report error (invalid characters) |
 | Download fails | Clean files/, remove lock, report error |
+| Download size exceeded | Clean files/, remove lock, report error |
 | Binary asset missing | Clean files/, remove lock, report error |
 | Script generation fails | Clean files/, remove lock, report error |
 | init.d stop fails | Script exits (set -e), lock remains, no notification |
@@ -545,38 +630,40 @@ If asset for current architecture not found → fail update entirely.
 | File | Description |
 |------|-------------|
 | `internal/updater/updater.go` | Service struct, interface, constructor |
-| `internal/updater/version.go` | Semver parsing and comparison (strict format) |
+| `internal/updater/version.go` | Semver parsing, comparison, validation |
 | `internal/updater/github.go` | GitHub API client (releases/latest), injectable baseURL |
-| `internal/updater/downloader.go` | File download logic (runs in goroutine) |
+| `internal/updater/downloader.go` | File download logic with size limit and per-request timeout |
 | `internal/updater/script.go` | Script generation, lock file with PID |
 | `internal/updater/update_script.sh.tmpl` | Go template for shell script |
 | `internal/handler/update.go` | /update command handler |
+| `internal/handler/update_test.go` | Handler tests with mock updater |
 | `internal/startup/notify.go` | Startup notification check and send |
 
 ## Modified Files
 
 | File | Changes |
 |------|---------|
-| `Makefile` | `--abbrev=0` for VERSION (clean tag only) |
-| `internal/handler/handler.go` | Add `Updater`, `Version`, `Commit`, `BuildDate` to Deps |
-| `internal/handler/misc.go` | Add `/update` to `/start` help text |
-| `internal/bot/bot.go` | Options pattern: `WithDevMode()`, `WithUpdater()`. Register `/update` in BotFather commands |
+| `Makefile` | Add VERSION (--abbrev=0) and VERSION_FULL (full describe) |
+| `internal/handler/handler.go` | Add `Updater`, `Version`, `VersionFull`, `Commit`, `BuildDate`, `DevMode` to Deps |
+| `internal/handler/misc.go` | Add `/update` to `/start` help text; update `HandleVersion` to use VersionFull |
+| `internal/bot/bot.go` | Options pattern: `WithDevMode()`, `WithUpdater()`. Register `/update` in BotFather commands. Call `CheckAndSendNotify` in `Run()` |
 | `internal/bot/router.go` | Add route for `/update` command, add `UpdateRouterHandler` interface |
-| `cmd/bot/main.go` | Use Options pattern, init updater service, call `startup.CheckAndSendNotify` |
+| `cmd/bot/main.go` | Use Options pattern, pass Version/VersionFull/Commit/BuildDate, init updater service |
 
 ## Implementation Order
 
-1. Modify `Makefile` (VERSION with --abbrev=0)
-2. Create `internal/updater/version.go` (strict semver parsing with tests)
-3. Create `internal/updater/updater.go` (struct, interface)
+1. Modify `Makefile` (VERSION with --abbrev=0, add VERSION_FULL)
+2. Create `internal/updater/version.go` (semver parsing, validation, with tests)
+3. Create `internal/updater/updater.go` (struct, interface, per-request timeout)
 4. Create `internal/updater/github.go` (API client with injectable baseURL)
-5. Create `internal/updater/downloader.go` (async downloading with cleanup)
-6. Create `internal/updater/update_script.sh.tmpl` (Go template, strict set -e)
+5. Create `internal/updater/downloader.go` (downloading with size limit and timeout)
+6. Create `internal/updater/update_script.sh.tmpl` (Go template, strict set -e, full pgrep path)
 7. Create `internal/updater/script.go` (script generation, lock with PID)
-8. Create `internal/startup/notify.go` (startup notification)
-9. Create `internal/handler/update.go` (command handler without Context)
-10. Refactor `internal/bot/bot.go` to use Options pattern
-11. Modify `internal/handler/handler.go` (add to Deps)
-12. Modify `internal/handler/misc.go` (add /update to /start help)
-13. Modify `internal/bot/router.go` (add route and interface)
-14. Modify `cmd/bot/main.go` (integration with Options)
+8. Create `internal/startup/notify.go` (startup notification using telegram.MessageSender)
+9. Create `internal/handler/update.go` (command handler with version validation)
+10. Create `internal/handler/update_test.go` (handler tests)
+11. Refactor `internal/bot/bot.go` to use Options pattern, add CheckAndSendNotify call
+12. Modify `internal/handler/handler.go` (add to Deps)
+13. Modify `internal/handler/misc.go` (add /update to /start help, update HandleVersion)
+14. Modify `internal/bot/router.go` (add route and interface)
+15. Modify `cmd/bot/main.go` (integration with Options)

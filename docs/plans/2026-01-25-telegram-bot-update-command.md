@@ -13,31 +13,45 @@
 **Review Changes Applied:**
 - Options pattern for `bot.New()` instead of extending parameter list
 - `HandleUpdate(msg)` without Context (use `context.Background()` internally)
-- Three separate ldflags: Version, Commit, BuildDate
+- Four separate ldflags: Version, VersionFull, Commit, BuildDate
 - Check `version == "dev"` with dedicated message
 - Clean `files/` before downloading and on error
 - Injectable `baseURL` for GitHub API testing
 - Add `/update` to `/start` help text
 - Strict `set -e` in shell script (no `|| true` except monit)
 - Delete entire update directory on success
+- Version string validation before shell script embedding
+- Per-request timeout (2 min) instead of global client timeout
+- Download size limit (50MB)
+- Full path in pgrep (`/opt/vpn-director/telegram-bot`)
+- Use `telegram.MessageSender` for startup notification (call in `Bot.Run()`)
 
 ---
 
 ## Task 1: Modify Makefile for Clean Version Tag
 
 **Files:**
-- Modify: `telegram-bot/Makefile:3`
+- Modify: `telegram-bot/Makefile`
 
-**Step 1: Update VERSION variable**
+**Step 1: Update VERSION and add VERSION_FULL**
 
 Change from:
 ```makefile
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
+
+LDFLAGS = -ldflags "-s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildDate=$(BUILD_DATE)"
 ```
 
 To:
 ```makefile
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+VERSION_FULL ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
+
+LDFLAGS = -ldflags "-s -w -X main.Version=$(VERSION) -X main.VersionFull=$(VERSION_FULL) -X main.Commit=$(COMMIT) -X main.BuildDate=$(BUILD_DATE)"
 ```
 
 **Step 2: Verify change**
@@ -50,11 +64,11 @@ Expected: Build succeeds (no error output)
 
 ```bash
 git add telegram-bot/Makefile
-git commit -m "build(telegram-bot): use clean version tag without commit suffix
+git commit -m "build(telegram-bot): add VERSION_FULL for complete version info
 
-Change --always to --abbrev=0 so VERSION contains only the tag name
-(e.g., 'v1.2.0') instead of 'v1.2.0-5-gabc1234'. This enables proper
-semver parsing for the /update command."
+VERSION now contains clean tag (v1.2.0) for semver parsing.
+VERSION_FULL contains full git describe output (v1.2.0-5-gabc1234-dirty)
+for display in /version command."
 ```
 
 ---
@@ -241,6 +255,33 @@ func TestVersionIsOlderThan(t *testing.T) {
 		})
 	}
 }
+
+func TestIsValidVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"v1.2.3", true},
+		{"1.2.3", true},
+		{"v0.0.0", true},
+		{"v1.2.3-rc1", true}, // dashes allowed
+		{"", false},
+		{"v1.2.3;rm -rf /", false},     // semicolon not allowed
+		{"v1.2.3$(whoami)", false},     // $ not allowed
+		{"v1.2.3`id`", false},          // backtick not allowed
+		{"v1.2.3\"test", false},        // quote not allowed
+		{string(make([]byte, 100)), false}, // too long
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := IsValidVersion(tt.input)
+			if got != tt.want {
+				t.Errorf("IsValidVersion(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -342,6 +383,21 @@ func compareInt(a, b int) int {
 	}
 	return 0
 }
+
+// IsValidVersion checks if version string contains only safe characters
+// for shell script embedding: [a-zA-Z0-9.v-]
+func IsValidVersion(s string) bool {
+	if len(s) == 0 || len(s) > 50 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '-' || r == 'v') {
+			return false
+		}
+	}
+	return true
+}
 ```
 
 **Step 4: Run tests to verify they pass**
@@ -357,7 +413,8 @@ git add telegram-bot/internal/updater/version.go telegram-bot/internal/updater/v
 git commit -m "feat(telegram-bot): add semver parser for /update command
 
 Strict vX.Y.Z format only. Rejects dev builds, pre-release tags,
-and incomplete versions. Includes Compare() and IsOlderThan() methods."
+and incomplete versions. Includes Compare(), IsOlderThan() methods.
+IsValidVersion() validates strings for safe shell embedding."
 ```
 
 ---
@@ -381,8 +438,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
-	"time"
 )
 
 const (
@@ -448,11 +505,10 @@ type Service struct {
 }
 
 // New creates a new updater service.
+// Note: No global timeout on http.Client - per-request timeouts used instead.
 func New() *Service {
 	return &Service{
-		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
+		httpClient: &http.Client{},
 	}
 }
 
@@ -480,7 +536,8 @@ func (s *Service) IsUpdateInProgress() bool {
 		return false
 	}
 
-	pid, err := strconv.Atoi(string(data))
+	pidStr := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
 		// Invalid PID in lock file, remove it
 		os.Remove(lockPath)
@@ -564,7 +621,8 @@ git commit -m "feat(telegram-bot): add Updater interface and Service struct
 
 Defines constants for update directory paths and the Updater interface.
 Includes lock file management with PID-based stale detection.
-Injectable baseURL for testing GitHub API calls."
+Injectable baseURL for testing GitHub API calls.
+No global http.Client timeout - per-request timeouts used instead."
 ```
 
 ---
@@ -587,6 +645,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 const (
@@ -594,6 +653,7 @@ const (
 	repoName         = "asuswrt-merlin-vpn-director"
 	defaultAPIURL    = "https://api.github.com"
 	releasesEndpoint = "/repos/%s/%s/releases/latest"
+	apiTimeout       = 30 * time.Second
 )
 
 // githubRelease represents the GitHub API response for releases/latest.
@@ -610,6 +670,9 @@ type githubAsset struct {
 
 // GetLatestRelease fetches the latest release info from GitHub API.
 func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
+	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
+
 	baseURL := s.baseURL
 	if baseURL == "" {
 		baseURL = defaultAPIURL
@@ -805,7 +868,8 @@ git commit -m "feat(telegram-bot): add GitHub API client for releases
 
 Fetches latest release info including tag name and asset download URLs.
 ShouldUpdate() compares versions, returns false for dev builds.
-Injectable baseURL enables httptest testing."
+Injectable baseURL enables httptest testing.
+Uses per-request timeout (30s) for API calls."
 ```
 
 ---
@@ -831,13 +895,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
-	repoRawURL = "https://raw.githubusercontent.com/%s/%s/refs/tags/%s/%s"
+	repoRawURL      = "https://raw.githubusercontent.com/%s/%s/refs/tags/%s/%s"
+	downloadTimeout = 2 * time.Minute
+	maxFileSize     = 50 * 1024 * 1024 // 50MB
 )
 
 // scriptFiles lists all files to download from the repository.
+// NOTE: Keep in sync with install.sh file list.
 var scriptFiles = []string{
 	"router/opt/vpn-director/vpn-director.sh",
 	"router/opt/vpn-director/configure.sh",
@@ -925,6 +993,10 @@ func (s *Service) downloadBotBinary(ctx context.Context, release *Release) error
 }
 
 func (s *Service) downloadFile(ctx context.Context, url, target string) error {
+	// Per-request timeout
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
+
 	// Create parent directory
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
@@ -952,8 +1024,21 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	// Limit download size to prevent memory exhaustion
+	limitedReader := io.LimitReader(resp.Body, maxFileSize)
+	written, err := io.Copy(f, limitedReader)
+	if err != nil {
 		return fmt.Errorf("write file: %w", err)
+	}
+
+	// Check if we hit the limit (file was truncated)
+	if written == maxFileSize {
+		// Try to read one more byte - if successful, file was too large
+		buf := make([]byte, 1)
+		if n, _ := resp.Body.Read(buf); n > 0 {
+			os.Remove(target)
+			return fmt.Errorf("file exceeds maximum size (%d MB)", maxFileSize/1024/1024)
+		}
 	}
 
 	return nil
@@ -973,7 +1058,8 @@ git add telegram-bot/internal/updater/downloader.go
 git commit -m "feat(telegram-bot): add file downloader for /update
 
 Downloads scripts from raw.githubusercontent.com by tag and bot binary
-from release assets. Cleans files/ directory before downloading."
+from release assets. Cleans files/ directory before downloading.
+Per-request timeout (2 min) and size limit (50MB) for safety."
 ```
 
 ---
@@ -1002,6 +1088,7 @@ FILES_DIR="{{.FilesDir}}"
 NOTIFY_FILE="{{.NotifyFile}}"
 LOCK_FILE="{{.LockFile}}"
 LOG_FILE="$UPDATE_DIR/update.log"
+BOT_PATH="/opt/vpn-director/telegram-bot"
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
@@ -1021,15 +1108,16 @@ log "Stopping telegram-bot"
 sleep 1
 
 # 3. Wait for process to exit (max 30 seconds)
+# Using full path to avoid matching unrelated processes
 count=0
-while pgrep -f telegram-bot >/dev/null 2>&1 && [ $count -lt 30 ]; do
+while pgrep -f "$BOT_PATH" >/dev/null 2>&1 && [ $count -lt 30 ]; do
     sleep 1
     count=$((count + 1))
 done
 
-if pgrep -f telegram-bot >/dev/null 2>&1; then
+if pgrep -f "$BOT_PATH" >/dev/null 2>&1; then
     log "WARNING: telegram-bot still running after 30s, killing"
-    pkill -9 -f telegram-bot
+    pkill -9 -f "$BOT_PATH"
     sleep 1
 fi
 
@@ -1090,6 +1178,7 @@ git commit -m "feat(telegram-bot): add shell script template for /update
 
 Go template that generates update script. Uses strict set -e.
 Only monit commands use || true (monit is optional).
+Uses full path in pgrep to avoid matching unrelated processes.
 Deletes entire update directory on success."
 ```
 
@@ -1133,6 +1222,14 @@ type scriptData struct {
 
 // RunUpdateScript generates the update script and runs it detached.
 func (s *Service) RunUpdateScript(chatID int64, oldVersion, newVersion string) error {
+	// Validate versions before embedding in shell script
+	if !IsValidVersion(oldVersion) {
+		return fmt.Errorf("invalid old version: %q", oldVersion)
+	}
+	if !IsValidVersion(newVersion) {
+		return fmt.Errorf("invalid new version: %q", newVersion)
+	}
+
 	script, err := s.generateScript(chatID, oldVersion, newVersion)
 	if err != nil {
 		return fmt.Errorf("generate script: %w", err)
@@ -1222,6 +1319,7 @@ func TestGenerateScript(t *testing.T) {
 		"set -e",
 		"S98telegram-bot stop",
 		"S98telegram-bot start",
+		`pgrep -f "$BOT_PATH"`,  // full path variable used
 	}
 
 	for _, check := range checks {
@@ -1236,15 +1334,37 @@ func TestGenerateScript(t *testing.T) {
 	}
 
 	// Check that cp commands do NOT have || true
-	if strings.Contains(script, "cp -f") && strings.Contains(script, "cp -f \"$FILES_DIR") {
-		// Find a cp line and check it doesn't end with || true
-		for _, line := range strings.Split(script, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "cp -f") {
-				if strings.HasSuffix(strings.TrimSpace(line), "|| true") {
-					t.Errorf("cp command should not have || true: %s", line)
-				}
+	for _, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "cp -f") {
+			if strings.HasSuffix(strings.TrimSpace(line), "|| true") {
+				t.Errorf("cp command should not have || true: %s", line)
 			}
 		}
+	}
+}
+
+func TestRunUpdateScript_InvalidVersion(t *testing.T) {
+	s := &Service{
+		updateDir: t.TempDir(),
+	}
+
+	tests := []struct {
+		name       string
+		oldVersion string
+		newVersion string
+	}{
+		{"shell injection in old", "v1.0.0;rm -rf /", "v1.1.0"},
+		{"shell injection in new", "v1.0.0", "v1.1.0$(whoami)"},
+		{"backticks in old", "`id`", "v1.1.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := s.RunUpdateScript(123, tt.oldVersion, tt.newVersion)
+			if err == nil {
+				t.Error("Expected error for invalid version")
+			}
+		})
 	}
 }
 ```
@@ -1262,7 +1382,8 @@ git add telegram-bot/internal/updater/script.go telegram-bot/internal/updater/sc
 git commit -m "feat(telegram-bot): add script generator for /update
 
 Uses go:embed to load template, generates script with embedded
-variables, runs it detached via nohup."
+variables, runs it detached via nohup.
+Validates version strings before embedding to prevent shell injection."
 ```
 
 ---
@@ -1284,12 +1405,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-)
 
-// MessageSender is the interface for sending Telegram messages.
-type MessageSender interface {
-	Send(chatID int64, text string) error
-}
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
+)
 
 // UpdateNotification is the JSON structure in notify.json.
 type UpdateNotification struct {
@@ -1305,8 +1423,9 @@ const DefaultNotifyFile = "/tmp/vpn-director-update/notify.json"
 const DefaultUpdateDir = "/tmp/vpn-director-update"
 
 // CheckAndSendNotify checks for pending update notification and sends it.
+// Uses telegram.MessageSender interface, calling SendPlain for plain text.
 // Cleans up the entire update directory after sending.
-func CheckAndSendNotify(sender MessageSender, notifyFile, updateDir string) error {
+func CheckAndSendNotify(sender telegram.MessageSender, notifyFile, updateDir string) error {
 	data, err := os.ReadFile(notifyFile)
 	if os.IsNotExist(err) {
 		return nil // No notification pending
@@ -1320,9 +1439,9 @@ func CheckAndSendNotify(sender MessageSender, notifyFile, updateDir string) erro
 		return fmt.Errorf("parse notify file: %w", err)
 	}
 
-	// Send message
+	// Send plain text message (no Markdown)
 	text := fmt.Sprintf("Update complete: %s → %s", n.OldVersion, n.NewVersion)
-	if err := sender.Send(n.ChatID, text); err != nil {
+	if err := sender.SendPlain(n.ChatID, text); err != nil {
 		return fmt.Errorf("send notification: %w", err)
 	}
 
@@ -1344,19 +1463,48 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-type mockBotAPI struct {
-	sentMessages []mockMessage
+// mockSender implements telegram.MessageSender for testing
+type mockSender struct {
+	sentMessages []sentMessage
 }
 
-type mockMessage struct {
+type sentMessage struct {
 	chatID int64
 	text   string
+	plain  bool
 }
 
-func (m *mockBotAPI) Send(chatID int64, text string) error {
-	m.sentMessages = append(m.sentMessages, mockMessage{chatID: chatID, text: text})
+func (m *mockSender) Send(chatID int64, text string) error {
+	m.sentMessages = append(m.sentMessages, sentMessage{chatID, text, false})
+	return nil
+}
+
+func (m *mockSender) SendPlain(chatID int64, text string) error {
+	m.sentMessages = append(m.sentMessages, sentMessage{chatID, text, true})
+	return nil
+}
+
+func (m *mockSender) SendLongPlain(chatID int64, text string) error {
+	return m.SendPlain(chatID, text)
+}
+
+func (m *mockSender) SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (m *mockSender) SendCodeBlock(chatID int64, header, content string) error {
+	return nil
+}
+
+func (m *mockSender) EditMessage(chatID int64, msgID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (m *mockSender) AckCallback(callbackID string) error {
 	return nil
 }
 
@@ -1365,29 +1513,32 @@ func TestCheckAndSendNotify(t *testing.T) {
 	notifyFile := filepath.Join(tmpDir, "notify.json")
 
 	// Create notify file
-	json := `{"chat_id":123456789,"old_version":"v1.0.0","new_version":"v1.1.0"}`
-	if err := os.WriteFile(notifyFile, []byte(json), 0644); err != nil {
+	jsonData := `{"chat_id":123456789,"old_version":"v1.0.0","new_version":"v1.1.0"}`
+	if err := os.WriteFile(notifyFile, []byte(jsonData), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	mockBot := &mockBotAPI{}
+	mockSnd := &mockSender{}
 
-	err := CheckAndSendNotify(mockBot, notifyFile, tmpDir)
+	err := CheckAndSendNotify(mockSnd, notifyFile, tmpDir)
 	if err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 
-	// Check message was sent
-	if len(mockBot.sentMessages) != 1 {
-		t.Fatalf("Expected 1 message, got %d", len(mockBot.sentMessages))
+	// Check message was sent as plain text
+	if len(mockSnd.sentMessages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(mockSnd.sentMessages))
 	}
 
-	msg := mockBot.sentMessages[0]
+	msg := mockSnd.sentMessages[0]
 	if msg.chatID != 123456789 {
 		t.Errorf("chatID = %d, want 123456789", msg.chatID)
 	}
 	if msg.text != "Update complete: v1.0.0 → v1.1.0" {
 		t.Errorf("text = %q, want 'Update complete: v1.0.0 → v1.1.0'", msg.text)
+	}
+	if !msg.plain {
+		t.Error("Message should be sent as plain text")
 	}
 
 	// Check update dir was deleted
@@ -1400,17 +1551,17 @@ func TestCheckAndSendNotify_NoFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	notifyFile := filepath.Join(tmpDir, "notify.json")
 
-	mockBot := &mockBotAPI{}
+	mockSnd := &mockSender{}
 
 	// Should not error when file doesn't exist
-	err := CheckAndSendNotify(mockBot, notifyFile, tmpDir)
+	err := CheckAndSendNotify(mockSnd, notifyFile, tmpDir)
 	if err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 
 	// No messages sent
-	if len(mockBot.sentMessages) != 0 {
-		t.Errorf("Expected 0 messages, got %d", len(mockBot.sentMessages))
+	if len(mockSnd.sentMessages) != 0 {
+		t.Errorf("Expected 0 messages, got %d", len(mockSnd.sentMessages))
 	}
 }
 ```
@@ -1427,8 +1578,8 @@ Expected: PASS
 git add telegram-bot/internal/startup/notify.go telegram-bot/internal/startup/notify_test.go
 git commit -m "feat(telegram-bot): add startup notification for /update
 
-Checks for notify.json on startup, sends completion message to chat,
-cleans up entire update directory."
+Checks for notify.json on startup, sends completion message to chat
+using telegram.MessageSender.SendPlain(), cleans up update directory."
 ```
 
 ---
@@ -1437,6 +1588,7 @@ cleans up entire update directory."
 
 **Files:**
 - Create: `telegram-bot/internal/handler/update.go`
+- Create: `telegram-bot/internal/handler/update_test.go`
 
 **Step 1: Write the handler**
 
@@ -1451,8 +1603,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"telegram-bot/internal/telegram"
-	"telegram-bot/internal/updater"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
 )
 
 // UpdateHandler handles the /update command.
@@ -1503,7 +1655,17 @@ func (h *UpdateHandler) HandleUpdate(msg *tgbotapi.Message) {
 		return
 	}
 
-	// 5. Compare versions
+	// 5. Validate versions
+	if !updater.IsValidVersion(h.version) {
+		h.send(chatID, fmt.Sprintf("Invalid current version: %s", h.version))
+		return
+	}
+	if !updater.IsValidVersion(release.TagName) {
+		h.send(chatID, fmt.Sprintf("Invalid release version: %s", release.TagName))
+		return
+	}
+
+	// 6. Compare versions
 	shouldUpdate, err := h.updater.ShouldUpdate(h.version, release.TagName)
 	if err != nil {
 		h.send(chatID, fmt.Sprintf("Failed to parse version: %v", err))
@@ -1514,16 +1676,16 @@ func (h *UpdateHandler) HandleUpdate(msg *tgbotapi.Message) {
 		return
 	}
 
-	// 6. Create lock
+	// 7. Create lock
 	if err := h.updater.CreateLock(); err != nil {
 		h.send(chatID, fmt.Sprintf("Failed to start update: %v", err))
 		return
 	}
 
-	// 7. Notify start
+	// 8. Notify start
 	h.send(chatID, fmt.Sprintf("Starting update %s → %s...", h.version, release.TagName))
 
-	// 8. Download in goroutine
+	// 9. Download in goroutine
 	go h.downloadAndUpdate(chatID, release)
 }
 
@@ -1539,10 +1701,10 @@ func (h *UpdateHandler) downloadAndUpdate(chatID int64, release *updater.Release
 		return
 	}
 
-	// 9. Notify downloaded
+	// 10. Notify downloaded
 	h.send(chatID, "Files downloaded, starting update...")
 
-	// 10. Run update script
+	// 11. Run update script
 	if err := h.updater.RunUpdateScript(chatID, h.version, release.TagName); err != nil {
 		h.updater.CleanFiles()
 		h.updater.RemoveLock()
@@ -1550,7 +1712,7 @@ func (h *UpdateHandler) downloadAndUpdate(chatID int64, release *updater.Release
 		return
 	}
 
-	// 11. Notify script started
+	// 12. Notify script started
 	h.send(chatID, "Update script started, bot will restart in a few seconds...")
 }
 
@@ -1559,21 +1721,177 @@ func (h *UpdateHandler) send(chatID int64, text string) {
 }
 ```
 
-**Step 2: Verify it compiles**
+**Step 2: Write tests**
 
-Run: `cd telegram-bot && go build ./internal/handler/...`
+Create `telegram-bot/internal/handler/update_test.go`:
 
-Expected: Build succeeds
+```go
+package handler
 
-**Step 3: Commit**
+import (
+	"context"
+	"testing"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
+)
+
+type mockUpdater struct {
+	latestRelease    *updater.Release
+	shouldUpdate     bool
+	updateInProgress bool
+	createLockErr    error
+	downloadErr      error
+	runScriptErr     error
+}
+
+func (m *mockUpdater) GetLatestRelease(ctx context.Context) (*updater.Release, error) {
+	return m.latestRelease, nil
+}
+
+func (m *mockUpdater) ShouldUpdate(currentVersion, latestTag string) (bool, error) {
+	return m.shouldUpdate, nil
+}
+
+func (m *mockUpdater) IsUpdateInProgress() bool {
+	return m.updateInProgress
+}
+
+func (m *mockUpdater) CreateLock() error {
+	return m.createLockErr
+}
+
+func (m *mockUpdater) RemoveLock() {}
+
+func (m *mockUpdater) CleanFiles() {}
+
+func (m *mockUpdater) DownloadRelease(ctx context.Context, release *updater.Release) error {
+	return m.downloadErr
+}
+
+func (m *mockUpdater) RunUpdateScript(chatID int64, oldVersion, newVersion string) error {
+	return m.runScriptErr
+}
+
+type mockUpdateSender struct {
+	messages []string
+}
+
+func (m *mockUpdateSender) Send(chatID int64, text string) error {
+	m.messages = append(m.messages, text)
+	return nil
+}
+
+func (m *mockUpdateSender) SendPlain(chatID int64, text string) error {
+	m.messages = append(m.messages, text)
+	return nil
+}
+
+func (m *mockUpdateSender) SendLongPlain(chatID int64, text string) error {
+	return m.SendPlain(chatID, text)
+}
+
+func (m *mockUpdateSender) SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (m *mockUpdateSender) SendCodeBlock(chatID int64, header, content string) error {
+	return nil
+}
+
+func (m *mockUpdateSender) EditMessage(chatID int64, msgID int, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+	return nil
+}
+
+func (m *mockUpdateSender) AckCallback(callbackID string) error {
+	return nil
+}
+
+func TestUpdateHandler_DevMode(t *testing.T) {
+	sender := &mockUpdateSender{}
+	h := NewUpdateHandler(sender, &mockUpdater{}, true, "v1.0.0")
+
+	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
+	h.HandleUpdate(msg)
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(sender.messages))
+	}
+	if sender.messages[0] != "Command /update is not available in dev mode" {
+		t.Errorf("Unexpected message: %s", sender.messages[0])
+	}
+}
+
+func TestUpdateHandler_DevVersion(t *testing.T) {
+	sender := &mockUpdateSender{}
+	h := NewUpdateHandler(sender, &mockUpdater{}, false, "dev")
+
+	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
+	h.HandleUpdate(msg)
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(sender.messages))
+	}
+	if sender.messages[0] != "Cannot check updates for dev build" {
+		t.Errorf("Unexpected message: %s", sender.messages[0])
+	}
+}
+
+func TestUpdateHandler_AlreadyLatest(t *testing.T) {
+	sender := &mockUpdateSender{}
+	upd := &mockUpdater{
+		latestRelease: &updater.Release{TagName: "v1.0.0"},
+		shouldUpdate:  false,
+	}
+	h := NewUpdateHandler(sender, upd, false, "v1.0.0")
+
+	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
+	h.HandleUpdate(msg)
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(sender.messages))
+	}
+	if sender.messages[0] != "Already running the latest version: v1.0.0" {
+		t.Errorf("Unexpected message: %s", sender.messages[0])
+	}
+}
+
+func TestUpdateHandler_UpdateInProgress(t *testing.T) {
+	sender := &mockUpdateSender{}
+	upd := &mockUpdater{
+		updateInProgress: true,
+	}
+	h := NewUpdateHandler(sender, upd, false, "v1.0.0")
+
+	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
+	h.HandleUpdate(msg)
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(sender.messages))
+	}
+	if sender.messages[0] != "Update is already in progress, please wait..." {
+		t.Errorf("Unexpected message: %s", sender.messages[0])
+	}
+}
+```
+
+**Step 3: Verify it compiles and tests pass**
+
+Run: `cd telegram-bot && go test ./internal/handler/... -v`
+
+Expected: PASS
+
+**Step 4: Commit**
 
 ```bash
-git add telegram-bot/internal/handler/update.go
+git add telegram-bot/internal/handler/update.go telegram-bot/internal/handler/update_test.go
 git commit -m "feat(telegram-bot): add /update command handler
 
-Checks dev mode, dev version, lock, version comparison.
+Checks dev mode, dev version, lock, version validation, comparison.
 Downloads files in goroutine for responsiveness.
-Cleans files/ on error. Sends progress messages."
+Cleans files/ on error. Sends progress messages.
+Includes tests for all early-exit conditions."
 ```
 
 ---
@@ -1587,16 +1905,21 @@ Cleans files/ on error. Sends progress messages."
 
 Read the file to understand current implementation.
 
-**Step 2: Add Options pattern**
+**Step 2: Add Options pattern, update struct and New()**
 
-Add at the top of bot.go after imports:
-
+Add after imports:
 ```go
+import (
+	// ... existing imports ...
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/startup"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
+)
+
 // Option configures the Bot.
 type Option func(*Bot)
 
 // WithDevMode enables development mode with custom executor.
-func WithDevMode(executor shell.Executor) Option {
+func WithDevMode(executor service.ShellExecutor) Option {
 	return func(b *Bot) {
 		b.devMode = true
 		b.executor = executor
@@ -1611,58 +1934,74 @@ func WithUpdater(u updater.Updater) Option {
 }
 ```
 
-**Step 3: Update Bot struct**
-
-Add fields:
+Update Bot struct:
 ```go
 type Bot struct {
-	// ... existing fields ...
-	devMode bool
-	updater updater.Updater
+	api      *tgbotapi.BotAPI
+	auth     *Auth
+	router   *Router
+	sender   telegram.MessageSender
+	devMode  bool
+	executor service.ShellExecutor
+	updater  updater.Updater
 }
 ```
 
-**Step 4: Update New() function**
-
-Change signature to accept options:
+Update New() signature:
 ```go
-func New(cfg *config.Config, paths paths.Paths, version, commit, buildDate string, opts ...Option) (*Bot, error)
+func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error)
 ```
 
 Apply options after creating bot:
 ```go
+b := &Bot{...}
 for _, opt := range opts {
     opt(b)
 }
 ```
 
-**Step 5: Add /update to commands list**
+Pass to Deps:
+```go
+deps := &handler.Deps{
+    // ... existing ...
+    DevMode:     b.devMode,
+    Updater:     b.updater,
+    Version:     version,
+    VersionFull: versionFull,
+    Commit:      commit,
+    BuildDate:   buildDate,
+}
+```
+
+**Step 3: Add /update to commands list**
 
 ```go
 {Command: "update", Description: "Update VPN Director to latest release"},
 ```
 
-**Step 6: Pass values to Deps**
+**Step 4: Add CheckAndSendNotify call in Run()**
 
+At the start of Run():
 ```go
-deps := &handler.Deps{
-    // ... existing ...
-    DevMode:   b.devMode,
-    Updater:   b.updater,
-    Version:   version,
-    Commit:    commit,
-    BuildDate: buildDate,
+func (b *Bot) Run(ctx context.Context) {
+	// Check for pending update notification before starting polling
+	if err := startup.CheckAndSendNotify(b.sender, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
+		slog.Warn("Failed to send update notification", "error", err)
+	}
+
+	// ... existing polling code ...
 }
 ```
 
-**Step 7: Commit**
+**Step 5: Commit**
 
 ```bash
 git add telegram-bot/internal/bot/bot.go
 git commit -m "refactor(telegram-bot): use Options pattern for bot.New()
 
 Add WithDevMode() and WithUpdater() options for cleaner configuration.
-Register /update command with BotFather."
+Register /update command with BotFather.
+Call CheckAndSendNotify() at start of Run() for update notifications."
 ```
 
 ---
@@ -1675,36 +2014,36 @@ Register /update command with BotFather."
 **Step 1: Add new fields to Deps**
 
 ```go
+import (
+	// ... existing imports ...
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
+)
+
 type Deps struct {
-	Sender    telegram.MessageSender
-	Config    service.ConfigStore
-	VPN       service.VPNDirector
-	Xray      service.XrayGenerator
-	Network   service.NetworkInfo
-	Logs      service.LogReader
-	Paths     paths.Paths
-	Version   string
-	Commit    string    // ADD
-	BuildDate string    // ADD
-	DevMode   bool      // ADD
-	Updater   updater.Updater // ADD
+	Sender      telegram.MessageSender
+	Config      service.ConfigStore
+	VPN         service.VPNDirector
+	Xray        service.XrayGenerator
+	Network     service.NetworkInfo
+	Logs        service.LogReader
+	Paths       paths.Paths
+	Version     string
+	VersionFull string           // ADD
+	Commit      string           // ADD
+	BuildDate   string           // ADD
+	DevMode     bool             // ADD
+	Updater     updater.Updater  // ADD
 }
 ```
 
-**Step 2: Add import for updater**
-
-```go
-import "telegram-bot/internal/updater"
-```
-
-**Step 3: Commit**
+**Step 2: Commit**
 
 ```bash
 git add telegram-bot/internal/handler/handler.go
 git commit -m "feat(telegram-bot): add Updater and version fields to Deps
 
-Add DevMode, Updater, Commit, BuildDate to handler dependencies
-for /update command and improved /version display."
+Add DevMode, Updater, VersionFull, Commit, BuildDate to handler
+dependencies for /update command and improved /version display."
 ```
 
 ---
@@ -1721,9 +2060,15 @@ Add to the help text in HandleStart():
 "/update - Update VPN Director to latest release"
 ```
 
-**Step 2: Update HandleVersion to use separate fields**
+**Step 2: Update HandleVersion to use VersionFull**
 
-If HandleVersion uses versionString(), update it to format from Deps.Version, Deps.Commit, Deps.BuildDate.
+Change HandleVersion to show full version info:
+```go
+func (h *MiscHandler) HandleVersion(msg *tgbotapi.Message) {
+	text := fmt.Sprintf("%s (%s, %s)", h.deps.VersionFull, h.deps.Commit, h.deps.BuildDate)
+	h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(text))
+}
+```
 
 **Step 3: Commit**
 
@@ -1731,7 +2076,8 @@ If HandleVersion uses versionString(), update it to format from Deps.Version, De
 git add telegram-bot/internal/handler/misc.go
 git commit -m "feat(telegram-bot): add /update to /start help text
 
-Users can now discover the /update command from /start help."
+Users can now discover the /update command from /start help.
+HandleVersion now shows VersionFull with commit and build date."
 ```
 
 ---
@@ -1753,10 +2099,13 @@ type UpdateRouterHandler interface {
 **Step 2: Add to Router struct**
 
 ```go
-update UpdateRouterHandler
+type Router struct {
+	// ... existing fields ...
+	update UpdateRouterHandler
+}
 ```
 
-**Step 3: Add to NewRouter parameters and initialization**
+**Step 3: Update NewRouter parameters and initialization**
 
 **Step 4: Add case in RouteMessage**
 
@@ -1781,46 +2130,37 @@ Register UpdateRouterHandler and route /update command."
 **Files:**
 - Modify: `telegram-bot/cmd/bot/main.go`
 
-**Step 1: Add imports**
+**Step 1: Update version variables**
 
 ```go
-import (
-    "telegram-bot/internal/startup"
-    "telegram-bot/internal/updater"
+var (
+	Version     = "dev"
+	VersionFull = "dev"
+	Commit      = "unknown"
+	BuildDate   = "unknown"
 )
 ```
 
-**Step 2: Add startup notification check**
-
-After creating bot API, before creating Bot:
+**Step 2: Update versionString() to use VersionFull**
 
 ```go
-// Check for update notification before starting
-if err := startup.CheckAndSendNotify(
-    &simpleSender{api: botAPI},
-    startup.DefaultNotifyFile,
-    startup.DefaultUpdateDir,
-); err != nil {
-    slog.Warn("Failed to send update notification", "error", err)
+func versionString() string {
+	return fmt.Sprintf("%s (%s, %s)", VersionFull, Commit, BuildDate)
 }
 ```
 
-**Step 3: Add simpleSender adapter**
+**Step 3: Add import for updater**
 
 ```go
-type simpleSender struct {
-    api *tgbotapi.BotAPI
-}
-
-func (s *simpleSender) Send(chatID int64, text string) error {
-    msg := tgbotapi.NewMessage(chatID, text)
-    _, err := s.api.Send(msg)
-    return err
-}
+import (
+	// ... existing imports ...
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
+)
 ```
 
 **Step 4: Use Options pattern**
 
+Replace executor handling with Options:
 ```go
 var opts []bot.Option
 if *devFlag {
@@ -1828,7 +2168,7 @@ if *devFlag {
 }
 opts = append(opts, bot.WithUpdater(updater.New()))
 
-b, err := bot.New(cfg, p, Version, Commit, BuildDate, opts...)
+b, err := bot.New(cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
 ```
 
 **Step 5: Commit**
@@ -1837,7 +2177,7 @@ b, err := bot.New(cfg, p, Version, Commit, BuildDate, opts...)
 git add telegram-bot/cmd/bot/main.go
 git commit -m "feat(telegram-bot): integrate /update command
 
-- Add startup notification check for update completion
+- Add VersionFull variable for full git describe output
 - Use Options pattern for bot configuration
 - Initialize updater service"
 ```
@@ -1875,6 +2215,9 @@ Implements self-update functionality via /update command:
 - Dev mode check prevents updates in development
 - Options pattern for bot.New() configuration
 - Injectable GitHub API URL for testing
+- Version validation prevents shell injection
+- Per-request timeouts and size limits for downloads
+- Full path in pgrep for accurate process matching
 
 Design: docs/plans/2026-01-25-telegram-bot-update-command-design.md
 ```
@@ -1885,18 +2228,18 @@ Design: docs/plans/2026-01-25-telegram-bot-update-command-design.md
 
 | Task | Description | Files |
 |------|-------------|-------|
-| 1 | Makefile VERSION change | `Makefile` |
-| 2 | Version parser | `updater/version.go`, `version_test.go` |
+| 1 | Makefile VERSION + VERSION_FULL | `Makefile` |
+| 2 | Version parser + validation | `updater/version.go`, `version_test.go` |
 | 3 | Updater interface | `updater/updater.go` |
 | 4 | GitHub API client | `updater/github.go`, `github_test.go` |
 | 5 | File downloader | `updater/downloader.go` |
 | 6 | Script template | `updater/update_script.sh.tmpl` |
 | 7 | Script generator | `updater/script.go`, `script_test.go` |
 | 8 | Startup notification | `startup/notify.go`, `notify_test.go` |
-| 9 | Update handler | `handler/update.go` |
-| 10 | Options pattern | `bot/bot.go` |
+| 9 | Update handler + tests | `handler/update.go`, `update_test.go` |
+| 10 | Options pattern + notify in Run() | `bot/bot.go` |
 | 11 | Handler Deps | `handler/handler.go` |
-| 12 | /start help text | `handler/misc.go` |
+| 12 | /start help text + HandleVersion | `handler/misc.go` |
 | 13 | Router integration | `bot/router.go` |
 | 14 | Main integration | `cmd/bot/main.go` |
 | 15 | Final testing | Tests, builds |
