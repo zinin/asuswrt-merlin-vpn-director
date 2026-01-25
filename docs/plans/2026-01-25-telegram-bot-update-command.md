@@ -28,6 +28,12 @@
 - Require `procps-ng-pgrep` + `procps-ng-pkill` for pgrep/pkill usage
 - Update `S98telegram-bot` to launch `/opt/vpn-director/telegram-bot` so full-path pgrep is reliable
 
+**Clarified Decisions (from review):**
+- `/update` is allowed in any chat (private or group) for users in `allowed_users`
+- File replacement is in-place (no atomic swap or staging)
+- Lock remains on any script failure; manual cleanup required
+- Stale lock detection is PID-only (no cmdline/token validation)
+
 ---
 
 ## Task 1: Modify Makefile for Clean Version Tag

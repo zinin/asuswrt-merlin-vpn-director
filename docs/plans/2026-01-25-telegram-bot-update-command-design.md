@@ -150,6 +150,12 @@ b, err := bot.New(cfg, p, version, versionFull, commit, buildDate,
 
 **Exception:** `monit unmonitor/monitor` uses `|| true` because monit is optional.
 
+### File Replacement Strategy
+
+**Decision:** Copy files in place (no atomic swap or staging directory).
+
+**Rationale:** Keeps the script simple and consistent with current install behavior. Risk of partial update on failure is accepted; recovery is manual.
+
 ### No Rollback on Script Failure
 
 **Decision:** Accept risk of bot being down if script fails after stopping bot
@@ -176,6 +182,10 @@ b, err := bot.New(cfg, p, version, versionFull, commit, buildDate,
 4. `kill -0 $PID` fails → stale lock, remove and proceed
 
 **Known limitation:** If bot restarts during update (e.g., monit), new bot may remove lock while script is still running. This is unlikely — monit only restarts if process dies, and process dies from the script which then continues to completion.
+
+**Decision:** Stale lock detection is PID-only (no cmdline/token validation).
+
+**Rationale:** Simple and sufficient for this environment; occasional PID reuse risk is accepted.
 
 ### Download Cleanup
 
@@ -231,7 +241,7 @@ b, err := bot.New(cfg, p, version, versionFull, commit, buildDate,
 
 ### Access Control
 
-**Decision:** All authorized users can run `/update`
+**Decision:** All authorized users can run `/update` in any chat (private or group)
 
 **Rationale:** Consistent with other commands. No separate "admin" concept exists in the bot. If someone is in `allowed_users`, they have full control. No confirmation step needed.
 
