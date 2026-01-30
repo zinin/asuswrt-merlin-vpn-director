@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -92,7 +93,17 @@ func (h *UpdateHandler) HandleUpdate(msg *tgbotapi.Message) {
 	h.send(chatID, fmt.Sprintf("Starting update %s → %s...", h.version, release.TagName))
 
 	// 10. Download and update in goroutine to keep bot responsive
-	go h.downloadAndUpdate(chatID, release)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("Update goroutine panicked", "error", r)
+				h.send(chatID, "Update failed unexpectedly. Check logs.")
+				h.updater.CleanFiles()
+				h.updater.RemoveLock()
+			}
+		}()
+		h.downloadAndUpdate(chatID, release)
+	}()
 }
 
 // downloadAndUpdate handles the download and update process in background.
