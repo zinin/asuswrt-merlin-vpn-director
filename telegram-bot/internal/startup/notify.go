@@ -4,6 +4,7 @@ package startup
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
@@ -53,8 +54,10 @@ func CheckAndSendNotify(sender telegram.MessageSender, notifyFile, updateDir str
 	}
 
 	// Cleanup entire update directory after successful send
-	// Errors are ignored - directory cleanup is best-effort
-	os.RemoveAll(updateDir)
+	// Log errors for debugging, but don't fail - cleanup is best-effort
+	if err := os.RemoveAll(updateDir); err != nil {
+		slog.Warn("Failed to cleanup update directory", "dir", updateDir, "error", err)
+	}
 
 	return nil
 }

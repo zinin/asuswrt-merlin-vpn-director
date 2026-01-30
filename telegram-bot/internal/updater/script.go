@@ -7,8 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"text/template"
 )
+
+// LogFileName is the name of the update log file.
+const LogFileName = "update.log"
 
 //go:embed update_script.sh.tmpl
 var updateScriptTemplate string
@@ -52,18 +56,35 @@ func (s *Service) RunUpdateScript(chatID int64, oldVersion, newVersion string) e
 		return fmt.Errorf("write script: %w", err)
 	}
 
-	// Run detached: nohup script >> log 2>&1 &
+	// Open log file for script output
 	updateDir := s.getUpdateDir()
-	logFile := filepath.Join(updateDir, "update.log")
+	logFile := filepath.Join(updateDir, LogFileName)
 
-	cmd := exec.Command("/bin/sh", "-c",
-		fmt.Sprintf("nohup %s >> %s 2>&1 &", scriptPath, logFile))
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	// Note: f will be inherited by child process via fork, so it stays open
+	// even after bot dies. We don't close it here to avoid race with child.
+
+	// Run script directly with Setsid for proper detachment.
+	// Setsid creates a new session, so script survives bot termination.
+	// Unlike "nohup ... &", this gives us proper error detection at exec level.
+	cmd := exec.Command("/bin/sh", scriptPath)
+	cmd.Dir = updateDir
+	cmd.Stdout = f
+	cmd.Stderr = f
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true, // Detach into new session - survives parent death
+	}
 
 	if err := cmd.Start(); err != nil {
+		f.Close()
 		return fmt.Errorf("start script: %w", err)
 	}
 
-	// Don't wait - script will kill this process
+	// Don't wait - script runs in its own session and will kill this process.
+	// Script continues running after bot dies because of Setsid.
 	return nil
 }
 

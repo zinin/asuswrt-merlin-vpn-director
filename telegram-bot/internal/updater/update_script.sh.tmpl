@@ -41,7 +41,8 @@ done
 
 if pgrep -f "$BOT_PATH" >/dev/null 2>&1; then
     log "WARNING: telegram-bot still running after 30s, killing"
-    pkill -9 -f "$BOT_PATH"
+    # Use || true to handle race: process may exit between pgrep and pkill
+    pkill -9 -f "$BOT_PATH" || true
     sleep 1
 fi
 

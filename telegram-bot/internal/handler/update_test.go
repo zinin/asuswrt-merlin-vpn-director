@@ -89,23 +89,57 @@ func (m *mockUpdater) RunUpdateScript(chatID int64, oldVersion, newVersion strin
 	return m.runScriptErr
 }
 
+// Thread-safe getters for verification in tests
+func (m *mockUpdater) wasCleanFilesCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cleanFilesCalled
+}
+
+func (m *mockUpdater) wasRemoveLockCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.removeLockCalled
+}
+
+func (m *mockUpdater) wasRunScriptCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runScriptCalled
+}
+
+func (m *mockUpdater) getRunScriptArgs() (int64, string, string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runScriptChatID, m.runScriptOldVer, m.runScriptNewVer
+}
+
 // mockUpdateSender implements telegram.MessageSender for testing
 type mockUpdateSender struct {
-	mu       sync.Mutex
-	messages []string
+	mu        sync.Mutex
+	messages  []string
+	messageCh chan string // Channel for synchronization - receives each message
+}
+
+func newMockUpdateSender() *mockUpdateSender {
+	return &mockUpdateSender{
+		messageCh: make(chan string, 10), // Buffered to avoid blocking
+	}
 }
 
 func (m *mockUpdateSender) Send(chatID int64, text string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.messages = append(m.messages, text)
+	m.mu.Unlock()
+	m.messageCh <- text
 	return nil
 }
 
 func (m *mockUpdateSender) SendPlain(chatID int64, text string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.messages = append(m.messages, text)
+	m.mu.Unlock()
+	m.messageCh <- text
 	return nil
 }
 
@@ -137,15 +171,35 @@ func (m *mockUpdateSender) getMessages() []string {
 	return result
 }
 
+// waitForMessages waits for n messages to be received, with timeout.
+// Returns the messages received so far.
+func (m *mockUpdateSender) waitForMessages(n int, timeout time.Duration) []string {
+	deadline := time.After(timeout)
+	for {
+		m.mu.Lock()
+		count := len(m.messages)
+		m.mu.Unlock()
+		if count >= n {
+			return m.getMessages()
+		}
+		select {
+		case <-m.messageCh:
+			// Message received, check count again
+		case <-deadline:
+			return m.getMessages()
+		}
+	}
+}
+
 func TestUpdateHandler_DevMode(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{}
 	h := NewUpdateHandler(sender, upd, true, "v1.0.0") // devMode=true
 
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -155,14 +209,14 @@ func TestUpdateHandler_DevMode(t *testing.T) {
 }
 
 func TestUpdateHandler_DevVersion(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{}
 	h := NewUpdateHandler(sender, upd, false, "dev") // version="dev"
 
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -172,7 +226,7 @@ func TestUpdateHandler_DevVersion(t *testing.T) {
 }
 
 func TestUpdateHandler_UpdateInProgress(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		updateInProgress: true,
 	}
@@ -181,7 +235,7 @@ func TestUpdateHandler_UpdateInProgress(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -191,7 +245,7 @@ func TestUpdateHandler_UpdateInProgress(t *testing.T) {
 }
 
 func TestUpdateHandler_GitHubError(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestReleaseErr: errors.New("network error"),
 	}
@@ -200,7 +254,7 @@ func TestUpdateHandler_GitHubError(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -211,7 +265,7 @@ func TestUpdateHandler_GitHubError(t *testing.T) {
 }
 
 func TestUpdateHandler_AlreadyLatest(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease: &updater.Release{TagName: "v1.0.0"},
 		shouldUpdate:  false,
@@ -221,7 +275,7 @@ func TestUpdateHandler_AlreadyLatest(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -231,7 +285,7 @@ func TestUpdateHandler_AlreadyLatest(t *testing.T) {
 }
 
 func TestUpdateHandler_InvalidCurrentVersion(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease: &updater.Release{TagName: "v1.1.0"},
 	}
@@ -241,7 +295,7 @@ func TestUpdateHandler_InvalidCurrentVersion(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -251,7 +305,7 @@ func TestUpdateHandler_InvalidCurrentVersion(t *testing.T) {
 }
 
 func TestUpdateHandler_InvalidReleaseVersion(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease: &updater.Release{TagName: "v1.1.0$(whoami)"},
 	}
@@ -260,7 +314,7 @@ func TestUpdateHandler_InvalidReleaseVersion(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -270,7 +324,7 @@ func TestUpdateHandler_InvalidReleaseVersion(t *testing.T) {
 }
 
 func TestUpdateHandler_VersionParseError(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease:   &updater.Release{TagName: "v1.1.0"},
 		shouldUpdateErr: errors.New("invalid version format"),
@@ -280,7 +334,7 @@ func TestUpdateHandler_VersionParseError(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -291,7 +345,7 @@ func TestUpdateHandler_VersionParseError(t *testing.T) {
 }
 
 func TestUpdateHandler_CreateLockError(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease: &updater.Release{TagName: "v1.1.0"},
 		shouldUpdate:  true,
@@ -302,7 +356,7 @@ func TestUpdateHandler_CreateLockError(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	messages := sender.getMessages()
+	messages := sender.waitForMessages(1, time.Second)
 	if len(messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(messages))
 	}
@@ -313,7 +367,7 @@ func TestUpdateHandler_CreateLockError(t *testing.T) {
 }
 
 func TestUpdateHandler_DownloadError(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease: &updater.Release{TagName: "v1.1.0"},
 		shouldUpdate:  true,
@@ -324,10 +378,8 @@ func TestUpdateHandler_DownloadError(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	// Wait for goroutine to complete
-	time.Sleep(100 * time.Millisecond)
-
-	messages := sender.getMessages()
+	// Wait for 2 messages: "Starting update..." and "Download failed..."
+	messages := sender.waitForMessages(2, time.Second)
 	if len(messages) < 2 {
 		t.Fatalf("Expected at least 2 messages, got %d", len(messages))
 	}
@@ -337,17 +389,17 @@ func TestUpdateHandler_DownloadError(t *testing.T) {
 		t.Errorf("Unexpected error message: %s", messages[1])
 	}
 
-	// Check cleanup was called
-	if !upd.cleanFilesCalled {
+	// Check cleanup was called (message sent after cleanup, so it's done)
+	if !upd.wasCleanFilesCalled() {
 		t.Error("CleanFiles should be called on download error")
 	}
-	if !upd.removeLockCalled {
+	if !upd.wasRemoveLockCalled() {
 		t.Error("RemoveLock should be called on download error")
 	}
 }
 
 func TestUpdateHandler_RunScriptError(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease: &updater.Release{TagName: "v1.1.0"},
 		shouldUpdate:  true,
@@ -358,11 +410,8 @@ func TestUpdateHandler_RunScriptError(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
 	h.HandleUpdate(msg)
 
-	// Wait for goroutine to complete
-	time.Sleep(100 * time.Millisecond)
-
-	messages := sender.getMessages()
-	// Messages: "Starting...", "Files downloaded...", "Failed to run..."
+	// Wait for 3 messages: "Starting...", "Files downloaded...", "Failed to run..."
+	messages := sender.waitForMessages(3, time.Second)
 	if len(messages) < 3 {
 		t.Fatalf("Expected at least 3 messages, got %d", len(messages))
 	}
@@ -378,17 +427,17 @@ func TestUpdateHandler_RunScriptError(t *testing.T) {
 		t.Errorf("Expected script error message, got: %v", messages)
 	}
 
-	// Check cleanup was called
-	if !upd.cleanFilesCalled {
+	// Check cleanup was called (message sent after cleanup, so it's done)
+	if !upd.wasCleanFilesCalled() {
 		t.Error("CleanFiles should be called on script error")
 	}
-	if !upd.removeLockCalled {
+	if !upd.wasRemoveLockCalled() {
 		t.Error("RemoveLock should be called on script error")
 	}
 }
 
 func TestUpdateHandler_Success(t *testing.T) {
-	sender := &mockUpdateSender{}
+	sender := newMockUpdateSender()
 	upd := &mockUpdater{
 		latestRelease: &updater.Release{TagName: "v1.1.0"},
 		shouldUpdate:  true,
@@ -398,10 +447,8 @@ func TestUpdateHandler_Success(t *testing.T) {
 	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 42}}
 	h.HandleUpdate(msg)
 
-	// Wait for goroutine to complete
-	time.Sleep(100 * time.Millisecond)
-
-	messages := sender.getMessages()
+	// Wait for 3 messages
+	messages := sender.waitForMessages(3, time.Second)
 	// Expected messages:
 	// 1. "Starting update v1.0.0 → v1.1.0..."
 	// 2. "Files downloaded, starting update..."
@@ -421,24 +468,25 @@ func TestUpdateHandler_Success(t *testing.T) {
 	}
 
 	// Verify RunUpdateScript was called with correct args
-	if !upd.runScriptCalled {
+	if !upd.wasRunScriptCalled() {
 		t.Error("RunUpdateScript should be called")
 	}
-	if upd.runScriptChatID != 42 {
-		t.Errorf("RunUpdateScript chatID = %d, want 42", upd.runScriptChatID)
+	chatID, oldVer, newVer := upd.getRunScriptArgs()
+	if chatID != 42 {
+		t.Errorf("RunUpdateScript chatID = %d, want 42", chatID)
 	}
-	if upd.runScriptOldVer != "v1.0.0" {
-		t.Errorf("RunUpdateScript oldVersion = %q, want v1.0.0", upd.runScriptOldVer)
+	if oldVer != "v1.0.0" {
+		t.Errorf("RunUpdateScript oldVersion = %q, want v1.0.0", oldVer)
 	}
-	if upd.runScriptNewVer != "v1.1.0" {
-		t.Errorf("RunUpdateScript newVersion = %q, want v1.1.0", upd.runScriptNewVer)
+	if newVer != "v1.1.0" {
+		t.Errorf("RunUpdateScript newVersion = %q, want v1.1.0", newVer)
 	}
 
 	// Cleanup should NOT be called on success
-	if upd.cleanFilesCalled {
+	if upd.wasCleanFilesCalled() {
 		t.Error("CleanFiles should NOT be called on success")
 	}
-	if upd.removeLockCalled {
+	if upd.wasRemoveLockCalled() {
 		t.Error("RemoveLock should NOT be called on success (script handles it)")
 	}
 }
