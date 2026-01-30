@@ -1,16 +1,68 @@
 #!/bin/sh
 
+# Note: We don't source rc.func because we need to start the bot via absolute path
+# so that pgrep -f "/opt/vpn-director/telegram-bot" works reliably in update scripts.
 ENABLED=yes
-PROCS=telegram-bot
-ARGS=""
-PREARGS=""
 DESC="Telegram Bot for VPN Director"
-PATH=/opt/vpn-director:/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+BOT_PATH="/opt/vpn-director/telegram-bot"
+BOT_NAME="telegram-bot"
 
 # Check if telegram-bot binary exists
-if [ ! -x /opt/vpn-director/telegram-bot ]; then
-    logger -t "S98telegram-bot" "telegram-bot not found at /opt/vpn-director/telegram-bot"
+if [ ! -x "$BOT_PATH" ]; then
+    logger -t "S98telegram-bot" "telegram-bot not found at $BOT_PATH"
     exit 0
 fi
 
-. /opt/etc/init.d/rc.func
+start() {
+    [ "$ENABLED" != "yes" ] && return 0
+    echo "Starting $DESC..."
+    if pidof "$BOT_NAME" >/dev/null 2>&1; then
+        echo "$DESC is already running"
+        return 0
+    fi
+    # Start with full path so pgrep -f "/opt/vpn-director/telegram-bot" works
+    "$BOT_PATH" >/dev/null 2>&1 &
+    sleep 2
+    if pidof "$BOT_NAME" >/dev/null 2>&1; then
+        echo "$DESC started"
+        logger "Started $DESC"
+    else
+        echo "Failed to start $DESC"
+        logger "Failed to start $DESC"
+        return 1
+    fi
+}
+
+stop() {
+    echo "Stopping $DESC..."
+    if ! pidof "$BOT_NAME" >/dev/null 2>&1; then
+        echo "$DESC is not running"
+        return 0
+    fi
+    killall "$BOT_NAME" 2>/dev/null
+    # Wait up to 10 seconds
+    count=0
+    while pidof "$BOT_NAME" >/dev/null 2>&1 && [ $count -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if pidof "$BOT_NAME" >/dev/null 2>&1; then
+        echo "Force killing $DESC..."
+        killall -9 "$BOT_NAME" 2>/dev/null
+    fi
+    echo "$DESC stopped"
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    check)
+        if pidof "$BOT_NAME" >/dev/null 2>&1; then
+            echo "$DESC is running"
+        else
+            echo "$DESC is not running"
+        fi
+        ;;
+    *)       echo "Usage: $0 {start|stop|restart|check}" ;;
+esac
