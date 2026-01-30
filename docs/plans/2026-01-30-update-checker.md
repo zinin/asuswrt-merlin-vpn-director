@@ -376,8 +376,10 @@ package chatstore
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -414,13 +416,27 @@ func New(path string) *Store {
 	return s
 }
 
-// load reads data from file. Errors are ignored (empty store on failure).
+// load reads data from file. Invalid JSON is treated as empty store.
 func (s *Store) load() {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
-		return
+		return // File doesn't exist — start with empty store
 	}
-	_ = json.Unmarshal(data, &s.users)
+	if err := json.Unmarshal(data, &s.users); err != nil {
+		slog.Warn("Invalid chats.json, starting with empty store", "error", err)
+		// s.users remains initialized from New()
+	}
+	// Ensure map is never nil (protects against JSON "null" at root)
+	if s.users == nil {
+		s.users = make(map[string]*userRecord)
+	}
+	// Remove nil entries (protects against "username": null in JSON)
+	for username, record := range s.users {
+		if record == nil {
+			delete(s.users, username)
+			slog.Warn("Removed nil user record from chats.json", "username", username)
+		}
+	}
 }
 
 // save writes data to file atomically.
@@ -445,10 +461,12 @@ func (s *Store) save() error {
 
 // RecordInteraction updates user's last_seen and sets active=true.
 // Creates new user record if not exists.
+// Username is normalized to lowercase for consistency with auth.
 func (s *Store) RecordInteraction(username string, chatID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	username = strings.ToLower(username) // Normalize for consistency with auth
 	now := time.Now()
 	if record, ok := s.users[username]; ok {
 		record.ChatID = chatID
@@ -489,6 +507,7 @@ func (s *Store) MarkNotified(username string, version string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	username = strings.ToLower(username) // Normalize
 	record, ok := s.users[username]
 	if !ok {
 		return nil
@@ -510,6 +529,7 @@ func (s *Store) IsNotified(username string, version string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	username = strings.ToLower(username) // Normalize
 	record, ok := s.users[username]
 	if !ok {
 		return false
@@ -528,6 +548,7 @@ func (s *Store) SetInactive(username string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	username = strings.ToLower(username) // Normalize
 	record, ok := s.users[username]
 	if !ok {
 		return nil
@@ -677,6 +698,7 @@ import (
 	"testing"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/chatstore"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
 )
@@ -704,21 +726,22 @@ func (m *mockUpdater) CleanFiles()                         {}
 func (m *mockUpdater) DownloadRelease(context.Context, *updater.Release) error { return nil }
 func (m *mockUpdater) RunUpdateScript(int64, string, string) error             { return nil }
 
-// mockSender captures sent messages
+// mockSender captures sent messages (implements Sender interface with SendWithKeyboard)
 type mockSender struct {
 	mu       sync.Mutex
 	messages []sentMessage
 }
 
 type sentMessage struct {
-	chatID int64
-	text   string
+	chatID   int64
+	text     string
+	keyboard *tgbotapi.InlineKeyboardMarkup
 }
 
-func (m *mockSender) Send(chatID int64, text string) error {
+func (m *mockSender) SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.messages = append(m.messages, sentMessage{chatID, text})
+	m.messages = append(m.messages, sentMessage{chatID: chatID, text: text, keyboard: &keyboard})
 	return nil
 }
 
@@ -838,6 +861,43 @@ func TestChecker_HandlesGitHubError(t *testing.T) {
 		t.Errorf("expected no messages on error, got %d", len(msgs))
 	}
 }
+
+func TestChecker_SetsInactiveOnBlock(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := chatstore.New(tmpDir + "/chats.json")
+	_ = store.RecordInteraction("user1", 111)
+
+	upd := &mockUpdater{
+		release:      &updater.Release{TagName: "v2.0.0", Body: "New"},
+		shouldUpdate: true,
+	}
+
+	// Sender that returns "bot was blocked" error
+	sender := &mockSenderWithError{
+		err: errors.New("Forbidden: bot was blocked by the user"),
+	}
+	auth := &mockAuth{}
+
+	checker := New(upd, store, sender, auth, "v1.0.0")
+
+	ctx := context.Background()
+	checker.checkOnce(ctx)
+
+	// User should be marked inactive
+	users, _ := store.GetActiveUsers()
+	if len(users) != 0 {
+		t.Errorf("expected user to be marked inactive, got %d active users", len(users))
+	}
+}
+
+// mockSenderWithError returns error on SendWithKeyboard
+type mockSenderWithError struct {
+	err error
+}
+
+func (m *mockSenderWithError) SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
+	return m.err
+}
 ```
 
 **Step 2: Run test to verify it fails**
@@ -859,15 +919,17 @@ import (
 	"strings"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/chatstore"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
 )
 
 const maxChangelogLength = 500
 
-// Sender is the interface for sending messages.
+// Sender is the interface for sending messages with inline keyboard.
 type Sender interface {
-	Send(chatID int64, text string) error
+	SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) error
 }
 
 // Authorizer checks if a user is authorized.
@@ -978,9 +1040,9 @@ func (c *Checker) notifyUsers(release *updater.Release) {
 			continue
 		}
 
-		// Send notification
-		msg := c.formatNotification(release)
-		err := c.sender.Send(user.ChatID, msg)
+		// Send notification with keyboard (MarkdownV2 via SendWithKeyboard)
+		msg, keyboard := c.formatNotification(release)
+		err := c.sender.SendWithKeyboard(user.ChatID, msg, keyboard)
 
 		if err != nil {
 			if isBlockedError(err) {
@@ -998,26 +1060,31 @@ func (c *Checker) notifyUsers(release *updater.Release) {
 	}
 }
 
-// formatNotification creates the notification message.
-func (c *Checker) formatNotification(release *updater.Release) string {
+// formatNotification creates the notification message and keyboard.
+func (c *Checker) formatNotification(release *updater.Release) (string, tgbotapi.InlineKeyboardMarkup) {
 	changelog := release.Body
-	if len(changelog) > maxChangelogLength {
-		changelog = changelog[:maxChangelogLength] + "..."
+	// Truncate by runes to preserve UTF-8 validity
+	runes := []rune(changelog)
+	if len(runes) > maxChangelogLength {
+		changelog = string(runes[:maxChangelogLength]) + "..."
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🆕 Доступна новая версия %s\n\n", release.TagName))
-	sb.WriteString(fmt.Sprintf("Текущая версия: %s\n\n", c.currentVersion))
+	sb.WriteString(fmt.Sprintf("🆕 Доступна новая версия %s\n\n", telegram.EscapeMarkdownV2(release.TagName)))
+	sb.WriteString(fmt.Sprintf("Текущая версия: %s\n\n", telegram.EscapeMarkdownV2(c.currentVersion)))
 
 	if changelog != "" {
 		sb.WriteString("📋 Что нового:\n")
-		sb.WriteString(changelog)
-		sb.WriteString("\n\n")
+		sb.WriteString(telegram.EscapeMarkdownV2(changelog))
 	}
 
-	sb.WriteString("Используйте /update для обновления")
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Обновить", "update:run"),
+		),
+	)
 
-	return sb.String()
+	return sb.String(), keyboard
 }
 
 // isBlockedError checks if error indicates bot was blocked.
@@ -1288,6 +1355,7 @@ EOF
 import (
 	// ... add this import
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
 )
 
 // Sender is the interface for sending messages.
@@ -1298,7 +1366,7 @@ type Sender interface {
 
 **Step 3: Update formatNotification to return keyboard**
 
-Изменить метод formatNotification (обрезка по рунам для UTF-8):
+Изменить метод formatNotification (обрезка по рунам для UTF-8, использовать существующий `telegram.EscapeMarkdownV2`):
 
 ```go
 // formatNotification creates the notification message and keyboard.
@@ -1311,12 +1379,12 @@ func (c *Checker) formatNotification(release *updater.Release) (string, tgbotapi
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🆕 Доступна новая версия %s\n\n", escape(release.TagName)))
-	sb.WriteString(fmt.Sprintf("Текущая версия: %s\n\n", escape(c.currentVersion)))
+	sb.WriteString(fmt.Sprintf("🆕 Доступна новая версия %s\n\n", telegram.EscapeMarkdownV2(release.TagName)))
+	sb.WriteString(fmt.Sprintf("Текущая версия: %s\n\n", telegram.EscapeMarkdownV2(c.currentVersion)))
 
 	if changelog != "" {
 		sb.WriteString("📋 Что нового:\n")
-		sb.WriteString(escape(changelog))
+		sb.WriteString(telegram.EscapeMarkdownV2(changelog))
 	}
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
@@ -1327,32 +1395,9 @@ func (c *Checker) formatNotification(release *updater.Release) (string, tgbotapi
 
 	return sb.String(), keyboard
 }
-
-// escape escapes special characters for MarkdownV2.
-func escape(s string) string {
-	replacer := strings.NewReplacer(
-		"_", "\\_",
-		"*", "\\*",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-		"~", "\\~",
-		"`", "\\`",
-		">", "\\>",
-		"#", "\\#",
-		"+", "\\+",
-		"-", "\\-",
-		"=", "\\=",
-		"|", "\\|",
-		"{", "\\{",
-		"}", "\\}",
-		".", "\\.",
-		"!", "\\!",
-	)
-	return replacer.Replace(s)
-}
 ```
+
+**Note:** Используем существующий `telegram.EscapeMarkdownV2` из `internal/telegram/format.go`, который корректно экранирует все специальные символы MarkdownV2 включая backslash.
 
 **Step 4: Update notifyUsers to use keyboard**
 
@@ -1504,21 +1549,76 @@ func (h *UpdateHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 }
 ```
 
-**Step 4: Run tests**
+**Step 4: Add tests for callback routing**
+
+В `telegram-bot/internal/handler/update_test.go` добавить:
+
+```go
+func TestUpdateHandler_HandleCallback_UpdateRun(t *testing.T) {
+	// Use existing mocks from update_test.go
+	sender := &mockUpdateSender{}
+	upd := &mockUpdater{
+		latestRelease: &updater.Release{TagName: "v1.0.0"},
+		shouldUpdate:  false, // No update available
+	}
+
+	h := NewUpdateHandler(sender, upd, false, "v1.0.0")
+
+	cb := &tgbotapi.CallbackQuery{
+		Data: "update:run",
+		From: &tgbotapi.User{UserName: "testuser"},
+		Message: &tgbotapi.Message{
+			Chat: &tgbotapi.Chat{ID: 123},
+		},
+	}
+
+	// Should not panic and should trigger HandleUpdate
+	h.HandleCallback(cb)
+
+	// Verify message was sent (version check response)
+	if len(sender.messages) == 0 {
+		t.Error("expected message to be sent")
+	}
+}
+
+func TestUpdateHandler_HandleCallback_IgnoresOtherCallbacks(t *testing.T) {
+	sender := &mockUpdateSender{}
+	upd := &mockUpdater{}
+	h := NewUpdateHandler(sender, upd, false, "v1.0.0")
+
+	cb := &tgbotapi.CallbackQuery{
+		Data: "update:other",
+		Message: &tgbotapi.Message{
+			Chat: &tgbotapi.Chat{ID: 123},
+		},
+	}
+
+	// Should not panic, should ignore
+	h.HandleCallback(cb)
+
+	if len(sender.messages) != 0 {
+		t.Error("expected no messages for unknown callback")
+	}
+}
+```
+
+**Note:** Используем существующий `mockUpdater` из `update_test.go` и корректную сигнатуру `NewUpdateHandler(sender, upd, devMode, version)`.
+
+**Step 5: Run tests**
 
 Run: `cd telegram-bot && go test -v ./...`
 Expected: All PASS
 
-**Step 5: Commit**
+**Step 6: Commit**
 
 ```bash
 cd /opt/github/zinin/asuswrt-merlin-vpn-director
-git add telegram-bot/internal/bot/router.go telegram-bot/internal/handler/update.go
+git add telegram-bot/internal/bot/router.go telegram-bot/internal/handler/update.go telegram-bot/internal/handler/update_test.go
 git commit -m "$(cat <<'EOF'
 feat(telegram-bot): handle update:run callback from notification button
 
 Allows users to trigger update directly from the notification message
-inline keyboard.
+inline keyboard. Includes tests for callback routing.
 EOF
 )"
 ```

@@ -101,8 +101,8 @@ type UserChat struct {
 
 ```
 1. Получить latest release с GitHub (updater.GetLatestRelease())
-2. Сравнить с текущей версией (updater.CompareVersions())
-3. Если latest <= current → ничего не делать
+2. Сравнить с текущей версией (updater.ShouldUpdate())
+3. Если ShouldUpdate() == false → ничего не делать
 4. Для каждого активного пользователя из ChatStore:
    a. Проверить IsNotified(username, latestVersion)
    b. Если уже уведомлён → пропустить
@@ -156,7 +156,7 @@ if b.chatStore != nil {
 В `main.go`:
 
 ```go
-chatStore := chatstore.New(paths.DataDir + "/chats.json")
+chatStore := chatstore.New(p.DefaultDataDir + "/chats.json")
 
 bot := bot.New(cfg,
     bot.WithChatStore(chatStore),
