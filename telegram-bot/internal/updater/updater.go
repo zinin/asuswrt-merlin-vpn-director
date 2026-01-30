@@ -193,8 +193,4 @@ func (s *Service) CleanFiles() {
 	os.RemoveAll(s.getFilesDir())
 }
 
-// RunUpdateScript generates and runs the update shell script.
-// This is a stub - implementation will be in script.go.
-func (s *Service) RunUpdateScript(chatID int64, oldVersion, newVersion string) error {
-	return fmt.Errorf("not implemented")
-}
+// RunUpdateScript is implemented in script.go
