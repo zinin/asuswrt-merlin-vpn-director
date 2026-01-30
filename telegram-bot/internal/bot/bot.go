@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/chatstore"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/handler"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/paths"
@@ -18,13 +19,14 @@ import (
 
 // Bot is the main Telegram bot struct with DI
 type Bot struct {
-	api      *tgbotapi.BotAPI
-	auth     *Auth
-	router   *Router
-	sender   telegram.MessageSender
-	devMode  bool
-	executor service.ShellExecutor
-	updater  updater.Updater
+	api       *tgbotapi.BotAPI
+	auth      *Auth
+	router    *Router
+	sender    telegram.MessageSender
+	devMode   bool
+	executor  service.ShellExecutor
+	updater   updater.Updater
+	chatStore *chatstore.Store
 }
 
 // Option configures the Bot.
@@ -42,6 +44,13 @@ func WithDevMode(executor service.ShellExecutor) Option {
 func WithUpdater(u updater.Updater) Option {
 	return func(b *Bot) {
 		b.updater = u
+	}
+}
+
+// WithChatStore sets the chat store for recording user interactions.
+func WithChatStore(store *chatstore.Store) Option {
+	return func(b *Bot) {
+		b.chatStore = store
 	}
 }
 
@@ -169,6 +178,10 @@ func (b *Bot) Run(ctx context.Context) {
 					b.sender.SendPlain(msg.Chat.ID, "Access denied")
 					continue
 				}
+				// Record interaction for update notifications
+				if b.chatStore != nil {
+					_ = b.chatStore.RecordInteraction(username, msg.Chat.ID)
+				}
 				// Log command without arguments for sensitive commands (import may contain tokens)
 				slog.Info("Command received", "username", username, "command", sanitizeLogMessage(msg))
 				b.router.RouteMessage(msg)
@@ -184,6 +197,10 @@ func (b *Bot) Run(ctx context.Context) {
 				if !b.auth.IsAuthorized(username) {
 					slog.Warn("Unauthorized callback", "username", username)
 					continue
+				}
+				// Record interaction for update notifications
+				if b.chatStore != nil {
+					_ = b.chatStore.RecordInteraction(username, cb.Message.Chat.ID)
 				}
 				slog.Info("Callback received", "username", username, "data", cb.Data)
 				b.router.RouteCallback(cb)
@@ -204,4 +221,14 @@ func sanitizeLogMessage(msg *tgbotapi.Message) string {
 		}
 	}
 	return msg.Text
+}
+
+// Auth returns the authorization handler (for update checker).
+func (b *Bot) Auth() *Auth {
+	return b.auth
+}
+
+// Sender returns the message sender (for update checker).
+func (b *Bot) Sender() telegram.MessageSender {
+	return b.sender
 }
