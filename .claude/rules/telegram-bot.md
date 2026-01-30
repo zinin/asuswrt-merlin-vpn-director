@@ -105,13 +105,38 @@ Downloads latest release from GitHub and applies it:
 {
   "bot_token": "123456:ABC...",
   "allowed_users": ["username1", "username2"],
-  "log_level": "info"
+  "log_level": "info",
+  "update_check_interval": "1h"
 }
 ```
 
-**Log levels**: `debug`, `info`, `warn`, `error` (default: `info`)
+**Fields:**
+- `bot_token` — Telegram Bot API token (required)
+- `allowed_users` — Array of Telegram usernames (required)
+- `log_level` — `debug`, `info`, `warn`, `error` (default: `info`)
+- `update_check_interval` — Go duration (`1h`, `30m`, `24h`). If omitted or `"0"`, automatic update checking is disabled
 
 Setup: `./setup_telegram_bot.sh`
+
+## Automatic Update Notifications
+
+When `update_check_interval` is set, the bot periodically checks GitHub for new releases and notifies users.
+
+**How it works:**
+1. Bot checks GitHub API at configured interval
+2. If new version found, sends notification to all active users
+3. Notification includes changelog and "🔄 Обновить" button
+4. Each user is notified only once per version
+
+**Data storage:**
+- `/opt/vpn-director/data/chats.json` — stores chat IDs and notification history
+
+**User tracking:**
+- Chat ID recorded on first message from authorized user
+- Users marked inactive if bot is blocked
+- Reactivated automatically when user messages bot again
+
+**Disabled in dev mode:** Update checker does not run when `--dev` flag is used or version is "dev".
 
 ## Build
 
