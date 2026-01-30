@@ -490,3 +490,53 @@ func TestUpdateHandler_Success(t *testing.T) {
 		t.Error("RemoveLock should NOT be called on success (script handles it)")
 	}
 }
+
+func TestUpdateHandler_HandleCallback_UpdateRun(t *testing.T) {
+	sender := newMockUpdateSender()
+	upd := &mockUpdater{
+		latestRelease: &updater.Release{TagName: "v1.0.0"},
+		shouldUpdate:  false, // No update available
+	}
+	h := NewUpdateHandler(sender, upd, false, "v1.0.0")
+
+	cb := &tgbotapi.CallbackQuery{
+		Data: "update:run",
+		From: &tgbotapi.User{UserName: "testuser"},
+		Message: &tgbotapi.Message{
+			Chat: &tgbotapi.Chat{ID: 123},
+		},
+	}
+
+	// Should trigger HandleUpdate and send "Already running latest version"
+	h.HandleCallback(cb)
+
+	messages := sender.waitForMessages(1, time.Second)
+	if len(messages) == 0 {
+		t.Fatal("expected message to be sent")
+	}
+	if messages[0] != "Already running the latest version: v1.0.0" {
+		t.Errorf("unexpected message: %s", messages[0])
+	}
+}
+
+func TestUpdateHandler_HandleCallback_IgnoresOtherCallbacks(t *testing.T) {
+	sender := newMockUpdateSender()
+	upd := &mockUpdater{}
+	h := NewUpdateHandler(sender, upd, false, "v1.0.0")
+
+	cb := &tgbotapi.CallbackQuery{
+		Data: "update:other",
+		Message: &tgbotapi.Message{
+			Chat: &tgbotapi.Chat{ID: 123},
+		},
+	}
+
+	// Should not trigger HandleUpdate
+	h.HandleCallback(cb)
+
+	// Give a small window for any potential message
+	messages := sender.getMessages()
+	if len(messages) != 0 {
+		t.Errorf("expected no messages for unknown callback, got: %v", messages)
+	}
+}

@@ -135,6 +135,19 @@ func (h *UpdateHandler) downloadAndUpdate(chatID int64, release *updater.Release
 	h.send(chatID, "Update script started, bot will restart in a few seconds...")
 }
 
+// HandleCallback handles update callbacks from inline buttons.
+func (h *UpdateHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
+	if cb.Data != "update:run" {
+		return
+	}
+	// Create a message-like structure to reuse HandleUpdate logic
+	msg := &tgbotapi.Message{
+		Chat: cb.Message.Chat,
+		From: cb.From,
+	}
+	h.HandleUpdate(msg)
+}
+
 // send sends a plain text message. Errors are logged but not returned.
 func (h *UpdateHandler) send(chatID int64, text string) {
 	_ = h.sender.SendPlain(chatID, text)
