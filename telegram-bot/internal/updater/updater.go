@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -139,6 +140,11 @@ func (s *Service) IsUpdateInProgress() bool {
 	// Check if process is alive using signal 0
 	err = syscall.Kill(pid, 0)
 	if err != nil {
+		// EPERM means process exists but we don't have permission to signal it
+		// This still means the process is alive
+		if errors.Is(err, syscall.EPERM) {
+			return true
+		}
 		// Process is dead, remove stale lock
 		os.Remove(lockFile)
 		return false
@@ -148,6 +154,7 @@ func (s *Service) IsUpdateInProgress() bool {
 }
 
 // CreateLock creates a lock file with the current process PID.
+// Uses O_CREATE|O_EXCL for atomic creation - fails if lock already exists.
 func (s *Service) CreateLock() error {
 	lockFile := s.getLockFile()
 
@@ -157,9 +164,20 @@ func (s *Service) CreateLock() error {
 		return fmt.Errorf("failed to create lock directory: %w", err)
 	}
 
+	// Atomic lock creation - fails if file already exists
+	f, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("lock file already exists (update in progress)")
+		}
+		return fmt.Errorf("failed to create lock file: %w", err)
+	}
+	defer f.Close()
+
 	pid := os.Getpid()
-	if err := os.WriteFile(lockFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		return fmt.Errorf("failed to write lock file: %w", err)
+	if _, err := f.WriteString(strconv.Itoa(pid)); err != nil {
+		os.Remove(lockFile) // Clean up on write failure
+		return fmt.Errorf("failed to write PID to lock file: %w", err)
 	}
 
 	return nil

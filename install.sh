@@ -96,6 +96,7 @@ create_directories() {
 download_scripts() {
     print_info "Downloading scripts..."
 
+    # NOTE: Keep file list in sync with telegram-bot/internal/updater/downloader.go
     for script in \
         "router/opt/vpn-director/vpn-director.sh" \
         "router/opt/vpn-director/configure.sh" \

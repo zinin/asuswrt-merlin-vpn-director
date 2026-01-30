@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGetLatestRelease(t *testing.T) {
@@ -212,5 +213,45 @@ func TestShouldUpdate(t *testing.T) {
 					tt.currentVersion, tt.latestTag, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetLatestRelease_ContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Slow response - wait for context to be cancelled
+		time.Sleep(5 * time.Second)
+		w.Write([]byte(`{"tag_name": "v1.0.0", "assets": []}`))
+	}))
+	defer server.Close()
+
+	s := NewWithBaseURL(server.URL)
+
+	// Cancel context after short delay
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := s.GetLatestRelease(ctx)
+	if err == nil {
+		t.Error("GetLatestRelease() should fail when context is cancelled")
+	}
+}
+
+func TestGetLatestRelease_Timeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Slow response exceeding the per-request timeout
+		time.Sleep(5 * time.Second)
+		w.Write([]byte(`{"tag_name": "v1.0.0", "assets": []}`))
+	}))
+	defer server.Close()
+
+	s := NewWithBaseURL(server.URL)
+
+	// Use a short parent context timeout to test timeout behavior
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := s.GetLatestRelease(ctx)
+	if err == nil {
+		t.Error("GetLatestRelease() should fail when request times out")
 	}
 }
