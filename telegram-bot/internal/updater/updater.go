@@ -175,24 +175,6 @@ func (s *Service) CleanFiles() {
 	os.RemoveAll(s.getFilesDir())
 }
 
-// GetLatestRelease fetches the latest release info from GitHub.
-// This is a stub - implementation will be in github.go.
-func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-// ShouldUpdate checks if currentVersion is older than latestTag.
-// This is a stub - implementation will be in github.go.
-func (s *Service) ShouldUpdate(currentVersion, latestTag string) (bool, error) {
-	return false, fmt.Errorf("not implemented")
-}
-
-// DownloadRelease downloads all files for the given release.
-// This is a stub - implementation will be in downloader.go.
-func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
-	return fmt.Errorf("not implemented")
-}
-
 // RunUpdateScript generates and runs the update shell script.
 // This is a stub - implementation will be in script.go.
 func (s *Service) RunUpdateScript(chatID int64, oldVersion, newVersion string) error {
