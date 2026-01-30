@@ -107,11 +107,11 @@ func (c *Checker) checkOnce(ctx context.Context) {
 
 	slog.Info("New version available", "current", c.currentVersion, "latest", release.TagName)
 
-	c.notifyUsers(release)
+	c.notifyUsers(ctx, release)
 }
 
 // notifyUsers sends update notification to all active authorized users.
-func (c *Checker) notifyUsers(release *updater.Release) {
+func (c *Checker) notifyUsers(ctx context.Context, release *updater.Release) {
 	users, err := c.store.GetActiveUsers()
 	if err != nil {
 		slog.Warn("Failed to get active users", "error", err)
@@ -119,6 +119,14 @@ func (c *Checker) notifyUsers(release *updater.Release) {
 	}
 
 	for _, user := range users {
+		// Check for context cancellation (graceful shutdown)
+		select {
+		case <-ctx.Done():
+			slog.Info("Update notification interrupted by shutdown")
+			return
+		default:
+		}
+
 		// Check if user is still authorized
 		if !c.auth.IsAuthorized(user.Username) {
 			continue

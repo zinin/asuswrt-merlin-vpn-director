@@ -199,7 +199,8 @@ func (b *Bot) Run(ctx context.Context) {
 					continue
 				}
 				// Record interaction for update notifications
-				if b.chatStore != nil {
+				// Note: cb.Message can be nil for inline callbacks, so check before accessing
+				if b.chatStore != nil && cb.Message != nil {
 					_ = b.chatStore.RecordInteraction(username, cb.Message.Chat.ID)
 				}
 				slog.Info("Callback received", "username", username, "data", cb.Data)

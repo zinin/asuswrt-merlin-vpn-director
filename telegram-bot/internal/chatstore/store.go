@@ -78,7 +78,7 @@ func (s *Store) save() error {
 	}
 
 	tmpPath := s.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return err
 	}
 
@@ -108,7 +108,11 @@ func (s *Store) RecordInteraction(username string, chatID int64) error {
 		}
 	}
 
-	return s.save()
+	if err := s.save(); err != nil {
+		slog.Warn("Failed to save chat store", "error", err)
+		return err
+	}
+	return nil
 }
 
 // GetActiveUsers returns all users with active=true.
@@ -147,7 +151,15 @@ func (s *Store) MarkNotified(username string, version string) error {
 	}
 
 	record.NotifiedVersions = append(record.NotifiedVersions, version)
-	return s.save()
+	// Limit to last 10 versions to prevent unbounded growth
+	if len(record.NotifiedVersions) > 10 {
+		record.NotifiedVersions = record.NotifiedVersions[len(record.NotifiedVersions)-10:]
+	}
+	if err := s.save(); err != nil {
+		slog.Warn("Failed to save chat store", "error", err)
+		return err
+	}
+	return nil
 }
 
 // IsNotified checks if user was notified about version.
@@ -181,5 +193,9 @@ func (s *Store) SetInactive(username string) error {
 	}
 
 	record.Active = false
-	return s.save()
+	if err := s.save(); err != nil {
+		slog.Warn("Failed to save chat store", "error", err)
+		return err
+	}
+	return nil
 }
