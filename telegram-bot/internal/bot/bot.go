@@ -10,21 +10,44 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/handler"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/startup"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/wizard"
 )
 
 // Bot is the main Telegram bot struct with DI
 type Bot struct {
-	api    *tgbotapi.BotAPI
-	auth   *Auth
-	router *Router
-	sender telegram.MessageSender
+	api      *tgbotapi.BotAPI
+	auth     *Auth
+	router   *Router
+	sender   telegram.MessageSender
+	devMode  bool
+	executor service.ShellExecutor
+	updater  updater.Updater
+}
+
+// Option configures the Bot.
+type Option func(*Bot)
+
+// WithDevMode enables development mode with custom executor.
+func WithDevMode(executor service.ShellExecutor) Option {
+	return func(b *Bot) {
+		b.devMode = true
+		b.executor = executor
+	}
+}
+
+// WithUpdater sets the updater service.
+func WithUpdater(u updater.Updater) Option {
+	return func(b *Bot) {
+		b.updater = u
+	}
 }
 
 // New creates a new Bot with full dependency injection.
-// If executor is nil, services use their default executors.
-func New(cfg *config.Config, p paths.Paths, version string, executor service.ShellExecutor) (*Bot, error) {
+// Use WithDevMode() and WithUpdater() options to configure the bot.
+func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
 	if err != nil {
 		return nil, err
@@ -35,23 +58,40 @@ func New(cfg *config.Config, p paths.Paths, version string, executor service.She
 	// Create sender
 	sender := telegram.NewSender(api)
 
-	// Create services
+	// Create bot with defaults
+	b := &Bot{
+		api:    api,
+		auth:   NewAuth(cfg.AllowedUsers),
+		sender: sender,
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(b)
+	}
+
+	// Create services (executor may be set by WithDevMode option)
 	configSvc := service.NewConfigService(p.ScriptsDir, p.DefaultDataDir)
-	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, executor)
+	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, b.executor)
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
-	networkSvc := service.NewNetworkService(executor)
-	logSvc := service.NewLogService(executor)
+	networkSvc := service.NewNetworkService(b.executor)
+	logSvc := service.NewLogService(b.executor)
 
 	// Create handler dependencies
 	deps := &handler.Deps{
-		Sender:  sender,
-		Config:  configSvc,
-		VPN:     vpnSvc,
-		Xray:    xraySvc,
-		Network: networkSvc,
-		Logs:    logSvc,
-		Paths:   p,
-		Version: version,
+		Sender:      sender,
+		Config:      configSvc,
+		VPN:         vpnSvc,
+		Xray:        xraySvc,
+		Network:     networkSvc,
+		Logs:        logSvc,
+		Paths:       p,
+		Version:     version,
+		VersionFull: versionFull,
+		Commit:      commit,
+		BuildDate:   buildDate,
+		DevMode:     b.devMode,
+		Updater:     b.updater,
 	}
 
 	// Create handlers
@@ -59,17 +99,14 @@ func New(cfg *config.Config, p paths.Paths, version string, executor service.She
 	serversHandler := handler.NewServersHandler(deps)
 	importHandler := handler.NewImportHandler(deps)
 	miscHandler := handler.NewMiscHandler(deps)
+	updateHandler := handler.NewUpdateHandler(sender, b.updater, b.devMode, version)
 	wizardHandler := wizard.NewHandler(sender, configSvc, vpnSvc, xraySvc)
 
 	// Create router
-	router := NewRouter(statusHandler, serversHandler, importHandler, miscHandler, wizardHandler)
+	router := NewRouter(statusHandler, serversHandler, importHandler, miscHandler, updateHandler, wizardHandler)
+	b.router = router
 
-	return &Bot{
-		api:    api,
-		auth:   NewAuth(cfg.AllowedUsers),
-		router: router,
-		sender: sender,
-	}, nil
+	return b, nil
 }
 
 // RegisterCommands registers bot commands with Telegram
@@ -83,6 +120,7 @@ func (b *Bot) RegisterCommands() error {
 		{Command: "stop", Description: "Stop VPN Director"},
 		{Command: "logs", Description: "Recent logs"},
 		{Command: "ip", Description: "External IP"},
+		{Command: "update", Description: "Update VPN Director to latest release"},
 		{Command: "version", Description: "Bot version"},
 	}
 
@@ -98,6 +136,11 @@ func (b *Bot) RegisterCommands() error {
 
 // Run starts the bot and processes updates until context is cancelled
 func (b *Bot) Run(ctx context.Context) {
+	// Check for pending update notification before starting polling
+	if err := startup.CheckAndSendNotify(b.sender, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
+		slog.Warn("Failed to send update notification", "error", err)
+	}
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := b.api.GetUpdatesChan(u)

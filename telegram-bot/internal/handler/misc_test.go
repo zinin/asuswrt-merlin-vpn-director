@@ -66,8 +66,11 @@ func (m *mockLogReader) Read(path string, lines int) (string, error) {
 func TestMiscHandler_HandleVersion(t *testing.T) {
 	sender := &mockSender{}
 	deps := &Deps{
-		Sender:  sender,
-		Version: "1.0.0-test",
+		Sender:      sender,
+		Version:     "v1.0.0",
+		VersionFull: "v1.0.0-5-gabc1234",
+		Commit:      "abc1234",
+		BuildDate:   "2026-01-30",
 	}
 	h := NewMiscHandler(deps)
 
@@ -77,8 +80,9 @@ func TestMiscHandler_HandleVersion(t *testing.T) {
 	if sender.lastChatID != 123 {
 		t.Errorf("expected chatID 123, got %d", sender.lastChatID)
 	}
-	if sender.lastText != telegram.EscapeMarkdownV2("1.0.0-test") {
-		t.Errorf("expected escaped version, got %q", sender.lastText)
+	expected := telegram.EscapeMarkdownV2("v1.0.0-5-gabc1234 (abc1234, 2026-01-30)")
+	if sender.lastText != expected {
+		t.Errorf("expected %q, got %q", expected, sender.lastText)
 	}
 }
 

@@ -1,10 +1,11 @@
 .PHONY: build build-arm64 build-arm clean test
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+VERSION_FULL ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
 
-LDFLAGS = -ldflags "-s -w -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildDate=$(BUILD_DATE)"
+LDFLAGS = -ldflags "-s -w -X main.Version=$(VERSION) -X main.VersionFull=$(VERSION_FULL) -X main.Commit=$(COMMIT) -X main.BuildDate=$(BUILD_DATE)"
 
 build:
 	go build -trimpath $(LDFLAGS) -o bin/telegram-bot ./cmd/bot
