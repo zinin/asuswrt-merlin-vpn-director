@@ -875,10 +875,18 @@ type Authorizer interface {
 	IsAuthorized(username string) bool
 }
 
+// ChatStore is the interface for chat storage.
+type ChatStore interface {
+	GetActiveUsers() ([]chatstore.UserChat, error)
+	IsNotified(username string, version string) bool
+	MarkNotified(username string, version string) error
+	SetInactive(username string) error
+}
+
 // Checker periodically checks for updates and notifies users.
 type Checker struct {
 	updater        updater.Updater
-	store          *chatstore.Store
+	store          ChatStore
 	sender         Sender
 	auth           Authorizer
 	currentVersion string
@@ -887,7 +895,7 @@ type Checker struct {
 // New creates a new Checker.
 func New(
 	upd updater.Updater,
-	store *chatstore.Store,
+	store ChatStore,
 	sender Sender,
 	auth Authorizer,
 	currentVersion string,
@@ -1266,8 +1274,13 @@ EOF
 **Files:**
 - Modify: `telegram-bot/internal/updatechecker/checker.go`
 - Modify: `telegram-bot/internal/updatechecker/checker_test.go`
+- Modify: `telegram-bot/internal/telegram/sender.go` (добавить SendWithKeyboard в интерфейс)
 
-**Step 1: Update Sender interface**
+**Step 1: Verify SendWithKeyboard exists in telegram.MessageSender**
+
+Проверить `telegram-bot/internal/telegram/sender.go`. Интерфейс `MessageSender` уже содержит `SendWithKeyboard`. Если нет — добавить.
+
+**Step 2: Update Sender interface in updatechecker**
 
 В `telegram-bot/internal/updatechecker/checker.go` изменить интерфейс Sender:
 
@@ -1279,21 +1292,22 @@ import (
 
 // Sender is the interface for sending messages.
 type Sender interface {
-	Send(chatID int64, text string) error
 	SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) error
 }
 ```
 
-**Step 2: Update formatNotification to return keyboard**
+**Step 3: Update formatNotification to return keyboard**
 
-Изменить метод formatNotification:
+Изменить метод formatNotification (обрезка по рунам для UTF-8):
 
 ```go
 // formatNotification creates the notification message and keyboard.
 func (c *Checker) formatNotification(release *updater.Release) (string, tgbotapi.InlineKeyboardMarkup) {
 	changelog := release.Body
-	if len(changelog) > maxChangelogLength {
-		changelog = changelog[:maxChangelogLength] + "..."
+	// Truncate by runes to preserve UTF-8 validity
+	runes := []rune(changelog)
+	if len(runes) > maxChangelogLength {
+		changelog = string(runes[:maxChangelogLength]) + "..."
 	}
 
 	var sb strings.Builder
@@ -1307,7 +1321,7 @@ func (c *Checker) formatNotification(release *updater.Release) (string, tgbotapi
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Обновить", "update:start"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Обновить", "update:run"),
 		),
 	)
 
@@ -1340,7 +1354,7 @@ func escape(s string) string {
 }
 ```
 
-**Step 3: Update notifyUsers to use keyboard**
+**Step 4: Update notifyUsers to use keyboard**
 
 ```go
 // notifyUsers sends update notification to all active authorized users.
@@ -1362,7 +1376,7 @@ func (c *Checker) notifyUsers(release *updater.Release) {
 			continue
 		}
 
-		// Send notification with keyboard
+		// Send notification with keyboard (MarkdownV2 via SendWithKeyboard)
 		msg, keyboard := c.formatNotification(release)
 		err := c.sender.SendWithKeyboard(user.ChatID, msg, keyboard)
 
@@ -1383,7 +1397,7 @@ func (c *Checker) notifyUsers(release *updater.Release) {
 }
 ```
 
-**Step 4: Update tests**
+**Step 5: Update tests**
 
 В `telegram-bot/internal/updatechecker/checker_test.go` обновить mockSender:
 
@@ -1405,13 +1419,6 @@ type sentMessage struct {
 	keyboard *tgbotapi.InlineKeyboardMarkup
 }
 
-func (m *mockSender) Send(chatID int64, text string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.messages = append(m.messages, sentMessage{chatID: chatID, text: text})
-	return nil
-}
-
 func (m *mockSender) SendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1420,12 +1427,12 @@ func (m *mockSender) SendWithKeyboard(chatID int64, text string, keyboard tgbota
 }
 ```
 
-**Step 5: Run tests**
+**Step 6: Run tests**
 
 Run: `cd telegram-bot && go test -v ./internal/updatechecker/...`
 Expected: All PASS
 
-**Step 6: Commit**
+**Step 7: Commit**
 
 ```bash
 cd /opt/github/zinin/asuswrt-merlin-vpn-director
@@ -1434,40 +1441,60 @@ git commit -m "$(cat <<'EOF'
 feat(telegram-bot): add inline update button to notifications
 
 Update notifications now include an inline keyboard with "🔄 Обновить"
-button that triggers the update flow.
+button that triggers the update flow. Uses MarkdownV2 with proper
+escaping and UTF-8 safe truncation.
 EOF
 )"
 ```
 
 ---
 
-## Task 8: Добавить обработку callback "update:start" в router
+## Task 8: Добавить обработку callback "update:run" в router
 
 **Files:**
 - Modify: `telegram-bot/internal/bot/router.go`
 - Modify: `telegram-bot/internal/handler/update.go`
 
-**Step 1: Read current router.go**
+**Step 1: Update UpdateRouterHandler interface**
 
-Сначала изучить текущую структуру router.go.
+В `telegram-bot/internal/bot/router.go` расширить интерфейс:
 
-**Step 2: Add callback routing for update:start**
+```go
+// UpdateRouterHandler defines methods for update command
+type UpdateRouterHandler interface {
+	HandleUpdate(msg *tgbotapi.Message)
+	HandleCallback(cb *tgbotapi.CallbackQuery)
+}
+```
+
+**Step 2: Add callback routing for update:**
 
 В `telegram-bot/internal/bot/router.go` в функции `RouteCallback`, добавить обработку:
 
 ```go
-case "update:start":
-	// Convert callback to message-like call for update handler
-	r.updateHandler.HandleUpdateFromCallback(cb)
+func (r *Router) RouteCallback(cb *tgbotapi.CallbackQuery) {
+	if strings.HasPrefix(cb.Data, "servers:") {
+		r.servers.HandleCallback(cb)
+		return
+	}
+	if strings.HasPrefix(cb.Data, "update:") {
+		r.update.HandleCallback(cb)
+		return
+	}
+	r.wizard.HandleCallback(cb)
+}
 ```
 
-**Step 3: Add HandleUpdateFromCallback to UpdateHandler**
+**Step 3: Add HandleCallback to UpdateHandler**
 
 В `telegram-bot/internal/handler/update.go` добавить:
 
 ```go
-// HandleUpdateFromCallback handles update triggered from inline button.
-func (h *UpdateHandler) HandleUpdateFromCallback(cb *tgbotapi.CallbackQuery) {
+// HandleCallback handles update callbacks from inline buttons.
+func (h *UpdateHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
+	if cb.Data != "update:run" {
+		return
+	}
 	// Create a fake message with the callback's chat
 	msg := &tgbotapi.Message{
 		Chat: cb.Message.Chat,
@@ -1488,7 +1515,7 @@ Expected: All PASS
 cd /opt/github/zinin/asuswrt-merlin-vpn-director
 git add telegram-bot/internal/bot/router.go telegram-bot/internal/handler/update.go
 git commit -m "$(cat <<'EOF'
-feat(telegram-bot): handle update:start callback from notification button
+feat(telegram-bot): handle update:run callback from notification button
 
 Allows users to trigger update directly from the notification message
 inline keyboard.

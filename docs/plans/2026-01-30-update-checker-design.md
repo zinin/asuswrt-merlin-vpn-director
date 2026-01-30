@@ -129,7 +129,7 @@ type UserChat struct {
 
 - Changelog берётся из `release.Body` (GitHub release notes)
 - Обрезается до ~500 символов если слишком длинный
-- Кнопка "Обновить" вызывает callback `update:confirm` (существующий flow)
+- Кнопка "Обновить" вызывает существующий callback обработки `/update`
 
 ## Интеграция с существующим кодом
 
