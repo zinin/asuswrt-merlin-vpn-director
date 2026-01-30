@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoad_FileNotFound(t *testing.T) {
@@ -140,5 +141,79 @@ func TestLoad_DefaultLogLevel(t *testing.T) {
 
 	if cfg.LogLevel != "" {
 		t.Errorf("expected empty log_level for missing field, got '%s'", cfg.LogLevel)
+	}
+}
+
+func TestLoad_WithUpdateCheckInterval(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	jsonContent := `{
+		"bot_token": "test-token",
+		"allowed_users": ["user1"],
+		"update_check_interval": "1h"
+	}`
+
+	err := os.WriteFile(configPath, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.UpdateCheckInterval != time.Hour {
+		t.Errorf("expected update_check_interval 1h, got %v", cfg.UpdateCheckInterval)
+	}
+}
+
+func TestLoad_UpdateCheckIntervalZero(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	jsonContent := `{
+		"bot_token": "test-token",
+		"allowed_users": []
+	}`
+
+	err := os.WriteFile(configPath, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.UpdateCheckInterval != 0 {
+		t.Errorf("expected zero update_check_interval for missing field, got %v", cfg.UpdateCheckInterval)
+	}
+}
+
+func TestLoad_UpdateCheckIntervalExplicitZero(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	jsonContent := `{
+		"bot_token": "test-token",
+		"allowed_users": [],
+		"update_check_interval": "0"
+	}`
+
+	err := os.WriteFile(configPath, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.UpdateCheckInterval != 0 {
+		t.Errorf("expected zero update_check_interval for '0', got %v", cfg.UpdateCheckInterval)
 	}
 }
