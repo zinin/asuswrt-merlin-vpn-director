@@ -16,17 +16,18 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/devmode"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/logging"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/paths"
-	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
 )
 
 var (
-	Version   = "dev"
-	Commit    = "unknown"
-	BuildDate = "unknown"
+	Version     = "dev"
+	VersionFull = "dev"
+	Commit      = "unknown"
+	BuildDate   = "unknown"
 )
 
 func versionString() string {
-	return fmt.Sprintf("%s (%s, %s)", Version, Commit, BuildDate)
+	return fmt.Sprintf("%s (%s, %s)", VersionFull, Commit, BuildDate)
 }
 
 const maxLogSize = 200 * 1024
@@ -36,11 +37,11 @@ func main() {
 	flag.Parse()
 
 	var p paths.Paths
-	var executor service.ShellExecutor
+	var opts []bot.Option
 
 	if *devFlag {
 		p = paths.DevPaths()
-		executor = devmode.NewExecutor()
+		opts = append(opts, bot.WithDevMode(devmode.NewExecutor()))
 		// Validate testdata/dev exists before proceeding
 		if _, err := os.Stat(p.ScriptsDir); os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Error: %s not found\n", p.ScriptsDir)
@@ -49,8 +50,10 @@ func main() {
 		}
 	} else {
 		p = paths.Default()
-		executor = nil
 	}
+
+	// Always add updater service
+	opts = append(opts, bot.WithUpdater(updater.New()))
 
 	// Initialize logger BEFORE config load (default INFO level)
 	slogger, logger, err := logging.NewSlogLogger(p.BotLogPath)
@@ -98,7 +101,7 @@ func main() {
 
 	logger.StartRotation(ctx, []string{p.BotLogPath, p.VPNLogPath}, maxLogSize, time.Minute)
 
-	b, err := bot.New(cfg, p, versionString(), executor)
+	b, err := bot.New(cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
 	if err != nil {
 		slog.Error("Failed to create bot", "error", err)
 		os.Exit(1)

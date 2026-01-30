@@ -33,6 +33,11 @@ type MiscRouterHandler interface {
 	HandleLogs(msg *tgbotapi.Message)
 }
 
+// UpdateRouterHandler defines methods for update command
+type UpdateRouterHandler interface {
+	HandleUpdate(msg *tgbotapi.Message)
+}
+
 // WizardRouterHandler defines methods for wizard
 type WizardRouterHandler interface {
 	Start(chatID int64)
@@ -46,6 +51,7 @@ type Router struct {
 	servers ServersRouterHandler
 	import_ ImportRouterHandler
 	misc    MiscRouterHandler
+	update  UpdateRouterHandler
 	wizard  WizardRouterHandler
 }
 
@@ -55,6 +61,7 @@ func NewRouter(
 	servers ServersRouterHandler,
 	import_ ImportRouterHandler,
 	misc MiscRouterHandler,
+	update UpdateRouterHandler,
 	wizard WizardRouterHandler,
 ) *Router {
 	return &Router{
@@ -62,6 +69,7 @@ func NewRouter(
 		servers: servers,
 		import_: import_,
 		misc:    misc,
+		update:  update,
 		wizard:  wizard,
 	}
 }
@@ -87,6 +95,8 @@ func (r *Router) RouteMessage(msg *tgbotapi.Message) {
 		r.misc.HandleIP(msg)
 	case "version":
 		r.misc.HandleVersion(msg)
+	case "update":
+		r.update.HandleUpdate(msg)
 	case "configure":
 		r.wizard.Start(msg.Chat.ID)
 	default:

@@ -37,6 +37,7 @@ Commands:
 /stop \- stop VPN Director
 /logs \- recent logs
 /ip \- external IP
+/update \- update to latest release
 /version \- bot version`
 
 	h.deps.Sender.Send(msg.Chat.ID, text)
@@ -44,7 +45,8 @@ Commands:
 
 // HandleVersion handles /version command
 func (h *MiscHandler) HandleVersion(msg *tgbotapi.Message) {
-	h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(h.deps.Version))
+	text := h.deps.VersionFull + " (" + h.deps.Commit + ", " + h.deps.BuildDate + ")"
+	h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(text))
 }
 
 // HandleIP handles /ip command
