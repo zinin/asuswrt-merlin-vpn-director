@@ -1,4 +1,6 @@
 {
   "bot_token": "YOUR_BOT_TOKEN_HERE",
-  "allowed_users": ["your_username"]
+  "allowed_users": ["your_username"],
+  "log_level": "debug",
+  "update_check_interval": "1m"
 }

@@ -58,6 +58,30 @@ func TestGetLatestRelease(t *testing.T) {
 	}
 }
 
+func TestGetLatestRelease_IncludesBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := `{
+			"tag_name": "v1.0.0",
+			"body": "## Changelog\n- Fix bug\n- Add feature",
+			"assets": []
+		}`
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(response))
+	}))
+	defer server.Close()
+
+	svc := NewWithBaseURL(server.URL)
+	release, err := svc.GetLatestRelease(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := "## Changelog\n- Fix bug\n- Add feature"
+	if release.Body != expected {
+		t.Errorf("expected body %q, got %q", expected, release.Body)
+	}
+}
+
 func TestGetLatestRelease_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

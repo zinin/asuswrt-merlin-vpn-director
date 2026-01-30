@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/bot"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/chatstore"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/devmode"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/logging"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/paths"
+	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updatechecker"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/updater"
 )
 
@@ -101,6 +103,13 @@ func main() {
 
 	logger.StartRotation(ctx, []string{p.BotLogPath, p.VPNLogPath}, maxLogSize, time.Minute)
 
+	// Create chat store for update notifications (not in dev mode)
+	var store *chatstore.Store
+	if !*devFlag {
+		store = chatstore.New(p.DefaultDataDir + "/chats.json")
+		opts = append(opts, bot.WithChatStore(store))
+	}
+
 	b, err := bot.New(cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
 	if err != nil {
 		slog.Error("Failed to create bot", "error", err)
@@ -109,6 +118,18 @@ func main() {
 
 	if err := b.RegisterCommands(); err != nil {
 		slog.Warn("Failed to register commands", "error", err)
+	}
+
+	// Start update checker if configured (not in dev mode, not dev version)
+	if cfg.UpdateCheckInterval > 0 && !*devFlag && Version != "dev" {
+		checker := updatechecker.New(
+			updater.New(),
+			store,
+			b.Sender(),
+			b.Auth(),
+			Version,
+		)
+		go checker.Run(ctx, cfg.UpdateCheckInterval)
 	}
 
 	slog.Info("Telegram Bot started", "version", versionString())

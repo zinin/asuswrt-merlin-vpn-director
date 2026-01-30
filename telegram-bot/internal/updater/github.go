@@ -20,6 +20,7 @@ const (
 // githubRelease represents the GitHub API response for releases/latest.
 type githubRelease struct {
 	TagName string        `json:"tag_name"`
+	Body    string        `json:"body"`
 	Assets  []githubAsset `json:"assets"`
 }
 
@@ -64,6 +65,7 @@ func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
 
 	release := &Release{
 		TagName: ghRelease.TagName,
+		Body:    ghRelease.Body,
 		Assets:  make([]Asset, len(ghRelease.Assets)),
 	}
 	for i, a := range ghRelease.Assets {

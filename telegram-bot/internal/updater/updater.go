@@ -24,6 +24,7 @@ const (
 // Release represents a GitHub release.
 type Release struct {
 	TagName string
+	Body    string // Release notes / changelog
 	Assets  []Asset
 }
 

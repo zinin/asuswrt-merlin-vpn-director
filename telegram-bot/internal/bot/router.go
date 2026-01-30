@@ -36,6 +36,7 @@ type MiscRouterHandler interface {
 // UpdateRouterHandler defines methods for update command
 type UpdateRouterHandler interface {
 	HandleUpdate(msg *tgbotapi.Message)
+	HandleCallback(cb *tgbotapi.CallbackQuery)
 }
 
 // WizardRouterHandler defines methods for wizard
@@ -109,6 +110,10 @@ func (r *Router) RouteMessage(msg *tgbotapi.Message) {
 func (r *Router) RouteCallback(cb *tgbotapi.CallbackQuery) {
 	if strings.HasPrefix(cb.Data, "servers:") {
 		r.servers.HandleCallback(cb)
+		return
+	}
+	if strings.HasPrefix(cb.Data, "update:") {
+		r.update.HandleCallback(cb)
 		return
 	}
 	r.wizard.HandleCallback(cb)
