@@ -50,6 +50,12 @@ func CheckAndSendNotify(sender telegram.MessageSender, notifyFile, updateDir str
 	// Send plain text message (no Markdown to avoid escaping issues)
 	text := fmt.Sprintf("Update complete: %s → %s", n.OldVersion, n.NewVersion)
 	if err := sender.SendPlain(n.ChatID, text); err != nil {
+		// Log for debugging - notify.json will be kept for retry on next startup
+		slog.Warn("Failed to send update notification",
+			"chat_id", n.ChatID,
+			"old_version", n.OldVersion,
+			"new_version", n.NewVersion,
+			"error", err)
 		return fmt.Errorf("send notification: %w", err)
 	}
 
