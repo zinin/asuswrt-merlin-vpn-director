@@ -113,6 +113,7 @@ Remote management via Telegram with username-based authorization.
 | `/stop` | Stop VPN Director |
 | `/logs [bot\|vpn\|all] [N]` | Recent logs (default: all, 20 lines) |
 | `/ip` | External IP |
+| `/update` | Update to latest release |
 | `/version` | Bot version |
 
 ### Configuration Wizard
