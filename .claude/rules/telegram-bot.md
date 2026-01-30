@@ -14,9 +14,12 @@ telegram-bot/
 ├── internal/
 │   ├── bot/                  # Core bot orchestration
 │   │   ├── bot.go            # Bot struct, Run(), message dispatch
+│   │   ├── router.go         # Command and callback routing
 │   │   └── auth.go           # Username-based authorization
+│   ├── chatstore/            # Chat ID persistence
+│   │   └── store.go          # Thread-safe chat storage for notifications
 │   ├── config/               # Configuration
-│   │   └── config.go         # Bot config (token, users, log_level)
+│   │   └── config.go         # Bot config (token, users, log_level, update_check_interval)
 │   ├── devmode/              # Development mode
 │   │   └── executor.go       # Mock executor for safe dev testing
 │   ├── handler/              # Command handlers
@@ -40,10 +43,12 @@ telegram-bot/
 │   │   └── notify.go         # Post-update notification
 │   ├── telegram/             # Telegram API helpers
 │   │   └── sender.go         # Message sending, escaping
+│   ├── updatechecker/        # Automatic update notifications
+│   │   └── checker.go        # Background goroutine, per-user tracking
 │   ├── updater/              # Self-update logic
 │   │   ├── updater.go        # GitHub API, lock file, downloads
-│   │   ├── release.go        # Release fetching
-│   │   ├── download.go       # Asset downloading
+│   │   ├── github.go         # GitHub release fetching
+│   │   ├── downloader.go     # Asset downloading
 │   │   └── script.go         # Update script generation
 │   ├── vless/                # VLESS protocol
 │   │   └── parser.go         # VLESS URL parser, subscription decoder
