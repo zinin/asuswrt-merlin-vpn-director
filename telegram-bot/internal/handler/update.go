@@ -140,6 +140,11 @@ func (h *UpdateHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 	if cb.Data != "update:run" {
 		return
 	}
+	// cb.Message can be nil for inline callbacks
+	if cb.Message == nil {
+		slog.Warn("Callback without message, cannot process update:run")
+		return
+	}
 	// Create a message-like structure to reuse HandleUpdate logic
 	msg := &tgbotapi.Message{
 		Chat: cb.Message.Chat,
