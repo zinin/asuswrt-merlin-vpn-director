@@ -46,6 +46,12 @@ type WizardRouterHandler interface {
 	HandleTextInput(msg *tgbotapi.Message)
 }
 
+// XrayRouterHandler defines methods for xray command
+type XrayRouterHandler interface {
+	HandleXray(msg *tgbotapi.Message)
+	HandleCallback(cb *tgbotapi.CallbackQuery)
+}
+
 // Router routes messages and callbacks to appropriate handlers
 type Router struct {
 	status  StatusRouterHandler
@@ -54,6 +60,7 @@ type Router struct {
 	misc    MiscRouterHandler
 	update  UpdateRouterHandler
 	wizard  WizardRouterHandler
+	xray    XrayRouterHandler
 }
 
 // NewRouter creates a new Router with all handlers
@@ -64,6 +71,7 @@ func NewRouter(
 	misc MiscRouterHandler,
 	update UpdateRouterHandler,
 	wizard WizardRouterHandler,
+	xray XrayRouterHandler,
 ) *Router {
 	return &Router{
 		status:  status,
@@ -72,6 +80,7 @@ func NewRouter(
 		misc:    misc,
 		update:  update,
 		wizard:  wizard,
+		xray:    xray,
 	}
 }
 
@@ -100,6 +109,8 @@ func (r *Router) RouteMessage(msg *tgbotapi.Message) {
 		r.update.HandleUpdate(msg)
 	case "configure":
 		r.wizard.Start(msg.Chat.ID)
+	case "xray":
+		r.xray.HandleXray(msg)
 	default:
 		// Non-command messages go to wizard text handler
 		r.wizard.HandleTextInput(msg)
@@ -114,6 +125,10 @@ func (r *Router) RouteCallback(cb *tgbotapi.CallbackQuery) {
 	}
 	if strings.HasPrefix(cb.Data, "update:") {
 		r.update.HandleCallback(cb)
+		return
+	}
+	if strings.HasPrefix(cb.Data, "xray:") {
+		r.xray.HandleCallback(cb)
 		return
 	}
 	r.wizard.HandleCallback(cb)
