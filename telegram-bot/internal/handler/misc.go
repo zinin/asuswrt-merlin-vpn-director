@@ -30,6 +30,7 @@ func (h *MiscHandler) HandleStart(msg *tgbotapi.Message) {
 
 Commands:
 /status \- VPN Director status
+/xray \- quick server switch
 /servers \- server list
 /import \<url\> \- import servers
 /configure \- configuration

@@ -110,9 +110,10 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 	miscHandler := handler.NewMiscHandler(deps)
 	updateHandler := handler.NewUpdateHandler(sender, b.updater, b.devMode, version)
 	wizardHandler := wizard.NewHandler(sender, configSvc, vpnSvc, xraySvc)
+	xrayHandler := handler.NewXrayHandler(deps)
 
 	// Create router
-	router := NewRouter(statusHandler, serversHandler, importHandler, miscHandler, updateHandler, wizardHandler)
+	router := NewRouter(statusHandler, serversHandler, importHandler, miscHandler, updateHandler, wizardHandler, xrayHandler)
 	b.router = router
 
 	return b, nil
@@ -122,6 +123,7 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 func (b *Bot) RegisterCommands() error {
 	commands := []tgbotapi.BotCommand{
 		{Command: "status", Description: "Xray status"},
+		{Command: "xray", Description: "Switch Xray server"},
 		{Command: "servers", Description: "Server list"},
 		{Command: "import", Description: "Import servers from URL"},
 		{Command: "configure", Description: "Configuration wizard"},

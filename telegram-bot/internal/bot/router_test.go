@@ -52,9 +52,17 @@ type mockWizardHandler struct {
 	textCalled     bool
 }
 
-func (m *mockWizardHandler) Start(chatID int64)                          { m.startCalled = true; m.startChatID = chatID }
-func (m *mockWizardHandler) HandleCallback(cb *tgbotapi.CallbackQuery)   { m.callbackCalled = true }
-func (m *mockWizardHandler) HandleTextInput(msg *tgbotapi.Message)       { m.textCalled = true }
+func (m *mockWizardHandler) Start(chatID int64)                        { m.startCalled = true; m.startChatID = chatID }
+func (m *mockWizardHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
+func (m *mockWizardHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textCalled = true }
+
+type mockXrayHandler struct {
+	xrayCalled     bool
+	callbackCalled bool
+}
+
+func (m *mockXrayHandler) HandleXray(msg *tgbotapi.Message)          { m.xrayCalled = true }
+func (m *mockXrayHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
 
 // Helper to create a message with command entity
 func msgWithCommand(text string) *tgbotapi.Message {
@@ -284,5 +292,31 @@ func TestRouter_RouteCallback_WizardCancel(t *testing.T) {
 
 	if !h.callbackCalled {
 		t.Error("expected wizard.HandleCallback to be called for cancel")
+	}
+}
+
+func TestRouter_RouteMessage_Xray(t *testing.T) {
+	h := &mockXrayHandler{}
+	router := &Router{xray: h}
+
+	router.RouteMessage(msgWithCommand("/xray"))
+
+	if !h.xrayCalled {
+		t.Error("expected HandleXray to be called")
+	}
+}
+
+func TestRouter_RouteCallback_Xray(t *testing.T) {
+	h := &mockXrayHandler{}
+	router := &Router{xray: h}
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "xray:select:0",
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}},
+	}
+	router.RouteCallback(cb)
+
+	if !h.callbackCalled {
+		t.Error("expected HandleCallback to be called for xray:select:*")
 	}
 }

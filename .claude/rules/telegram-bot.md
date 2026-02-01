@@ -29,6 +29,7 @@ telegram-bot/
 │   │   ├── servers.go        # /servers
 │   │   ├── import.go         # /import
 │   │   ├── update.go         # /update (self-update from GitHub)
+│   │   ├── xray.go           # /xray (quick server switch)
 │   │   └── wizard_*.go       # /configure wizard handlers
 │   ├── logging/              # Logging
 │   │   ├── logger.go         # slog setup (stdout + file)
@@ -66,6 +67,7 @@ telegram-bot/
 |---------|---------|-------------|
 | `/start` | `MiscHandler.HandleStart` | Show help |
 | `/status` | `StatusHandler.HandleStatus` | VPN Director status |
+| `/xray` | `XrayHandler.HandleXray` | Quick server switch |
 | `/servers` | `ServersHandler.HandleServers` | Server list (paginated) |
 | `/import <url>` | `ImportHandler.HandleImport` | Import VLESS subscription |
 | `/configure` | `WizardHandler.HandleConfigure` | Configuration wizard |
