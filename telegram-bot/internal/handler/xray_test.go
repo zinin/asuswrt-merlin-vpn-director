@@ -108,7 +108,11 @@ func TestXrayHandler_HandleCallback_Success(t *testing.T) {
 	if xray.lastServer.Name != "USA, New York" {
 		t.Errorf("expected server 'USA, New York', got %q", xray.lastServer.Name)
 	}
-	// Should send success message
+	// Should edit the original message (not send new one)
+	if sender.lastMsgID != 42 {
+		t.Errorf("expected message ID 42 to be edited, got %d", sender.lastMsgID)
+	}
+	// Should show success message
 	if !strings.Contains(sender.lastText, "Переключено") || !strings.Contains(sender.lastText, "USA") {
 		t.Errorf("expected success message with server name, got %q", sender.lastText)
 	}
@@ -279,6 +283,10 @@ func TestXrayHandler_FullFlow(t *testing.T) {
 	// Verify correct server was used
 	if xray.lastServer.Address != "us.example.com" {
 		t.Errorf("expected address 'us.example.com', got %q", xray.lastServer.Address)
+	}
+	// Verify original message was edited (keyboard removed)
+	if sender.lastMsgID != 42 {
+		t.Errorf("expected message ID 42 to be edited, got %d", sender.lastMsgID)
 	}
 	// Verify success message
 	if !strings.Contains(sender.lastText, "USA, New York") {

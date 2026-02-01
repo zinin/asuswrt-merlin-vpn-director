@@ -91,6 +91,8 @@ func (h *XrayHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 		return
 	}
 
-	// Send success message
-	h.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2(fmt.Sprintf("✓ Переключено на %s", server.Name)))
+	// Edit original message to show result (removes keyboard)
+	successText := telegram.EscapeMarkdownV2(fmt.Sprintf("✓ Переключено на %s", server.Name))
+	emptyKeyboard := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	h.deps.Sender.EditMessage(chatID, cb.Message.MessageID, successText, emptyKeyboard)
 }
