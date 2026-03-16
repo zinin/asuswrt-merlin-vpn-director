@@ -51,19 +51,26 @@ print_info() {
 resolve_release_tag() {
     print_info "Fetching latest release tag..."
 
-    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-    local response
+    local release_url="https://github.com/${GITHUB_REPO}/releases/latest"
+    local effective_url
 
-    response=$(curl -fsSL "$api_url") || {
-        print_error "Failed to fetch latest release from GitHub API"
+    # Resolve tag via HTTP redirect (no API quota, no JSON parsing)
+    effective_url=$(curl -fsSL --max-time 30 --connect-timeout 10 -o /dev/null -w '%{url_effective}' "$release_url") || {
+        print_error "Failed to fetch latest release (HTTP error or timeout)"
+        print_info "Check your internet connection and try again"
         exit 1
     }
 
-    # Extract tag_name from JSON (no jq on router)
-    RELEASE_TAG=$(printf '%s' "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"//;s/"//')
+    RELEASE_TAG="${effective_url##*/}"
 
     if [[ -z ${RELEASE_TAG:-} ]]; then
         print_error "Could not determine latest release tag"
+        exit 1
+    fi
+
+    # Validate tag format (semver with optional v prefix)
+    if [[ ! "$RELEASE_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        print_error "Unexpected release tag format: $RELEASE_TAG"
         exit 1
     fi
 
