@@ -78,7 +78,7 @@ jq -n \
     --argjson users "$USERS_JSON" \
     --arg proxy "$PROXY_URL" \
     --argjson fallback "$PROXY_FALLBACK" \
-    '{bot_token: $token, allowed_users: $users, log_level: "info"} +
+    '{bot_token: $token, allowed_users: $users, log_level: "info", update_check_interval: "24h"} +
      (if $proxy != "" then {proxy: $proxy, proxy_fallback_direct: $fallback} else {} end)' > "$CONFIG_FILE"
 
 echo
