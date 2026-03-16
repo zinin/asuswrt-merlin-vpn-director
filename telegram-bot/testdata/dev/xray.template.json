@@ -19,6 +19,15 @@
         }
       },
       "tag": "tproxy-in"
+    },
+    {
+      "port": 12346,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      },
+      "tag": "socks-in"
     }
   ],
   "outbounds": [
@@ -54,7 +63,7 @@
     "rules": [
       {
         "type": "field",
-        "inboundTag": ["tproxy-in"],
+        "inboundTag": ["tproxy-in", "socks-in"],
         "outboundTag": "proxy-out"
       }
     ]
