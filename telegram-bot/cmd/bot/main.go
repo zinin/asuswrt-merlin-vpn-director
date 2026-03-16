@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"errors"
+
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/bot"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/chatstore"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
@@ -110,10 +112,33 @@ func main() {
 		opts = append(opts, bot.WithChatStore(store))
 	}
 
-	b, err := bot.New(cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
-	if err != nil {
-		slog.Error("Failed to create bot", "error", err)
-		os.Exit(1)
+	var b *bot.Bot
+	{
+		backoffs := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, 60 * time.Second}
+		for attempt := 0; ; attempt++ {
+			b, err = bot.New(cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
+			if err == nil {
+				break
+			}
+			// Fail fast on permanent errors (invalid config, bad proxy URL)
+			var permErr *bot.PermanentError
+			if errors.As(err, &permErr) {
+				slog.Error("Fatal configuration error", "error", err)
+				os.Exit(1)
+			}
+			delay := backoffs[len(backoffs)-1]
+			if attempt < len(backoffs) {
+				delay = backoffs[attempt]
+			}
+			slog.Warn("Failed to connect to Telegram API, retrying...",
+				"error", err, "attempt", attempt+1, "retry_in", delay)
+			select {
+			case <-ctx.Done():
+				slog.Error("Shutdown requested during startup retry", "error", err)
+				os.Exit(1)
+			case <-time.After(delay):
+			}
+		}
 	}
 
 	if err := b.RegisterCommands(); err != nil {

@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 VPD_DIR="/opt/vpn-director"
 JFFS_HOOKS_DIR="/jffs/scripts"
 XRAY_CONFIG_DIR="/opt/etc/xray"
-REPO_URL="https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master"
+GITHUB_REPO="zinin/asuswrt-merlin-vpn-director"
 
 ###############################################################################
 # Helper functions
@@ -42,6 +42,42 @@ print_error() {
 
 print_info() {
     printf "${BLUE}[INFO]${NC} %s\n" "$1"
+}
+
+###############################################################################
+# Resolve latest release tag
+###############################################################################
+
+resolve_release_tag() {
+    print_info "Fetching latest release tag..."
+
+    local release_url="https://github.com/${GITHUB_REPO}/releases/latest"
+    local effective_url
+
+    # Resolve tag via HTTP redirect (no API quota, no JSON parsing)
+    effective_url=$(curl -fsSL --max-time 30 --connect-timeout 10 -o /dev/null -w '%{url_effective}' "$release_url") || {
+        print_error "Failed to fetch latest release (HTTP error or timeout)"
+        print_info "Check your internet connection and try again"
+        exit 1
+    }
+
+    RELEASE_TAG="${effective_url##*/}"
+
+    if [[ -z ${RELEASE_TAG:-} ]]; then
+        print_error "Could not determine latest release tag"
+        exit 1
+    fi
+
+    # Validate tag format (semver with optional v prefix)
+    if [[ ! "$RELEASE_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        print_error "Unexpected release tag format: $RELEASE_TAG"
+        exit 1
+    fi
+
+    REPO_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/refs/tags/${RELEASE_TAG}"
+    RELEASE_ASSET_URL="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}"
+
+    print_success "Latest release: $RELEASE_TAG"
 }
 
 ###############################################################################
@@ -142,7 +178,7 @@ download_telegram_bot() {
     local arch
     arch=$(uname -m)
     local bot_binary=""
-    local release_url="https://github.com/zinin/asuswrt-merlin-vpn-director/releases/latest/download"
+    local release_url="$RELEASE_ASSET_URL"
     local bot_path="$VPD_DIR/telegram-bot"
     local tmp_path="${bot_path}.tmp"
     local was_running=false
@@ -192,7 +228,7 @@ download_telegram_bot() {
 ###############################################################################
 
 print_next_steps() {
-    print_header "Installation Complete"
+    print_header "Installation Complete ($RELEASE_TAG)"
 
     printf "Next steps:\n\n"
     printf "  1. Import VLESS servers:\n"
@@ -215,6 +251,7 @@ main() {
     printf "This will install VPN Director scripts to your router.\n\n"
 
     check_environment
+    resolve_release_tag
     create_directories
     download_scripts
     download_telegram_bot

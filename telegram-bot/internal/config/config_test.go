@@ -217,3 +217,59 @@ func TestLoad_UpdateCheckIntervalExplicitZero(t *testing.T) {
 		t.Errorf("expected zero update_check_interval for '0', got %v", cfg.UpdateCheckInterval)
 	}
 }
+
+func TestLoad_WithProxy(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	jsonContent := `{
+		"bot_token": "test-token",
+		"allowed_users": ["user1"],
+		"proxy": "socks5://127.0.0.1:12346",
+		"proxy_fallback_direct": true
+	}`
+
+	err := os.WriteFile(configPath, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Proxy != "socks5://127.0.0.1:12346" {
+		t.Errorf("expected proxy 'socks5://127.0.0.1:12346', got '%s'", cfg.Proxy)
+	}
+	if !cfg.ProxyFallbackDirect {
+		t.Error("expected proxy_fallback_direct to be true")
+	}
+}
+
+func TestLoad_ProxyDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	jsonContent := `{
+		"bot_token": "test-token",
+		"allowed_users": []
+	}`
+
+	err := os.WriteFile(configPath, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Proxy != "" {
+		t.Errorf("expected empty proxy, got '%s'", cfg.Proxy)
+	}
+	if cfg.ProxyFallbackDirect {
+		t.Error("expected proxy_fallback_direct to default to false")
+	}
+}

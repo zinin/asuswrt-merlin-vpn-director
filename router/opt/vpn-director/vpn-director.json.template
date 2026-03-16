@@ -11,6 +11,7 @@
   "advanced": {
     "xray": {
       "tproxy_port": 12345,
+      "socks_port": 12346,
       "route_table": 100,
       "rule_pref": 200,
       "fwmark": "0x100",

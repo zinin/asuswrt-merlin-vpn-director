@@ -46,13 +46,40 @@ if [[ ${#USERS[@]} -eq 0 ]]; then
     exit 1
 fi
 
+# Proxy configuration
+echo
+printf "Use proxy for Telegram API? (recommended if Telegram is blocked)\n"
+printf "  1) Yes - use Xray SOCKS5 proxy\n"
+printf "  2) No - direct connection\n"
+printf "Choice [2]: "
+read -r PROXY_CHOICE < /dev/tty
+
+PROXY_URL=""
+PROXY_FALLBACK=false
+if [[ "${PROXY_CHOICE:-2}" == "1" ]]; then
+    # Try to read socks_port from vpn-director.json
+    SOCKS_PORT=12346
+    if [[ -f "$VPD_DIR/vpn-director.json" ]]; then
+        CONFIGURED_PORT=$(jq -r '.advanced.xray.socks_port // empty' "$VPD_DIR/vpn-director.json" 2>/dev/null)
+        if [[ -n "${CONFIGURED_PORT:-}" ]]; then
+            SOCKS_PORT="$CONFIGURED_PORT"
+        fi
+    fi
+    PROXY_URL="socks5://127.0.0.1:${SOCKS_PORT}"
+    PROXY_FALLBACK=true
+    echo "Proxy: $PROXY_URL (with direct fallback)"
+fi
+
 # Create JSON
 USERS_JSON=$(printf '%s\n' "${USERS[@]}" | jq -R . | jq -s .)
 
 jq -n \
     --arg token "$BOT_TOKEN" \
     --argjson users "$USERS_JSON" \
-    '{bot_token: $token, allowed_users: $users, log_level: "info"}' > "$CONFIG_FILE"
+    --arg proxy "$PROXY_URL" \
+    --argjson fallback "$PROXY_FALLBACK" \
+    '{bot_token: $token, allowed_users: $users, log_level: "info"} +
+     (if $proxy != "" then {proxy: $proxy, proxy_fallback_direct: $fallback} else {} end)' > "$CONFIG_FILE"
 
 echo
 echo "Config created: $CONFIG_FILE"

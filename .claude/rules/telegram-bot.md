@@ -112,6 +112,8 @@ Downloads latest release from GitHub and applies it:
 {
   "bot_token": "123456:ABC...",
   "allowed_users": ["username1", "username2"],
+  "proxy": "socks5://127.0.0.1:12346",
+  "proxy_fallback_direct": true,
   "log_level": "info",
   "update_check_interval": "1h"
 }
@@ -120,6 +122,8 @@ Downloads latest release from GitHub and applies it:
 **Fields:**
 - `bot_token` — Telegram Bot API token (required)
 - `allowed_users` — Array of Telegram usernames (required)
+- `proxy` — SOCKS5 proxy URL for Telegram API (optional, empty = direct connection)
+- `proxy_fallback_direct` — Fall back to direct connection if proxy unavailable (default: `false`)
 - `log_level` — `debug`, `info`, `warn`, `error` (default: `info`)
 - `update_check_interval` — Go duration (`1h`, `30m`, `24h`). If omitted or `"0"`, automatic update checking is disabled
 
@@ -203,6 +207,7 @@ go test -run TestHandleStatus ./internal/bot/
 ## Dependencies
 
 - `github.com/go-telegram-bot-api/telegram-bot-api/v5` — Telegram API client
+- `golang.org/x/net` — SOCKS5 proxy support
 
 ## Logging
 

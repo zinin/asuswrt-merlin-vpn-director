@@ -3,6 +3,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -57,7 +58,12 @@ func WithChatStore(store *chatstore.Store) Option {
 // New creates a new Bot with full dependency injection.
 // Use WithDevMode() and WithUpdater() options to configure the bot.
 func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(cfg.BotToken)
+	httpClient, err := NewHTTPClient(cfg.Proxy, cfg.ProxyFallbackDirect)
+	if err != nil {
+		// Permanent config error — do not retry
+		return nil, &PermanentError{Err: fmt.Errorf("failed to create HTTP client: %w", err)}
+	}
+	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, err
 	}
