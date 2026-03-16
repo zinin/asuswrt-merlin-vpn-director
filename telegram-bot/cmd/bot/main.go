@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"errors"
+
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/bot"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/chatstore"
 	"github.com/zinin/asuswrt-merlin-vpn-director/telegram-bot/internal/config"
@@ -117,6 +119,12 @@ func main() {
 			b, err = bot.New(cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
 			if err == nil {
 				break
+			}
+			// Fail fast on permanent errors (invalid config, bad proxy URL)
+			var permErr *bot.PermanentError
+			if errors.As(err, &permErr) {
+				slog.Error("Fatal configuration error", "error", err)
+				os.Exit(1)
 			}
 			delay := backoffs[len(backoffs)-1]
 			if attempt < len(backoffs) {

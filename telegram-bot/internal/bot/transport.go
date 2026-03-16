@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,11 +38,12 @@ func NewHTTPClient(proxyURL string, fallbackDirect bool) (*http.Client, error) {
 		return nil, fmt.Errorf("SOCKS5 dialer does not support ContextDialer interface")
 	}
 
-	slog.Info("Using proxy for Telegram API", "proxy", proxyURL)
+	slog.Info("Using proxy for Telegram API", "proxy", u.Redacted())
 
-	proxyTransport := &http.Transport{
-		DialContext: ctxDialer.DialContext,
-	}
+	// Clone DefaultTransport to preserve standard timeouts, override DialContext for SOCKS5
+	baseTransport := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport.DialContext = ctxDialer.DialContext
+	proxyTransport := baseTransport
 
 	if !fallbackDirect {
 		return &http.Client{Transport: proxyTransport}, nil
@@ -82,11 +82,15 @@ func (t *fallbackTransport) RoundTrip(req *http.Request) (*http.Response, error)
 func isDialError(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		return true
-	}
-	// context.DeadlineExceeded and context.Canceled may also occur on dial
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return true
+		return opErr.Op == "dial" || opErr.Op == "socks connect"
 	}
 	return false
 }
+
+// PermanentError wraps errors that should not be retried (config errors, auth failures).
+type PermanentError struct {
+	Err error
+}
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }

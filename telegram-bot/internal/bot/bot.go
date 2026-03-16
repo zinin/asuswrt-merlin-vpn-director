@@ -60,7 +60,8 @@ func WithChatStore(store *chatstore.Store) Option {
 func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error) {
 	httpClient, err := NewHTTPClient(cfg.Proxy, cfg.ProxyFallbackDirect)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
+		// Permanent config error — do not retry
+		return nil, &PermanentError{Err: fmt.Errorf("failed to create HTTP client: %w", err)}
 	}
 	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
