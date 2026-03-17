@@ -3,6 +3,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -65,6 +66,10 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 	}
 	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
+		var apiErr *tgbotapi.Error
+		if errors.As(err, &apiErr) && apiErr.Code == 401 {
+			return nil, &PermanentError{Err: fmt.Errorf("invalid bot token: %w", err)}
+		}
 		return nil, err
 	}
 
