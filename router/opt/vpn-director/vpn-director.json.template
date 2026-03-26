@@ -6,6 +6,7 @@
   "xray": {
     "clients": [],
     "servers": [],
+    "exclude_ips": [],
     "exclude_sets": ["ru"]
   },
   "advanced": {
@@ -18,7 +19,7 @@
       "fwmark_mask": "0x100",
       "chain": "XRAY_TPROXY",
       "clients_ipset": "XRAY_CLIENTS",
-      "servers_ipset": "XRAY_SERVERS"
+      "bypass_ipset": "TPROXY_BYPASS"
     },
     "tunnel_director": {
       "chain": "TUN_DIR",

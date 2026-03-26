@@ -11,6 +11,7 @@
   "xray": {
     "clients": ["192.168.1.100"],
     "servers": ["1.2.3.4"],
+    "exclude_ips": ["5.6.7.8", "10.20.0.0/16"],
     "exclude_sets": ["ru"]
   },
   "advanced": {
@@ -22,7 +23,7 @@
       "fwmark_mask": "0x100",
       "chain": "XRAY_TPROXY",
       "clients_ipset": "XRAY_CLIENTS",
-      "servers_ipset": "XRAY_SERVERS"
+      "bypass_ipset": "TPROXY_BYPASS"
     },
     "tunnel_director": {
       "chain": "TUN_DIR",
