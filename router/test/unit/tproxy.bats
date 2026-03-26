@@ -247,3 +247,57 @@ EOF
     declare -f tproxy_stop >/dev/null
     declare -f tproxy_get_required_ipsets >/dev/null
 }
+
+# ============================================================================
+# _tproxy_validate_ipv4_cidr - IP/CIDR validation
+# ============================================================================
+
+@test "_tproxy_validate_ipv4_cidr: accepts valid IPv4" {
+    load_tproxy_module
+    run _tproxy_validate_ipv4_cidr "1.2.3.4"
+    assert_success
+}
+
+@test "_tproxy_validate_ipv4_cidr: accepts valid CIDR" {
+    load_tproxy_module
+    run _tproxy_validate_ipv4_cidr "10.0.0.0/8"
+    assert_success
+}
+
+@test "_tproxy_validate_ipv4_cidr: rejects invalid IP" {
+    load_tproxy_module
+    run _tproxy_validate_ipv4_cidr "256.1.1.1"
+    assert_failure
+}
+
+@test "_tproxy_validate_ipv4_cidr: rejects invalid CIDR mask" {
+    load_tproxy_module
+    run _tproxy_validate_ipv4_cidr "10.0.0.0/33"
+    assert_failure
+}
+
+@test "_tproxy_validate_ipv4_cidr: rejects non-IP string" {
+    load_tproxy_module
+    run _tproxy_validate_ipv4_cidr "not-an-ip"
+    assert_failure
+}
+
+# ============================================================================
+# _tproxy_setup_bypass_ipset - 3-source ipset assembly
+# ============================================================================
+
+@test "_tproxy_setup_bypass_ipset: logs counts per source" {
+    load_tproxy_module
+    run _tproxy_setup_bypass_ipset
+    assert_success
+    assert_output --partial "xray"
+    assert_output --partial "user"
+    assert_output --partial "openvpn"
+}
+
+@test "_tproxy_setup_bypass_ipset: skips empty nvram entries" {
+    load_tproxy_module
+    # vpn_client2_addr is empty in mock — should not cause error
+    run _tproxy_setup_bypass_ipset
+    assert_success
+}

@@ -4,7 +4,7 @@ echo "ipset $*" >> /tmp/bats_ipset_calls.log
 # Helper function to check if ipset exists
 ipset_name_exists() {
     case "$1" in
-        ru|us|ca|XRAY_CLIENTS|XRAY_SERVERS|us_ca) return 0 ;;
+        ru|us|ca|XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS|us_ca) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -34,7 +34,7 @@ case "$1" in
                     echo "Type: hash:net"
                     echo "Number of entries: 1000"
                     ;;
-                XRAY_CLIENTS|XRAY_SERVERS)
+                XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS)
                     echo "Name: $name"
                     echo "Type: hash:net"
                     echo "Number of entries: 5"
