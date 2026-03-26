@@ -176,9 +176,74 @@ func (h *ClientsHandler) handleRefreshList(chatID int64, msgID int) {
 	h.deps.Sender.EditMessage(chatID, msgID, text, kb)
 }
 
-// Stubs for Task 6 and 7 — will be replaced
-func (h *ClientsHandler) handleRemoveConfirm(chatID int64, msgID int, ip string) {}
-func (h *ClientsHandler) handleRemove(chatID int64, msgID int, ip string)        {}
+func (h *ClientsHandler) handleRemoveConfirm(chatID int64, msgID int, ip string) {
+	cfg, err := h.deps.Config.LoadVPNConfig()
+	if err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
+		return
+	}
+
+	clients := vpnconfig.CollectClients(cfg)
+	route := ""
+	for _, c := range clients {
+		if c.IP == ip {
+			route = c.Route
+			break
+		}
+	}
+	if route == "" {
+		h.handleRefreshList(chatID, msgID)
+		return
+	}
+
+	text := telegram.EscapeMarkdownV2(fmt.Sprintf("Remove %s from %s?", ip, route))
+	kb := telegram.NewKeyboard()
+	kb.Button("Yes, remove", fmt.Sprintf("clients:rm_yes:%s", ip))
+	kb.Button("Cancel", "clients:rm_no")
+	kb.Row()
+
+	h.deps.Sender.EditMessage(chatID, msgID, text, kb.Build())
+}
+
+func (h *ClientsHandler) handleRemove(chatID int64, msgID int, ip string) {
+	cfg, err := h.deps.Config.LoadVPNConfig()
+	if err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
+		return
+	}
+
+	cfg.Xray.Clients = removeString(cfg.Xray.Clients, ip)
+
+	for name, tunnel := range cfg.TunnelDirector.Tunnels {
+		tunnel.Clients = removeString(tunnel.Clients, ip)
+		cfg.TunnelDirector.Tunnels[name] = tunnel
+	}
+
+	cfg.PausedClients = removeString(cfg.PausedClients, ip)
+
+	if err := h.deps.Config.SaveVPNConfig(cfg); err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+		return
+	}
+
+	if err := h.deps.VPN.Apply(); err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Apply error: %v", err))
+		return
+	}
+
+	text, kb := h.buildClientList(cfg)
+	h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+}
+
+func removeString(slice []string, s string) []string {
+	result := slice[:0]
+	for _, v := range slice {
+		if v != s {
+			result = append(result, v)
+		}
+	}
+	return result
+}
 func (h *ClientsHandler) handleAddStart(chatID int64)                            {}
 func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string)   {}
 

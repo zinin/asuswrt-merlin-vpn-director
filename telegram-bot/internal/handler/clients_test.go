@@ -182,3 +182,83 @@ func TestClientsHandler_HandleResume(t *testing.T) {
 		t.Errorf("expected empty paused_clients, got %v", config.savedConfig.PausedClients)
 	}
 }
+
+func TestClientsHandler_HandleRemoveConfirm(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		Xray: vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}},
+	}
+	config := &mockConfigClients{vpnConfig: cfg}
+	deps := &Deps{Sender: sender, Config: config}
+	h := NewClientsHandler(deps)
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:remove:192.168.50.10",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if sender.editMsgID != 42 {
+		t.Errorf("expected message 42 to be edited, got %d", sender.editMsgID)
+	}
+	if len(sender.editKeyboard.InlineKeyboard) != 1 {
+		t.Errorf("expected 1 keyboard row, got %d", len(sender.editKeyboard.InlineKeyboard))
+	}
+}
+
+func TestClientsHandler_HandleRemoveYes_Xray(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		Xray:          vpnconfig.XrayConfig{Clients: []string{"192.168.50.10", "192.168.50.20"}},
+		PausedClients: []string{"192.168.50.10"},
+	}
+	config := &mockConfigClients{vpnConfig: cfg}
+	vpn := &mockVPNClients{}
+	deps := &Deps{Sender: sender, Config: config, VPN: vpn}
+	h := NewClientsHandler(deps)
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:rm_yes:192.168.50.10",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if config.savedConfig == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(config.savedConfig.Xray.Clients) != 1 || config.savedConfig.Xray.Clients[0] != "192.168.50.20" {
+		t.Errorf("expected xray.clients=[192.168.50.20], got %v", config.savedConfig.Xray.Clients)
+	}
+	if len(config.savedConfig.PausedClients) != 0 {
+		t.Errorf("expected empty paused_clients, got %v", config.savedConfig.PausedClients)
+	}
+}
+
+func TestClientsHandler_HandleRemoveYes_Tunnel(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		TunnelDirector: vpnconfig.TunnelDirectorConfig{
+			Tunnels: map[string]vpnconfig.TunnelConfig{
+				"wgc1": {Clients: []string{"192.168.50.30/32", "192.168.50.40/32"}, Exclude: []string{"ru"}},
+			},
+		},
+	}
+	config := &mockConfigClients{vpnConfig: cfg}
+	vpn := &mockVPNClients{}
+	deps := &Deps{Sender: sender, Config: config, VPN: vpn}
+	h := NewClientsHandler(deps)
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:rm_yes:192.168.50.30/32",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if config.savedConfig == nil {
+		t.Fatal("expected config to be saved")
+	}
+	wgc1 := config.savedConfig.TunnelDirector.Tunnels["wgc1"]
+	if len(wgc1.Clients) != 1 || wgc1.Clients[0] != "192.168.50.40/32" {
+		t.Errorf("expected wgc1.clients=[192.168.50.40/32], got %v", wgc1.Clients)
+	}
+}
