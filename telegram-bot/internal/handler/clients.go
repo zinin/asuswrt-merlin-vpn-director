@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 
@@ -58,8 +59,7 @@ func (h *ClientsHandler) buildClientList(cfg *vpnconfig.VPNDirectorConfig) (stri
 			if c.Paused {
 				status = "\u23f8"
 			}
-			// Escape non-IP parts; IPs and route names are safe plain text
-			sb.WriteString(telegram.EscapeMarkdownV2(status+"  ") + c.IP + telegram.EscapeMarkdownV2(" \u2192 ") + c.Route + "\n")
+			sb.WriteString(telegram.EscapeMarkdownV2(fmt.Sprintf("%s  %s \u2192 %s", status, c.IP, c.Route)) + "\n")
 
 			if c.Paused {
 				kb.Button(fmt.Sprintf("\u25b6 %s", c.IP), fmt.Sprintf("clients:resume:%s", c.IP))
@@ -144,7 +144,7 @@ func (h *ClientsHandler) handlePauseResume(chatID int64, msgID int, ip string, p
 			cfg.PausedClients = append(cfg.PausedClients, ip)
 		}
 	} else {
-		filtered := cfg.PausedClients[:0]
+		filtered := make([]string, 0, len(cfg.PausedClients))
 		for _, p := range cfg.PausedClients {
 			if p != ip {
 				filtered = append(filtered, p)
@@ -237,7 +237,7 @@ func (h *ClientsHandler) handleRemove(chatID int64, msgID int, ip string) {
 }
 
 func removeString(slice []string, s string) []string {
-	result := slice[:0]
+	result := make([]string, 0, len(slice))
 	for _, v := range slice {
 		if v != s {
 			result = append(result, v)
@@ -304,7 +304,13 @@ func (h *ClientsHandler) showRouteSelection(chatID int64, ip string, cfg *vpncon
 
 	kb.Button("xray", "clients:route:xray").Row()
 
+	tunnelNames := make([]string, 0, len(cfg.TunnelDirector.Tunnels))
 	for name := range cfg.TunnelDirector.Tunnels {
+		tunnelNames = append(tunnelNames, name)
+	}
+	sort.Strings(tunnelNames)
+
+	for _, name := range tunnelNames {
 		kb.Button(name, fmt.Sprintf("clients:route:%s", name)).Row()
 	}
 
@@ -342,11 +348,14 @@ func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
 	if route == "xray" {
 		cfg.Xray.Clients = append(cfg.Xray.Clients, ip)
 	} else {
+		if _, ok := cfg.TunnelDirector.Tunnels[route]; !ok {
+			// Stale keyboard — tunnel no longer exists
+			text, kb := h.buildClientList(cfg)
+			h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+			return
+		}
 		tunnel := cfg.TunnelDirector.Tunnels[route]
 		tunnel.Clients = append(tunnel.Clients, ip)
-		if cfg.TunnelDirector.Tunnels == nil {
-			cfg.TunnelDirector.Tunnels = make(map[string]vpnconfig.TunnelConfig)
-		}
 		cfg.TunnelDirector.Tunnels[route] = tunnel
 	}
 

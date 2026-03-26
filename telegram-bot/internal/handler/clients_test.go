@@ -100,11 +100,11 @@ func TestClientsHandler_HandleClients_WithClients(t *testing.T) {
 	if sender.lastChatID != 100 {
 		t.Errorf("expected chatID 100, got %d", sender.lastChatID)
 	}
-	if !strings.Contains(sender.lastText, "192.168.50.10") {
-		t.Error("expected message to contain 192.168.50.10")
+	if !strings.Contains(sender.lastText, "192\\.168\\.50\\.10") {
+		t.Errorf("expected message to contain escaped 192.168.50.10, got: %s", sender.lastText)
 	}
-	if !strings.Contains(sender.lastText, "192.168.50.20") {
-		t.Error("expected message to contain 192.168.50.20/32")
+	if !strings.Contains(sender.lastText, "192\\.168\\.50\\.20") {
+		t.Errorf("expected message to contain escaped 192.168.50.20/32, got: %s", sender.lastText)
 	}
 	// 2 clients x 2 buttons + 1 Add row = 3 rows
 	if len(sender.lastKeyboard.InlineKeyboard) != 3 {
