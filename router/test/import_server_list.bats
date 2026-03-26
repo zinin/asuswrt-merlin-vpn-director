@@ -150,3 +150,37 @@ vless://uuid2@server2:443#Name2"
     # Function succeeds - content validation is handled downstream
     [ "$result" = "$plaintext" ]
 }
+
+# ============================================================================
+# step_parse_and_save_servers: JSON output
+# ============================================================================
+
+@test "step_parse_and_save_servers: saves ips array instead of ip" {
+    load_import_server_list
+
+    DATA_DIR="/tmp/bats_test_import_data"
+    SERVERS_FILE="$DATA_DIR/servers.json"
+    mkdir -p "$DATA_DIR"
+
+    # Override VPD_CONFIG to a temp config with our data_dir
+    VPD_CONFIG="/tmp/bats_test_import_data/vpn-director.json"
+    printf '{"data_dir": "%s"}\n' "$DATA_DIR" > "$VPD_CONFIG"
+
+    VLESS_SERVERS="vless://test-uuid@example.com:443?type=tcp#TestServer"
+
+    step_parse_and_save_servers
+
+    # Check that servers.json has "ips" array, not "ip" string
+    result=$(jq -r '.[0].ips | type' "$SERVERS_FILE")
+    [ "$result" = "array" ]
+
+    # Check that "ip" field does not exist
+    result=$(jq -r '.[0] | has("ip")' "$SERVERS_FILE")
+    [ "$result" = "false" ]
+
+    # Check the resolved IP is in the ips array
+    result=$(jq -r '.[0].ips[0]' "$SERVERS_FILE")
+    [ "$result" = "93.184.216.34" ]
+
+    rm -rf "$DATA_DIR"
+}

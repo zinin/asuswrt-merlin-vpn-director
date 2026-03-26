@@ -61,6 +61,17 @@ load 'test_helper'
     [[ $XRAY_CHAIN == "XRAY_TPROXY" ]]
 }
 
+@test "config: XRAY_EXCLUDE_IPS is loaded from config" {
+    load_config
+    [[ "$XRAY_EXCLUDE_IPS" == *"5.6.7.8"* ]]
+    [[ "$XRAY_EXCLUDE_IPS" == *"10.20.0.0/16"* ]]
+}
+
+@test "config: XRAY_BYPASS_IPSET is loaded from config" {
+    load_config
+    [[ "$XRAY_BYPASS_IPSET" == "TPROXY_BYPASS" ]]
+}
+
 # ============================================================================
 # config.sh: Advanced Tunnel Director variables
 # ============================================================================

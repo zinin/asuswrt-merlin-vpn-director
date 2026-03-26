@@ -6,5 +6,10 @@ case "$*" in
     "get wan1_primary") echo "0" ;;
     "get wan1_ifname")  echo "eth1" ;;
     "get model")        echo "RT-AX88U" ;;
+    "get vpn_client1_addr") echo "openvpn1.example.com" ;;
+    "get vpn_client2_addr") echo "" ;;
+    "get vpn_client3_addr") echo "example.com" ;;
+    "get vpn_client4_addr") echo "" ;;
+    "get vpn_client5_addr") echo "" ;;
     *) echo "" ;;
 esac

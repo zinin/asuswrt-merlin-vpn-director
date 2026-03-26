@@ -25,7 +25,7 @@ Incoming packet from LAN (br0)
 │  pos 1: ──► XRAY_TPROXY chain                               │
 │              │                                               │
 │              ├─ src NOT in XRAY_CLIENTS? ──► RETURN         │
-│              ├─ dst in XRAY_SERVERS? ──► RETURN (avoid loop)│
+│              ├─ dst in TPROXY_BYPASS? ──► RETURN (bypass)   │
 │              ├─ dst is private/local? ──► RETURN            │
 │              ├─ dst in exclude_sets? ──► RETURN             │
 │              │                                               │
@@ -90,7 +90,7 @@ Examples:
 ```
 XRAY_TPROXY chain:
   1. ! --match-set XRAY_CLIENTS src → RETURN
-  2. --match-set XRAY_SERVERS dst → RETURN
+  2. --match-set TPROXY_BYPASS dst → RETURN
   3. -d 127.0.0.0/8 → RETURN (loopback)
   4. -d 10.0.0.0/8 → RETURN (RFC1918)
   5. -d 172.16.0.0/12 → RETURN (RFC1918)
@@ -108,7 +108,7 @@ XRAY_TPROXY chain:
 | IPSet | Type | Purpose |
 |-------|------|---------|
 | `XRAY_CLIENTS` | hash:net | Source IPs to proxy |
-| `XRAY_SERVERS` | hash:net | Xray server IPs (excluded to avoid loops) |
+| `TPROXY_BYPASS` | hash:net | Bypass set (servers + user excludes + OpenVPN endpoints) |
 | `{country}` or `{country}_ext` | hash:net | Country exclusions |
 
 ### Routing
@@ -177,7 +177,7 @@ Config:
 
 Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? Yes
-2. dst in XRAY_SERVERS? No
+2. dst in TPROXY_BYPASS? No
 3. dst private? No
 4. dst in excluded country? No
 5. **TPROXY to Xray port, mark 0x100**

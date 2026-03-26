@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -90,7 +91,7 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 	totalParsed := len(servers)
 
 	for _, s := range servers {
-		if err := s.ResolveIP(); err != nil {
+		if err := s.ResolveIPs(); err != nil {
 			resolveErrors++
 			continue
 		}
@@ -99,7 +100,7 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 			Port:    s.Port,
 			UUID:    s.UUID,
 			Name:    s.Name,
-			IP:      s.IP,
+			IPs:     s.IPs,
 		})
 	}
 
@@ -112,6 +113,26 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 	if err := h.deps.Config.SaveServers(resolved); err != nil {
 		h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(fmt.Sprintf("Save error: %v", err)))
 		return
+	}
+
+	// Auto-sync xray.servers with IPs from all imported servers
+	if vpnCfg, err := h.deps.Config.LoadVPNConfig(); err == nil && vpnCfg != nil {
+		seen := make(map[string]bool)
+		var serverIPs []string
+		for _, s := range resolved {
+			for _, ip := range s.IPs {
+				if ip != "" && !seen[ip] {
+					seen[ip] = true
+					serverIPs = append(serverIPs, ip)
+				}
+			}
+		}
+		sort.Strings(serverIPs)
+		vpnCfg.Xray.Servers = serverIPs
+		if err := h.deps.Config.SaveVPNConfig(vpnCfg); err != nil {
+			h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(
+				fmt.Sprintf("Warning: servers imported but xray.servers sync failed: %v", err)))
+		}
 	}
 
 	// Build response with grouped stats

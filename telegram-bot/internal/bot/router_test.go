@@ -53,6 +53,7 @@ type mockWizardHandler struct {
 }
 
 func (m *mockWizardHandler) Start(chatID int64)                        { m.startCalled = true; m.startChatID = chatID }
+func (m *mockWizardHandler) ClearState(chatID int64)                   {}
 func (m *mockWizardHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
 func (m *mockWizardHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textCalled = true }
 
@@ -63,6 +64,17 @@ type mockXrayHandler struct {
 
 func (m *mockXrayHandler) HandleXray(msg *tgbotapi.Message)          { m.xrayCalled = true }
 func (m *mockXrayHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
+
+type mockExcludeHandler struct {
+	excludeCalled  bool
+	callbackCalled bool
+	textCalled     bool
+}
+
+func (m *mockExcludeHandler) HandleExclude(msg *tgbotapi.Message)      { m.excludeCalled = true }
+func (m *mockExcludeHandler) ClearState(chatID int64)                  {}
+func (m *mockExcludeHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
+func (m *mockExcludeHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textCalled = true }
 
 // Helper to create a message with command entity
 func msgWithCommand(text string) *tgbotapi.Message {
@@ -189,7 +201,8 @@ func TestRouter_RouteMessage_Logs(t *testing.T) {
 
 func TestRouter_RouteMessage_Configure(t *testing.T) {
 	h := &mockWizardHandler{}
-	router := &Router{wizard: h}
+	eh := &mockExcludeHandler{}
+	router := &Router{wizard: h, exclude: eh}
 
 	msg := msgWithCommand("/configure")
 	router.RouteMessage(msg)
@@ -204,9 +217,10 @@ func TestRouter_RouteMessage_Configure(t *testing.T) {
 
 func TestRouter_RouteMessage_UnknownCommand_RoutesToWizardText(t *testing.T) {
 	h := &mockWizardHandler{}
-	router := &Router{wizard: h}
+	eh := &mockExcludeHandler{}
+	router := &Router{wizard: h, exclude: eh}
 
-	// Plain text (no command entity) - should go to wizard text handler
+	// Plain text (no command entity) - should go to both exclude and wizard text handlers
 	msg := &tgbotapi.Message{
 		Text: "192.168.1.100",
 		Chat: &tgbotapi.Chat{ID: 123},
@@ -215,6 +229,9 @@ func TestRouter_RouteMessage_UnknownCommand_RoutesToWizardText(t *testing.T) {
 
 	if !h.textCalled {
 		t.Error("expected wizard.HandleTextInput to be called for plain text")
+	}
+	if !eh.textCalled {
+		t.Error("expected exclude.HandleTextInput to be called for plain text")
 	}
 }
 
@@ -318,5 +335,32 @@ func TestRouter_RouteCallback_Xray(t *testing.T) {
 
 	if !h.callbackCalled {
 		t.Error("expected HandleCallback to be called for xray:select:*")
+	}
+}
+
+func TestRouter_RouteMessage_Exclude(t *testing.T) {
+	h := &mockExcludeHandler{}
+	wh := &mockWizardHandler{}
+	router := &Router{exclude: h, wizard: wh}
+
+	router.RouteMessage(msgWithCommand("/exclude"))
+
+	if !h.excludeCalled {
+		t.Error("expected HandleExclude to be called")
+	}
+}
+
+func TestRouter_RouteCallback_Exclude(t *testing.T) {
+	h := &mockExcludeHandler{}
+	router := &Router{exclude: h}
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "exclip:add",
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}},
+	}
+	router.RouteCallback(cb)
+
+	if !h.callbackCalled {
+		t.Error("expected HandleCallback to be called for exclip:*")
 	}
 }
