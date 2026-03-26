@@ -55,7 +55,9 @@ _cfg_arr_active() {
 TUN_DIR_TUNNELS_JSON=$(jq --argjson p "$_PAUSED_CLIENTS_JSON" \
     '(.tunnel_director.tunnels // {})
      | to_entries
-     | map(.value.clients = ((.value.clients // []) - $p))
+     | map(if (.value | type) == "object"
+           then .value.clients = ((.value.clients // []) - $p)
+           else . end)
      | from_entries' "$VPD_CONFIG_FILE")
 IPS_BDR_DIR=$(_cfg '.data_dir')
 

@@ -213,11 +213,29 @@ func (h *ClientsHandler) handleRemove(chatID int64, msgID int, ip string) {
 		return
 	}
 
-	cfg.Xray.Clients = removeString(cfg.Xray.Clients, ip)
+	// Find which route this IP belongs to, remove only from that route
+	clients := vpnconfig.CollectClients(cfg)
+	route := ""
+	for _, c := range clients {
+		if c.IP == ip {
+			route = c.Route
+			break
+		}
+	}
+	if route == "" {
+		// IP already gone — refresh list
+		text, kb := h.buildClientList(cfg)
+		h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+		return
+	}
 
-	for name, tunnel := range cfg.TunnelDirector.Tunnels {
-		tunnel.Clients = removeString(tunnel.Clients, ip)
-		cfg.TunnelDirector.Tunnels[name] = tunnel
+	if route == "xray" {
+		cfg.Xray.Clients = removeString(cfg.Xray.Clients, ip)
+	} else {
+		if tunnel, ok := cfg.TunnelDirector.Tunnels[route]; ok {
+			tunnel.Clients = removeString(tunnel.Clients, ip)
+			cfg.TunnelDirector.Tunnels[route] = tunnel
+		}
 	}
 
 	cfg.PausedClients = removeString(cfg.PausedClients, ip)
