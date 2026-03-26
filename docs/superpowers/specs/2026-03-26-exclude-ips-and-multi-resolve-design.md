@@ -93,7 +93,7 @@ Endpoints are not stored in config — determined fresh on every apply.
 
 Opens a wizard with inline buttons:
 - Shows current list of IPs/CIDRs from `xray.exclude_ips`
-- `[Add]` button — user enters IP or CIDR as text
+- `[Add]` button — user enters IP or CIDR as text, validated (must be valid IPv4 or IPv4 CIDR)
 - `[Remove X.X.X.X]` button next to each entry
 - On wizard exit — runs `vpn-director.sh apply`
 
@@ -102,8 +102,14 @@ Opens a wizard with inline buttons:
 After country selection (exclude_sets), before final apply:
 - "Add extra IPs/subnets to exclude from proxying?"
 - `[Skip]` or `[Add]`
-- If add — same interface: list + add/remove
+- If add — same interface: list + add/remove (pre-populated with existing `exclude_ips` if any)
 - Result stored in `xray.exclude_ips`
+
+### Status Output
+
+`vpn-director.sh status` (tproxy section) should show the contents of XRAY_SERVERS ipset with source annotations where possible:
+- Total entries in ipset
+- Breakdown: xray servers / user exclude_ips / openvpn endpoints
 
 ### Shell Changes
 
