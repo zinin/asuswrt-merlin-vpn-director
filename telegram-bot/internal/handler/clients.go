@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 
@@ -244,8 +245,138 @@ func removeString(slice []string, s string) []string {
 	}
 	return result
 }
-func (h *ClientsHandler) handleAddStart(chatID int64)                            {}
-func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string)   {}
+func (h *ClientsHandler) handleAddStart(chatID int64) {
+	h.mu.Lock()
+	h.addState[chatID] = ""
+	h.mu.Unlock()
+
+	h.deps.Sender.SendPlain(chatID, "Enter client IP address (e.g. 192.168.50.10 or 192.168.50.0/24):")
+}
 
 // HandleTextInput handles text messages for the add-client flow.
-func (h *ClientsHandler) HandleTextInput(msg *tgbotapi.Message) {}
+func (h *ClientsHandler) HandleTextInput(msg *tgbotapi.Message) {
+	chatID := msg.Chat.ID
+
+	h.mu.Lock()
+	pendingIP, inAddState := h.addState[chatID]
+	h.mu.Unlock()
+
+	if !inAddState || pendingIP != "" {
+		return
+	}
+
+	input := strings.TrimSpace(msg.Text)
+	if input == "" {
+		return
+	}
+
+	if !isValidIPOrCIDR(input) {
+		h.deps.Sender.SendPlain(chatID, "Invalid format. Enter IPv4 (192.168.50.10) or CIDR (192.168.50.0/24):")
+		return
+	}
+
+	// Normalize for duplicate check
+	normalized := normalizeIP(input)
+	cfg, err := h.deps.Config.LoadVPNConfig()
+	if err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
+		return
+	}
+
+	clients := vpnconfig.CollectClients(cfg)
+	for _, c := range clients {
+		if normalizeIP(c.IP) == normalized {
+			h.deps.Sender.SendPlain(chatID, fmt.Sprintf("This IP is already configured for %s", c.Route))
+			return
+		}
+	}
+
+	// Save pending IP and show route selection
+	h.mu.Lock()
+	h.addState[chatID] = input
+	h.mu.Unlock()
+
+	h.showRouteSelection(chatID, input, cfg)
+}
+
+func (h *ClientsHandler) showRouteSelection(chatID int64, ip string, cfg *vpnconfig.VPNDirectorConfig) {
+	kb := telegram.NewKeyboard()
+
+	kb.Button("xray", "clients:route:xray").Row()
+
+	for name := range cfg.TunnelDirector.Tunnels {
+		kb.Button(name, fmt.Sprintf("clients:route:%s", name)).Row()
+	}
+
+	kb.Button("Cancel", "clients:route:cancel").Row()
+
+	text := telegram.EscapeMarkdownV2(fmt.Sprintf("Select route for %s:", ip))
+	h.deps.Sender.SendWithKeyboard(chatID, text, kb.Build())
+}
+
+func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
+	if route == "cancel" {
+		h.ClearState(chatID)
+		h.handleRefreshList(chatID, msgID)
+		return
+	}
+
+	h.mu.Lock()
+	ip, ok := h.addState[chatID]
+	delete(h.addState, chatID)
+	h.mu.Unlock()
+
+	if !ok || ip == "" {
+		return
+	}
+
+	cfg, err := h.deps.Config.LoadVPNConfig()
+	if err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
+		return
+	}
+
+	// Normalize IP: strip /32 for consistent storage
+	ip = normalizeIP(ip)
+
+	if route == "xray" {
+		cfg.Xray.Clients = append(cfg.Xray.Clients, ip)
+	} else {
+		tunnel := cfg.TunnelDirector.Tunnels[route]
+		tunnel.Clients = append(tunnel.Clients, ip)
+		if cfg.TunnelDirector.Tunnels == nil {
+			cfg.TunnelDirector.Tunnels = make(map[string]vpnconfig.TunnelConfig)
+		}
+		cfg.TunnelDirector.Tunnels[route] = tunnel
+	}
+
+	if err := h.deps.Config.SaveVPNConfig(cfg); err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+		return
+	}
+
+	if err := h.deps.VPN.Apply(); err != nil {
+		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Apply error: %v", err))
+		return
+	}
+
+	text, kb := h.buildClientList(cfg)
+	h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+}
+
+func isValidIPOrCIDR(s string) bool {
+	if strings.Contains(s, "/") {
+		ip, _, err := net.ParseCIDR(s)
+		if err != nil {
+			return false
+		}
+		return ip.To4() != nil
+	}
+	ip := net.ParseIP(s)
+	return ip != nil && ip.To4() != nil
+}
+
+// normalizeIP strips /32 suffix from single-host addresses for consistent storage.
+func normalizeIP(ip string) string {
+	return strings.TrimSuffix(ip, "/32")
+}

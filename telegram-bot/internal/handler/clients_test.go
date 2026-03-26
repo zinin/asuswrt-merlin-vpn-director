@@ -262,3 +262,184 @@ func TestClientsHandler_HandleRemoveYes_Tunnel(t *testing.T) {
 		t.Errorf("expected wgc1.clients=[192.168.50.40/32], got %v", wgc1.Clients)
 	}
 }
+
+func TestClientsHandler_HandleAdd_SetsState(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			Xray:           vpnconfig.XrayConfig{Clients: []string{}},
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{Tunnels: map[string]vpnconfig.TunnelConfig{}},
+		},
+	}
+	deps := &Deps{Sender: sender, Config: config}
+	h := NewClientsHandler(deps)
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:add",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if len(sender.plainTexts) == 0 {
+		t.Fatal("expected a plain text message")
+	}
+}
+
+func TestClientsHandler_HandleTextInput_ValidIP(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			Xray: vpnconfig.XrayConfig{Clients: []string{}},
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: map[string]vpnconfig.TunnelConfig{
+					"wgc1": {Clients: []string{}, Exclude: []string{"ru"}},
+				},
+			},
+		},
+	}
+	deps := &Deps{Sender: sender, Config: config}
+	h := NewClientsHandler(deps)
+
+	h.mu.Lock()
+	h.addState[100] = ""
+	h.mu.Unlock()
+
+	msg := &tgbotapi.Message{
+		Text: "192.168.50.10",
+		Chat: &tgbotapi.Chat{ID: 100},
+	}
+	h.HandleTextInput(msg)
+
+	if sender.lastChatID != 100 {
+		t.Errorf("expected chatID 100, got %d", sender.lastChatID)
+	}
+	if len(sender.lastKeyboard.InlineKeyboard) == 0 {
+		t.Error("expected route selection keyboard")
+	}
+}
+
+func TestClientsHandler_HandleTextInput_InvalidIP(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{
+		vpnConfig: &vpnconfig.VPNDirectorConfig{},
+	}
+	deps := &Deps{Sender: sender, Config: config}
+	h := NewClientsHandler(deps)
+
+	h.mu.Lock()
+	h.addState[100] = ""
+	h.mu.Unlock()
+
+	msg := &tgbotapi.Message{
+		Text: "not-an-ip",
+		Chat: &tgbotapi.Chat{ID: 100},
+	}
+	h.HandleTextInput(msg)
+
+	if len(sender.plainTexts) == 0 {
+		t.Fatal("expected error message")
+	}
+}
+
+func TestClientsHandler_HandleTextInput_DuplicateIP(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			Xray: vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}},
+		},
+	}
+	deps := &Deps{Sender: sender, Config: config}
+	h := NewClientsHandler(deps)
+
+	h.mu.Lock()
+	h.addState[100] = ""
+	h.mu.Unlock()
+
+	msg := &tgbotapi.Message{
+		Text: "192.168.50.10",
+		Chat: &tgbotapi.Chat{ID: 100},
+	}
+	h.HandleTextInput(msg)
+
+	if len(sender.plainTexts) == 0 {
+		t.Fatal("expected duplicate error message")
+	}
+}
+
+func TestClientsHandler_HandleAddRoute_Xray(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		Xray: vpnconfig.XrayConfig{Clients: []string{}},
+	}
+	config := &mockConfigClients{vpnConfig: cfg}
+	vpn := &mockVPNClients{}
+	deps := &Deps{Sender: sender, Config: config, VPN: vpn}
+	h := NewClientsHandler(deps)
+
+	h.mu.Lock()
+	h.addState[100] = "192.168.50.10"
+	h.mu.Unlock()
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:route:xray",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if config.savedConfig == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(config.savedConfig.Xray.Clients) != 1 || config.savedConfig.Xray.Clients[0] != "192.168.50.10" {
+		t.Errorf("expected xray.clients=[192.168.50.10], got %v", config.savedConfig.Xray.Clients)
+	}
+}
+
+func TestClientsHandler_HandleAddRoute_Tunnel(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		TunnelDirector: vpnconfig.TunnelDirectorConfig{
+			Tunnels: map[string]vpnconfig.TunnelConfig{
+				"wgc1": {Clients: []string{}, Exclude: []string{"ru"}},
+			},
+		},
+	}
+	config := &mockConfigClients{vpnConfig: cfg}
+	vpn := &mockVPNClients{}
+	deps := &Deps{Sender: sender, Config: config, VPN: vpn}
+	h := NewClientsHandler(deps)
+
+	h.mu.Lock()
+	h.addState[100] = "192.168.50.30"
+	h.mu.Unlock()
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:route:wgc1",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if config.savedConfig == nil {
+		t.Fatal("expected config to be saved")
+	}
+	wgc1 := config.savedConfig.TunnelDirector.Tunnels["wgc1"]
+	// Should be normalized (no /32 suffix)
+	if len(wgc1.Clients) != 1 || wgc1.Clients[0] != "192.168.50.30" {
+		t.Errorf("expected wgc1.clients=[192.168.50.30], got %v", wgc1.Clients)
+	}
+}
+
+func TestClientsHandler_HandleTextInput_NotInAddState(t *testing.T) {
+	sender := &mockSenderClients{}
+	deps := &Deps{Sender: sender}
+	h := NewClientsHandler(deps)
+
+	msg := &tgbotapi.Message{
+		Text: "192.168.50.10",
+		Chat: &tgbotapi.Chat{ID: 100},
+	}
+	h.HandleTextInput(msg)
+
+	if sender.lastChatID != 0 {
+		t.Error("expected no message sent when not in add state")
+	}
+}
