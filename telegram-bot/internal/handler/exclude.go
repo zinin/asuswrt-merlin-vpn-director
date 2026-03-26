@@ -110,6 +110,14 @@ func (h *ExcludeHandler) HandleTextInput(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Check for duplicate
+	for _, existing := range state.GetExcludeIPs() {
+		if existing == input {
+			h.sender.SendPlain(msg.Chat.ID, "This IP/CIDR is already in the list")
+			return
+		}
+	}
+
 	state.AddExcludeIP(input)
 	h.renderUI(msg.Chat.ID, state)
 }

@@ -14,6 +14,8 @@ func TestIsValidIPOrCIDR(t *testing.T) {
 		{"256.1.1.1", false},
 		{"", false},
 		{"::1", false},
+		{"::1/128", false},
+		{"2001:db8::/32", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

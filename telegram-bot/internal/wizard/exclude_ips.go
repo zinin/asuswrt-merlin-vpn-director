@@ -74,6 +74,14 @@ func (s *ExcludeIPsStep) HandleMessage(msg *tgbotapi.Message, state *State) bool
 		return true
 	}
 
+	// Check for duplicate
+	for _, existing := range state.GetExcludeIPs() {
+		if existing == input {
+			s.deps.Sender.SendPlain(msg.Chat.ID, "This IP/CIDR is already in the list")
+			return true
+		}
+	}
+
 	state.AddExcludeIP(input)
 	s.Render(msg.Chat.ID, state)
 	return true
@@ -112,8 +120,11 @@ func (s *ExcludeIPsStep) buildUI(state *State) (string, tgbotapi.InlineKeyboardM
 // IsValidIPOrCIDR validates input as IPv4 or IPv4 CIDR
 func IsValidIPOrCIDR(s string) bool {
 	if strings.Contains(s, "/") {
-		_, _, err := net.ParseCIDR(s)
-		return err == nil
+		ip, _, err := net.ParseCIDR(s)
+		if err != nil {
+			return false
+		}
+		return ip.To4() != nil
 	}
 	ip := net.ParseIP(s)
 	return ip != nil && ip.To4() != nil

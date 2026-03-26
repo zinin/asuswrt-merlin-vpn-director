@@ -39,14 +39,14 @@ In `vpn-director.json`:
 | `advanced.xray.fwmark_mask` | `0x100` | Fwmark mask |
 | `advanced.xray.chain` | `XRAY_TPROXY` | mangle chain name |
 | `advanced.xray.clients_ipset` | `XRAY_CLIENTS` | Source clients ipset |
-| `advanced.xray.servers_ipset` | `XRAY_SERVERS` | Server exclusion ipset |
+| `advanced.xray.bypass_ipset` | `TPROXY_BYPASS` | Bypass ipset (servers + user excludes + OpenVPN endpoints) |
 
 ## IPSets Created
 
 | Name | Type | Purpose |
 |------|------|---------|
 | `XRAY_CLIENTS_IPSET` | `hash:net` | Source clients |
-| `XRAY_SERVERS_IPSET` | `hash:net` | Xray servers (excluded) |
+| `TPROXY_BYPASS` | `hash:net` | Bypass set (servers + user excludes + OpenVPN endpoints) |
 
 ## Chain Structure
 
@@ -121,7 +121,8 @@ resolve_exclude_set "<country_code>"  # Returns: <country_code>_ext if exists, e
 | `_tproxy_setup_routing()` | Create route table + ip rule |
 | `_tproxy_teardown_routing()` | Remove route table + ip rule |
 | `_tproxy_setup_clients_ipset()` | Create and populate client ipset |
-| `_tproxy_setup_servers_ipset()` | Create and populate server ipset |
+| `_tproxy_setup_bypass_ipset()` | Create and populate bypass ipset |
+| `_tproxy_validate_ipv4_cidr()` | Validate IPv4 CIDR format |
 | `_tproxy_setup_iptables()` | Build XRAY_TPROXY chain with exclusions |
 | `_tproxy_teardown_iptables()` | Remove chain and ipsets |
 
