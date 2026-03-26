@@ -26,7 +26,8 @@
 #   _tproxy_setup_routing()         - setup routing table and ip rule
 #   _tproxy_teardown_routing()      - remove routing table and ip rule
 #   _tproxy_setup_clients_ipset()   - setup clients ipset
-#   _tproxy_setup_servers_ipset()   - setup servers ipset
+#   _tproxy_validate_ipv4_cidr()    - validate IPv4 address or CIDR notation
+#   _tproxy_setup_bypass_ipset()    - setup bypass ipset (3-source assembly)
 #   _tproxy_setup_iptables()        - build iptables rules
 #   _tproxy_teardown_iptables()     - remove iptables rules and ipsets
 #   _tproxy_init()                  - initialize module state
@@ -208,35 +209,104 @@ _tproxy_setup_clients_ipset() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _tproxy_setup_servers_ipset - setup servers ipset (to exclude from proxying)
+# _tproxy_validate_ipv4_cidr - validate IPv4 address or CIDR notation
 # -------------------------------------------------------------------------------------------------
+# Returns 0 if valid, 1 otherwise.
+# -------------------------------------------------------------------------------------------------
+_tproxy_validate_ipv4_cidr() {
+    local input="$1"
+    local ip mask
+
+    if [[ $input == */* ]]; then
+        ip="${input%/*}"
+        mask="${input#*/}"
+        # Validate mask is 0-32
+        [[ $mask =~ ^[0-9]+$ ]] || return 1
+        [[ 10#$mask -ge 0 && 10#$mask -le 32 ]] || return 1
+    else
+        ip="$input"
+    fi
+
+    # Validate IPv4: exactly 4 octets, each 0-255
+    [[ $ip =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    local i
+    for i in 1 2 3 4; do
+        local octet="${BASH_REMATCH[$i]}"
+        [[ 10#$octet -le 255 ]] || return 1
+    done
+    return 0
+}
+
+# -------------------------------------------------------------------------------------------------
+# _tproxy_setup_bypass_ipset - setup bypass ipset (3-source assembly)
+# -------------------------------------------------------------------------------------------------
+# Merges three sources into the bypass ipset:
+#   1. Xray server IPs from config (xray.servers)
+#   2. User-defined exclude IPs from config (xray.exclude_ips)
+#   3. OpenVPN client endpoints from nvram (resolved on the fly)
 # Always creates the ipset (even if empty) so iptables rules can reference it.
 # -------------------------------------------------------------------------------------------------
-_tproxy_setup_servers_ipset() {
-    local ip
+_tproxy_setup_bypass_ipset() {
+    local ip addr resolved
     local -a servers_array=()
+    local -a exclude_ips_array=()
+    local xray_count=0 user_count=0 ovpn_count=0
 
     # Create ipset if not exists
-    if ! ipset list "$XRAY_SERVERS_IPSET" >/dev/null 2>&1; then
-        ipset create "$XRAY_SERVERS_IPSET" hash:net
-        log "Created ipset: $XRAY_SERVERS_IPSET"
+    if ! ipset list "$XRAY_BYPASS_IPSET" >/dev/null 2>&1; then
+        ipset create "$XRAY_BYPASS_IPSET" hash:net
+        log "Created ipset: $XRAY_BYPASS_IPSET"
     fi
 
     # Flush and repopulate
-    ipset flush "$XRAY_SERVERS_IPSET"
+    ipset flush "$XRAY_BYPASS_IPSET"
 
-    # Handle empty XRAY_SERVERS gracefully
+    # Source 1: Xray server IPs from config
     if [[ -n ${XRAY_SERVERS:-} ]]; then
         read -ra servers_array <<< "$XRAY_SERVERS"
         for ip in "${servers_array[@]}"; do
             [[ -n $ip ]] || continue
-            ipset add "$XRAY_SERVERS_IPSET" "$ip" 2>/dev/null || {
-                log -l WARN "Failed to add $ip to $XRAY_SERVERS_IPSET"
+            ipset add "$XRAY_BYPASS_IPSET" "$ip" 2>/dev/null && xray_count=$((xray_count + 1)) || {
+                log -l WARN "Failed to add xray server $ip to $XRAY_BYPASS_IPSET"
             }
         done
     fi
 
-    log "Populated $XRAY_SERVERS_IPSET ipset (${#servers_array[@]} entries)"
+    # Source 2: User-defined exclude IPs from config (validated)
+    if [[ -n ${XRAY_EXCLUDE_IPS:-} ]]; then
+        read -ra exclude_ips_array <<< "$XRAY_EXCLUDE_IPS"
+        for ip in "${exclude_ips_array[@]}"; do
+            [[ -n $ip ]] || continue
+            # Validate IPv4 or IPv4 CIDR before adding
+            if ! _tproxy_validate_ipv4_cidr "$ip"; then
+                log -l WARN "Invalid exclude_ips entry '$ip', skipping"
+                continue
+            fi
+            ipset add "$XRAY_BYPASS_IPSET" "$ip" 2>/dev/null && user_count=$((user_count + 1)) || {
+                log -l WARN "Failed to add user exclude IP $ip to $XRAY_BYPASS_IPSET"
+            }
+        done
+    fi
+
+    # Source 3: OpenVPN client endpoints from nvram (resolved on the fly)
+    local slot
+    for slot in 1 2 3 4 5; do
+        addr=$(nvram get "vpn_client${slot}_addr" 2>/dev/null) || addr=""
+        [[ -n $addr ]] || continue
+
+        resolved=$(resolve_ip -a -q "$addr" 2>/dev/null) || {
+            log -l WARN "Cannot resolve OpenVPN endpoint vpn_client${slot}_addr=$addr"
+            continue
+        }
+
+        while IFS= read -r ip; do
+            [[ -n $ip ]] || continue
+            ipset add "$XRAY_BYPASS_IPSET" "$ip" 2>/dev/null && ovpn_count=$((ovpn_count + 1)) || true
+        done <<< "$resolved"
+    done
+
+    local total=$((xray_count + user_count + ovpn_count))
+    log "Populated $XRAY_BYPASS_IPSET ipset: $xray_count xray, $user_count user, $ovpn_count openvpn = $total total"
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -260,9 +330,9 @@ _tproxy_setup_iptables() {
     ensure_fw_rule -q mangle "$XRAY_CHAIN" \
         -m set ! --match-set "$XRAY_CLIENTS_IPSET" src -j RETURN
 
-    # Rule 2: Skip traffic to Xray servers (avoid loops)
+    # Rule 2: Skip traffic to bypass destinations (Xray servers, user excludes, OpenVPN endpoints)
     ensure_fw_rule -q mangle "$XRAY_CHAIN" \
-        -m set --match-set "$XRAY_SERVERS_IPSET" dst -j RETURN
+        -m set --match-set "$XRAY_BYPASS_IPSET" dst -j RETURN
 
     # Rule 3: Skip local destinations (loopback)
     ensure_fw_rule -q mangle "$XRAY_CHAIN" \
@@ -328,7 +398,7 @@ _tproxy_teardown_iptables() {
 
     # Remove ipsets
     ipset destroy "$XRAY_CLIENTS_IPSET" 2>/dev/null || true
-    ipset destroy "$XRAY_SERVERS_IPSET" 2>/dev/null || true
+    ipset destroy "$XRAY_BYPASS_IPSET" 2>/dev/null || true
 
     log "Removed TPROXY iptables rules and ipsets"
 }
@@ -383,8 +453,21 @@ tproxy_status() {
     ipset list "$XRAY_CLIENTS_IPSET" 2>/dev/null || printf 'Ipset %s not found\n' "$XRAY_CLIENTS_IPSET"
     printf '\n'
 
-    printf '%s\n' "--- Servers Ipset ---"
-    ipset list "$XRAY_SERVERS_IPSET" 2>/dev/null || printf 'Ipset %s not found\n' "$XRAY_SERVERS_IPSET"
+    printf '%s\n' "--- Bypass Ipset ---"
+    if ipset list "$XRAY_BYPASS_IPSET" >/dev/null 2>&1; then
+        local total
+        total=$(ipset list "$XRAY_BYPASS_IPSET" | grep -c '^[0-9]' || true)
+        printf 'Ipset %s: %d entries\n' "$XRAY_BYPASS_IPSET" "$total"
+
+        # Show config-based counts
+        local -a srv_arr=() excl_arr=()
+        [[ -n ${XRAY_SERVERS:-} ]] && read -ra srv_arr <<< "$XRAY_SERVERS"
+        [[ -n ${XRAY_EXCLUDE_IPS:-} ]] && read -ra excl_arr <<< "$XRAY_EXCLUDE_IPS"
+        printf '  Sources: %d xray servers, %d user exclude_ips, rest = openvpn endpoints\n' \
+            "${#srv_arr[@]}" "${#excl_arr[@]}"
+    else
+        printf 'Ipset %s not found\n' "$XRAY_BYPASS_IPSET"
+    fi
     printf '\n'
 
     printf '%s\n' "--- Iptables Chain ---"
@@ -463,7 +546,7 @@ tproxy_apply() {
 
     _tproxy_setup_routing
     _tproxy_setup_clients_ipset
-    _tproxy_setup_servers_ipset
+    _tproxy_setup_bypass_ipset
 
     # Soft-fail if iptables setup fails
     if ! _tproxy_setup_iptables; then

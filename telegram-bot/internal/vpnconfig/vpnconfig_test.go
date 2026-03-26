@@ -37,8 +37,8 @@ func TestLoadServers_ValidServers(t *testing.T) {
 	path := filepath.Join(tmpDir, "servers.json")
 
 	jsonContent := `[
-		{"address": "server1.com", "port": 443, "uuid": "uuid1", "name": "Server 1", "ip": "1.2.3.4"},
-		{"address": "server2.com", "port": 443, "uuid": "uuid2", "name": "Server 2", "ip": "5.6.7.8"}
+		{"address": "server1.com", "port": 443, "uuid": "uuid1", "name": "Server 1", "ips": ["1.2.3.4"]},
+		{"address": "server2.com", "port": 443, "uuid": "uuid2", "name": "Server 2", "ips": ["5.6.7.8"]}
 	]`
 
 	err := os.WriteFile(path, []byte(jsonContent), 0644)
@@ -59,8 +59,8 @@ func TestLoadServers_ValidServers(t *testing.T) {
 		t.Errorf("expected first server name 'Server 1', got '%s'", servers[0].Name)
 	}
 
-	if servers[1].IP != "5.6.7.8" {
-		t.Errorf("expected second server IP '5.6.7.8', got '%s'", servers[1].IP)
+	if len(servers[1].IPs) != 1 || servers[1].IPs[0] != "5.6.7.8" {
+		t.Errorf("expected second server IPs ['5.6.7.8'], got %v", servers[1].IPs)
 	}
 }
 
@@ -69,8 +69,8 @@ func TestSaveServers_RoundTrip(t *testing.T) {
 	path := filepath.Join(tmpDir, "servers.json")
 
 	original := []Server{
-		{Address: "server1.com", Port: 443, UUID: "uuid1", Name: "Server 1", IP: "1.2.3.4"},
-		{Address: "server2.com", Port: 8443, UUID: "uuid2", Name: "Server 2", IP: "5.6.7.8"},
+		{Address: "server1.com", Port: 443, UUID: "uuid1", Name: "Server 1", IPs: []string{"1.2.3.4"}},
+		{Address: "server2.com", Port: 8443, UUID: "uuid2", Name: "Server 2", IPs: []string{"5.6.7.8"}},
 	}
 
 	err := SaveServers(path, original)

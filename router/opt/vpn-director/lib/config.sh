@@ -51,6 +51,7 @@ IPS_BDR_DIR=$(_cfg '.data_dir')
 ###################################################################################################
 XRAY_CLIENTS=$(_cfg_arr '.xray.clients')
 XRAY_SERVERS=$(_cfg_arr '.xray.servers')
+XRAY_EXCLUDE_IPS=$(_cfg_arr '.xray.exclude_ips')
 XRAY_EXCLUDE_SETS=$(_cfg_arr '.xray.exclude_sets')
 
 ###################################################################################################
@@ -63,7 +64,7 @@ XRAY_FWMARK=$(_cfg '.advanced.xray.fwmark')
 XRAY_FWMARK_MASK=$(_cfg '.advanced.xray.fwmark_mask')
 XRAY_CHAIN=$(_cfg '.advanced.xray.chain')
 XRAY_CLIENTS_IPSET=$(_cfg '.advanced.xray.clients_ipset')
-XRAY_SERVERS_IPSET=$(_cfg '.advanced.xray.servers_ipset')
+XRAY_BYPASS_IPSET=$(_cfg '.advanced.xray.bypass_ipset')
 
 ###################################################################################################
 # 7. Advanced: Tunnel Director
@@ -85,10 +86,10 @@ BOOT_WAIT_DELAY=$(_cfg '.advanced.boot.wait_delay')
 readonly \
     VPD_CONFIG_FILE \
     TUN_DIR_TUNNELS_JSON IPS_BDR_DIR \
-    XRAY_CLIENTS XRAY_SERVERS XRAY_EXCLUDE_SETS \
+    XRAY_CLIENTS XRAY_SERVERS XRAY_EXCLUDE_IPS XRAY_EXCLUDE_SETS \
     XRAY_TPROXY_PORT XRAY_ROUTE_TABLE XRAY_RULE_PREF \
     XRAY_FWMARK XRAY_FWMARK_MASK XRAY_CHAIN \
-    XRAY_CLIENTS_IPSET XRAY_SERVERS_IPSET \
+    XRAY_CLIENTS_IPSET XRAY_BYPASS_IPSET \
     TUN_DIR_CHAIN TUN_DIR_PREF_BASE \
     TUN_DIR_MARK_MASK TUN_DIR_MARK_SHIFT \
     MIN_BOOT_TIME BOOT_WAIT_DELAY

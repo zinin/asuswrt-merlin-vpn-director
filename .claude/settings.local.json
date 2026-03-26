@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(curl:*)",
+      "WebSearch",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(cd:*)"
+    ]
+  },
+  "outputStyle": "default",
+  "spinnerTipsEnabled": false
+}

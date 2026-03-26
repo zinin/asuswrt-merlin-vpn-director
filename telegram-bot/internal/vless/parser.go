@@ -3,6 +3,7 @@ package vless
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strconv"
@@ -29,11 +30,11 @@ func cleanName(s string) string {
 }
 
 type Server struct {
-	Address string `json:"address"`
-	Port    int    `json:"port"`
-	UUID    string `json:"uuid"`
-	Name    string `json:"name"`
-	IP      string `json:"ip"`
+	Address string   `json:"address"`
+	Port    int      `json:"port"`
+	UUID    string   `json:"uuid"`
+	Name    string   `json:"name"`
+	IPs     []string `json:"ips"`
 }
 
 func ParseURI(uri string) (*Server, error) {
@@ -112,20 +113,21 @@ func ParseURI(uri string) (*Server, error) {
 	}, nil
 }
 
-func (s *Server) ResolveIP() error {
+func (s *Server) ResolveIPs() error {
 	ips, err := net.LookupIP(s.Address)
 	if err != nil {
 		return err
 	}
+	var resolved []string
 	for _, ip := range ips {
 		if ipv4 := ip.To4(); ipv4 != nil {
-			s.IP = ipv4.String()
-			return nil
+			resolved = append(resolved, ipv4.String())
 		}
 	}
-	if len(ips) > 0 {
-		s.IP = ips[0].String()
+	if len(resolved) == 0 {
+		return fmt.Errorf("no IPv4 addresses found for %s", s.Address)
 	}
+	s.IPs = resolved
 	return nil
 }
 

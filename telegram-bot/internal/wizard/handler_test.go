@@ -12,7 +12,7 @@ func TestHandler_Start(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{},
 		}
@@ -38,7 +38,7 @@ func TestHandler_HandleCallback_Cancel(t *testing.T) {
 	t.Run("clears state on cancel", func(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
-			servers:   []vpnconfig.Server{{Name: "Server1", IP: "1.2.3.4"}},
+			servers:   []vpnconfig.Server{{Name: "Server1", IPs: []string{"1.2.3.4"}}},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{},
 		}
 		vpnDirector := &mockVPNDirector{}
@@ -109,7 +109,7 @@ func TestHandler_HandleCallback_Apply(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4", Address: "srv.example.com", Port: 443, UUID: "uuid-1"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}, Address: "srv.example.com", Port: 443, UUID: "uuid-1"},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -159,8 +159,8 @@ func TestHandler_HandleCallback_RoutesToStep(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
-				{Name: "Server2", IP: "5.6.7.8"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
+				{Name: "Server2", IPs: []string{"5.6.7.8"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{},
 		}
@@ -229,7 +229,7 @@ func TestHandler_HandleTextInput(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{},
 		}

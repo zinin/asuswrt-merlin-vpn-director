@@ -118,20 +118,26 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		}
 	}
 
-	// Server IPs (unique, non-empty, sorted)
+	// Server IPs (unique, non-empty, sorted) — collect ALL IPs from ALL servers
 	seen := make(map[string]bool)
 	var serverIPs []string
 	for _, s := range servers {
-		if s.IP != "" && !seen[s.IP] {
-			seen[s.IP] = true
-			serverIPs = append(serverIPs, s.IP)
+		for _, ip := range s.IPs {
+			if ip != "" && !seen[ip] {
+				seen[ip] = true
+				serverIPs = append(serverIPs, ip)
+			}
 		}
 	}
 	sort.Strings(serverIPs)
 
+	// Exclude IPs from wizard state
+	excludeIPs := state.GetExcludeIPs()
+
 	// Update config
 	vpnCfg.Xray.Clients = xrayClients
 	vpnCfg.Xray.ExcludeSets = excl
+	vpnCfg.Xray.ExcludeIPs = excludeIPs
 	vpnCfg.Xray.Servers = serverIPs
 	vpnCfg.TunnelDirector.Tunnels = tunnels
 

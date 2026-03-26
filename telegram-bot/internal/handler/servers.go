@@ -150,7 +150,7 @@ func buildServersPage(servers []vpnconfig.Server, page int) (string, tgbotapi.In
 			i+1,
 			telegram.EscapeMarkdownV2(s.Name),
 			telegram.EscapeMarkdownV2(s.Address),
-			telegram.EscapeMarkdownV2(s.IP)))
+			telegram.EscapeMarkdownV2(strings.Join(s.IPs, ", "))))
 	}
 
 	// Navigation buttons

@@ -8,6 +8,13 @@ case "$host" in
         echo "Name: example.com"
         echo "Address: 93.184.216.34"
         ;;
+    "openvpn1.example.com")
+        echo "Server: 8.8.8.8"
+        echo "Address: 8.8.8.8#53"
+        echo ""
+        echo "Name: openvpn1.example.com"
+        echo "Address: 10.0.0.1"
+        ;;
     "ipv6.example.com")
         echo "Server: 8.8.8.8"
         echo "Address: 8.8.8.8#53"
