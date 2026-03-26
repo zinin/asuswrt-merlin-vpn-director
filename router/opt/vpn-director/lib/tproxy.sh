@@ -454,7 +454,20 @@ tproxy_status() {
     printf '\n'
 
     printf '%s\n' "--- Bypass Ipset ---"
-    ipset list "$XRAY_BYPASS_IPSET" 2>/dev/null || printf 'Ipset %s not found\n' "$XRAY_BYPASS_IPSET"
+    if ipset list "$XRAY_BYPASS_IPSET" >/dev/null 2>&1; then
+        local total
+        total=$(ipset list "$XRAY_BYPASS_IPSET" | grep -c '^[0-9]' || true)
+        printf 'Ipset %s: %d entries\n' "$XRAY_BYPASS_IPSET" "$total"
+
+        # Show config-based counts
+        local -a srv_arr=() excl_arr=()
+        [[ -n ${XRAY_SERVERS:-} ]] && read -ra srv_arr <<< "$XRAY_SERVERS"
+        [[ -n ${XRAY_EXCLUDE_IPS:-} ]] && read -ra excl_arr <<< "$XRAY_EXCLUDE_IPS"
+        printf '  Sources: %d xray servers, %d user exclude_ips, rest = openvpn endpoints\n' \
+            "${#srv_arr[@]}" "${#excl_arr[@]}"
+    else
+        printf 'Ipset %s not found\n' "$XRAY_BYPASS_IPSET"
+    fi
     printf '\n'
 
     printf '%s\n' "--- Iptables Chain ---"
