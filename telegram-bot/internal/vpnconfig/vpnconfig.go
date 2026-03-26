@@ -15,6 +15,7 @@ type Server struct {
 
 type VPNDirectorConfig struct {
 	DataDir        string                 `json:"data_dir"`
+	PausedClients  []string               `json:"paused_clients,omitempty"`
 	TunnelDirector TunnelDirectorConfig   `json:"tunnel_director"`
 	Xray           XrayConfig             `json:"xray"`
 	Advanced       map[string]interface{} `json:"advanced,omitempty"`
