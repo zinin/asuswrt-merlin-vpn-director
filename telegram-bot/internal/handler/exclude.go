@@ -141,11 +141,7 @@ func (h *ExcludeHandler) buildUI(state *wizard.State) (string, tgbotapi.InlineKe
 	}
 
 	kb.Button("Add", "exclip:add")
-	if len(ips) > 0 {
-		kb.Button("Done", "exclip:done")
-	} else {
-		kb.Button("Skip", "exclip:skip")
-	}
+	kb.Button("Done", "exclip:done")
 	kb.Row()
 	kb.Button("Cancel", "exclip:cancel").Row()
 

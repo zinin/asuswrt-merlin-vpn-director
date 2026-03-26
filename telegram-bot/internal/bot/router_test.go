@@ -350,6 +350,21 @@ func TestRouter_RouteMessage_Exclude(t *testing.T) {
 	}
 }
 
+func TestRouter_RouteCallback_WizardExcludeIPs(t *testing.T) {
+	h := &mockWizardHandler{}
+	router := &Router{wizard: h}
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "wexclip:add",
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}},
+	}
+	router.RouteCallback(cb)
+
+	if !h.callbackCalled {
+		t.Error("expected wizard.HandleCallback to be called for wexclip:*")
+	}
+}
+
 func TestRouter_RouteCallback_Exclude(t *testing.T) {
 	h := &mockExcludeHandler{}
 	router := &Router{exclude: h}

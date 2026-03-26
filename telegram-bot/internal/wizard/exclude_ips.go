@@ -29,11 +29,11 @@ func (s *ExcludeIPsStep) Render(chatID int64, state *State) {
 // HandleCallback processes callback button presses for exclude IPs
 func (s *ExcludeIPsStep) HandleCallback(cb *tgbotapi.CallbackQuery, state *State) {
 	data := cb.Data
-	if !strings.HasPrefix(data, "exclip:") {
+	if !strings.HasPrefix(data, "wexclip:") {
 		return
 	}
 
-	action := strings.TrimPrefix(data, "exclip:")
+	action := strings.TrimPrefix(data, "wexclip:")
 
 	switch {
 	case action == "done" || action == "skip":
@@ -92,14 +92,14 @@ func (s *ExcludeIPsStep) buildUI(state *State) (string, tgbotapi.InlineKeyboardM
 	kb := telegram.NewKeyboard()
 
 	for i, ip := range ips {
-		kb.Button(fmt.Sprintf("Remove %s", ip), fmt.Sprintf("exclip:rm:%d", i)).Row()
+		kb.Button(fmt.Sprintf("Remove %s", ip), fmt.Sprintf("wexclip:rm:%d", i)).Row()
 	}
 
-	kb.Button("Add", "exclip:add")
+	kb.Button("Add", "wexclip:add")
 	if len(ips) > 0 {
-		kb.Button("Done", "exclip:done")
+		kb.Button("Done", "wexclip:done")
 	} else {
-		kb.Button("Skip", "exclip:skip")
+		kb.Button("Skip", "wexclip:skip")
 	}
 	kb.Row()
 	kb.Button("Cancel", "cancel").Row()
