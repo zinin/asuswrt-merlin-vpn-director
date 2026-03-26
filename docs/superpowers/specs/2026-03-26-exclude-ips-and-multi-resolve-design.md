@@ -2,7 +2,7 @@
 
 ## Problem
 
-The XRAY_SERVERS ipset prevents TPROXY from intercepting traffic destined to Xray servers (avoiding routing loops). Currently it has three gaps:
+The TPROXY_BYPASS ipset (formerly XRAY_SERVERS) prevents TPROXY from intercepting traffic destined to Xray servers and other exclusions (avoiding routing loops). Currently it has three gaps:
 
 1. **Single IP resolution** — if an Xray server hostname resolves to multiple IPs, only the first is added. Traffic to other IPs creates a loop.
 2. **OpenVPN endpoints not excluded** — traffic to OpenVPN server endpoints (ovpnc1–ovpnc5) can be intercepted by TPROXY, breaking VPN tunnels.
@@ -31,18 +31,22 @@ New field `exclude_ips` in `xray` section of `vpn-director.json`:
 
 ### IPSet Assembly
 
-On `vpn-director.sh apply`, `_tproxy_setup_servers_ipset()` merges three sources into `XRAY_SERVERS` ipset:
+**IPSet renamed:** `XRAY_SERVERS` → `TPROXY_BYPASS` (reflects actual content: all IPs bypassing TPROXY, not just Xray servers). Config field: `advanced.xray.servers_ipset` → `advanced.xray.bypass_ipset`.
+
+On `vpn-director.sh apply`, `_tproxy_setup_bypass_ipset()` merges three sources into `TPROXY_BYPASS` ipset:
 
 ```
-XRAY_SERVERS ipset =
+TPROXY_BYPASS ipset =
     xray.servers[]                          (all Xray server IPs)
-  + xray.exclude_ips[]                      (user-defined static exclusions)
+  + xray.exclude_ips[]                      (user-defined static exclusions, validated)
   + nvram vpn_client{1-5}_addr resolved IPs (OpenVPN endpoints, on-the-fly)
 ```
 
-Logging: `INFO: XRAY_SERVERS ipset: 8 xray, 2 user, 3 openvpn = 13 total`
+Logging: `INFO: TPROXY_BYPASS ipset: 8 xray, 2 user, 3 openvpn = 13 total`
 
 Failed OpenVPN endpoint resolution: WARN, continue (don't block apply).
+
+**Shell-side validation:** All values from `exclude_ips` are validated as IPv4 or IPv4 CIDR before adding to ipset. Invalid entries are logged as WARN and skipped. This protects against manual edits with malformed entries.
 
 ### Multi-IP Resolution
 
@@ -75,6 +79,10 @@ Use `resolve_ip -a` to get all IPv4 addresses. Store as `ips` array in servers.j
 
 Collect all IPs from `ips` field of all servers → `xray.servers`.
 
+#### /import auto-sync
+
+After `/import` updates `servers.json`, automatically sync `xray.servers` in `vpn-director.json` with the new IPs from all servers. This prevents divergence between `servers.json` and `xray.servers` without requiring a separate `/configure` run.
+
 ### OpenVPN Endpoint Auto-Detection
 
 On each `apply` in `_tproxy_setup_servers_ipset()`:
@@ -82,7 +90,7 @@ On each `apply` in `_tproxy_setup_servers_ipset()`:
 1. Read `nvram get vpn_client{1-5}_addr` for each slot
 2. Skip empty values
 3. Resolve all IPv4 via `resolve_ip -a`
-4. Add to XRAY_SERVERS ipset
+4. Add to TPROXY_BYPASS ipset
 5. WARN on resolution failure, don't block
 
 Endpoints are not stored in config — determined fresh on every apply.
@@ -107,7 +115,7 @@ After country selection (exclude_sets), before final apply:
 
 ### Status Output
 
-`vpn-director.sh status` (tproxy section) should show the contents of XRAY_SERVERS ipset with source annotations where possible:
+`vpn-director.sh status` (tproxy section) should show the contents of TPROXY_BYPASS ipset with source annotations where possible:
 - Total entries in ipset
 - Breakdown: xray servers / user exclude_ips / openvpn endpoints
 
@@ -116,7 +124,7 @@ After country selection (exclude_sets), before final apply:
 | File | Change |
 |------|--------|
 | `lib/config.sh` | Add `XRAY_EXCLUDE_IPS=$(_cfg_arr '.xray.exclude_ips')` |
-| `lib/tproxy.sh` `_tproxy_setup_servers_ipset()` | Merge three sources into ipset, log counts per source |
+| `lib/tproxy.sh` `_tproxy_setup_bypass_ipset()` | Merge three sources into TPROXY_BYPASS ipset, validate exclude_ips, log counts per source |
 | `import_server_list.sh` | Use `resolve_ip -a`, save `ips` instead of `ip` |
 | `vpn-director.json.template` | Add `"exclude_ips": []` to xray section |
 
@@ -125,3 +133,5 @@ After country selection (exclude_sets), before final apply:
 - Unit tests for ipset assembly from three sources
 - Test for multi-IP resolution
 - Test for OpenVPN endpoint auto-detection (mock nvram)
+- Test for shell-side validation of invalid exclude_ips entries
+- Test for /import auto-sync of xray.servers

@@ -4,7 +4,7 @@
 
 **Goal:** Add user-defined IP exclusions, auto-detect OpenVPN endpoints, and resolve all IPs for multi-homed Xray servers to prevent TPROXY routing loops.
 
-**Architecture:** Three sources (xray.servers, xray.exclude_ips, OpenVPN nvram endpoints) are merged into a single XRAY_SERVERS ipset at apply time. Go bot gains multi-IP resolution (`ips` field) and a new `/exclude` wizard command. Shell import script uses `resolve_ip -a` for all IPs.
+**Architecture:** Three sources (xray.servers, xray.exclude_ips, OpenVPN nvram endpoints) are merged into a single TPROXY_BYPASS ipset (renamed from XRAY_SERVERS) at apply time. Go bot gains multi-IP resolution (`ips` field) and a new `/exclude` wizard command. Shell import script uses `resolve_ip -a` for all IPs. `/import` auto-syncs xray.servers. Shell validates exclude_ips before adding to ipset.
 
 **Tech Stack:** Bash (shell scripts, Bats tests), Go (Telegram bot)
 
@@ -17,7 +17,7 @@
 | File | Responsibility |
 |------|---------------|
 | `router/opt/vpn-director/lib/config.sh` | Add `XRAY_EXCLUDE_IPS` variable |
-| `router/opt/vpn-director/lib/tproxy.sh` | Merge 3 sources into XRAY_SERVERS ipset, update status |
+| `router/opt/vpn-director/lib/tproxy.sh` | Merge 3 sources into TPROXY_BYPASS ipset (renamed from XRAY_SERVERS), validate exclude_ips, update status |
 | `router/opt/vpn-director/import_server_list.sh` | Multi-IP resolution with `resolve_ip -a` |
 | `router/opt/vpn-director/vpn-director.json.template` | Add `exclude_ips` field |
 | `router/test/fixtures/vpn-director.json` | Add `exclude_ips` to fixture |
@@ -89,7 +89,7 @@ Add `exclude_ips` to `router/test/fixtures/vpn-director.json`:
 
 - [ ] **Step 3: Add XRAY_EXCLUDE_IPS to config.sh**
 
-In `router/opt/vpn-director/lib/config.sh`, add after line 53 (`XRAY_SERVERS`):
+In `router/opt/vpn-director/lib/config.sh`, add after line 53 (`TPROXY_BYPASS`):
 
 ```bash
 XRAY_EXCLUDE_IPS=$(_cfg_arr '.xray.exclude_ips')
@@ -101,7 +101,7 @@ And add to the `readonly` block (line 88):
 readonly \
     VPD_CONFIG_FILE \
     TUN_DIR_TUNNELS_JSON IPS_BDR_DIR \
-    XRAY_CLIENTS XRAY_SERVERS XRAY_EXCLUDE_IPS XRAY_EXCLUDE_SETS \
+    XRAY_CLIENTS TPROXY_BYPASS XRAY_EXCLUDE_IPS XRAY_EXCLUDE_SETS \
 ```
 
 - [ ] **Step 4: Write test for new variable**
@@ -136,7 +136,7 @@ git commit -m "feat: add exclude_ips config field for user-defined IP exclusions
 ## Task 2: Shell — 3-source ipset assembly in tproxy.sh
 
 **Files:**
-- Modify: `router/opt/vpn-director/lib/tproxy.sh:215-240` (`_tproxy_setup_servers_ipset`)
+- Modify: `router/opt/vpn-director/lib/tproxy.sh:215-240` (`_tproxy_setup_bypass_ipset`)
 - Modify: `router/opt/vpn-director/lib/tproxy.sh:364-401` (`tproxy_status`)
 - Modify: `router/test/mocks/nvram`
 - Modify: `router/test/mocks/nslookup`
@@ -206,50 +206,50 @@ Add to `router/test/unit/tproxy.bats`:
 
 ```bash
 # ============================================================================
-# _tproxy_setup_servers_ipset - 3-source ipset assembly
+# _tproxy_setup_bypass_ipset - 3-source ipset assembly
 # ============================================================================
 
-@test "_tproxy_setup_servers_ipset: adds xray servers from config" {
+@test "_tproxy_setup_bypass_ipset: adds xray servers from config" {
     load_tproxy_module
-    _tproxy_setup_servers_ipset
-    # From fixture: XRAY_SERVERS contains "1.2.3.4"
-    run ipset test "$XRAY_SERVERS_IPSET" "1.2.3.4"
+    _tproxy_setup_bypass_ipset
+    # From fixture: TPROXY_BYPASS contains "1.2.3.4"
+    run ipset test "$TPROXY_BYPASS_IPSET" "1.2.3.4"
     assert_success
 }
 
-@test "_tproxy_setup_servers_ipset: adds exclude_ips from config" {
+@test "_tproxy_setup_bypass_ipset: adds exclude_ips from config" {
     load_tproxy_module
-    _tproxy_setup_servers_ipset
+    _tproxy_setup_bypass_ipset
     # From fixture: XRAY_EXCLUDE_IPS contains "5.6.7.8"
-    run ipset test "$XRAY_SERVERS_IPSET" "5.6.7.8"
+    run ipset test "$TPROXY_BYPASS_IPSET" "5.6.7.8"
     assert_success
 }
 
-@test "_tproxy_setup_servers_ipset: adds openvpn endpoints from nvram" {
+@test "_tproxy_setup_bypass_ipset: adds openvpn endpoints from nvram" {
     load_tproxy_module
-    _tproxy_setup_servers_ipset
+    _tproxy_setup_bypass_ipset
     # nvram mock: vpn_client1_addr=openvpn1.example.com -> 10.0.0.1
-    run ipset test "$XRAY_SERVERS_IPSET" "10.0.0.1"
+    run ipset test "$TPROXY_BYPASS_IPSET" "10.0.0.1"
     assert_success
 }
 
-@test "_tproxy_setup_servers_ipset: logs counts per source" {
+@test "_tproxy_setup_bypass_ipset: logs counts per source" {
     load_tproxy_module
-    run _tproxy_setup_servers_ipset
+    run _tproxy_setup_bypass_ipset
     assert_success
     assert_output --partial "xray"
     assert_output --partial "user"
     assert_output --partial "openvpn"
 }
 
-@test "_tproxy_setup_servers_ipset: skips empty nvram entries" {
+@test "_tproxy_setup_bypass_ipset: skips empty nvram entries" {
     load_tproxy_module
     # vpn_client2_addr is empty in mock — should not cause error
-    run _tproxy_setup_servers_ipset
+    run _tproxy_setup_bypass_ipset
     assert_success
 }
 
-@test "_tproxy_setup_servers_ipset: warns on unresolvable openvpn endpoint" {
+@test "_tproxy_setup_bypass_ipset: warns on unresolvable openvpn endpoint" {
     load_tproxy_module
     # Override nvram to return unresolvable host
     nvram() {
@@ -259,7 +259,7 @@ Add to `router/test/unit/tproxy.bats`:
         esac
     }
     export -f nvram
-    run _tproxy_setup_servers_ipset
+    run _tproxy_setup_bypass_ipset
     assert_success
     assert_output --partial "WARN"
 }
@@ -270,33 +270,33 @@ Add to `router/test/unit/tproxy.bats`:
 Run: `bats router/test/unit/tproxy.bats`
 Expected: New tests FAIL (exclude_ips and openvpn not yet implemented).
 
-- [ ] **Step 5: Implement _tproxy_setup_servers_ipset**
+- [ ] **Step 5: Implement _tproxy_setup_bypass_ipset**
 
-Replace `_tproxy_setup_servers_ipset()` in `router/opt/vpn-director/lib/tproxy.sh` (lines 215-240):
+Replace `_tproxy_setup_bypass_ipset()` in `router/opt/vpn-director/lib/tproxy.sh` (lines 215-240):
 
 ```bash
-_tproxy_setup_servers_ipset() {
+_tproxy_setup_bypass_ipset() {
     local ip addr resolved
     local -a servers_array=()
     local -a exclude_ips_array=()
     local xray_count=0 user_count=0 ovpn_count=0
 
     # Create ipset if not exists
-    if ! ipset list "$XRAY_SERVERS_IPSET" >/dev/null 2>&1; then
-        ipset create "$XRAY_SERVERS_IPSET" hash:net
-        log "Created ipset: $XRAY_SERVERS_IPSET"
+    if ! ipset list "$TPROXY_BYPASS_IPSET" >/dev/null 2>&1; then
+        ipset create "$TPROXY_BYPASS_IPSET" hash:net
+        log "Created ipset: $TPROXY_BYPASS_IPSET"
     fi
 
     # Flush and repopulate
-    ipset flush "$XRAY_SERVERS_IPSET"
+    ipset flush "$TPROXY_BYPASS_IPSET"
 
     # Source 1: Xray server IPs from config
-    if [[ -n ${XRAY_SERVERS:-} ]]; then
-        read -ra servers_array <<< "$XRAY_SERVERS"
+    if [[ -n ${TPROXY_BYPASS:-} ]]; then
+        read -ra servers_array <<< "$TPROXY_BYPASS"
         for ip in "${servers_array[@]}"; do
             [[ -n $ip ]] || continue
-            ipset add "$XRAY_SERVERS_IPSET" "$ip" 2>/dev/null && xray_count=$((xray_count + 1)) || {
-                log -l WARN "Failed to add xray server $ip to $XRAY_SERVERS_IPSET"
+            ipset add "$TPROXY_BYPASS_IPSET" "$ip" 2>/dev/null && xray_count=$((xray_count + 1)) || {
+                log -l WARN "Failed to add xray server $ip to $TPROXY_BYPASS_IPSET"
             }
         done
     fi
@@ -306,8 +306,8 @@ _tproxy_setup_servers_ipset() {
         read -ra exclude_ips_array <<< "$XRAY_EXCLUDE_IPS"
         for ip in "${exclude_ips_array[@]}"; do
             [[ -n $ip ]] || continue
-            ipset add "$XRAY_SERVERS_IPSET" "$ip" 2>/dev/null && user_count=$((user_count + 1)) || {
-                log -l WARN "Failed to add user exclude IP $ip to $XRAY_SERVERS_IPSET"
+            ipset add "$TPROXY_BYPASS_IPSET" "$ip" 2>/dev/null && user_count=$((user_count + 1)) || {
+                log -l WARN "Failed to add user exclude IP $ip to $TPROXY_BYPASS_IPSET"
             }
         done
     fi
@@ -325,12 +325,12 @@ _tproxy_setup_servers_ipset() {
 
         while IFS= read -r ip; do
             [[ -n $ip ]] || continue
-            ipset add "$XRAY_SERVERS_IPSET" "$ip" 2>/dev/null && ovpn_count=$((ovpn_count + 1)) || true
+            ipset add "$TPROXY_BYPASS_IPSET" "$ip" 2>/dev/null && ovpn_count=$((ovpn_count + 1)) || true
         done <<< "$resolved"
     done
 
     local total=$((xray_count + user_count + ovpn_count))
-    log "Populated $XRAY_SERVERS_IPSET ipset: $xray_count xray, $user_count user, $ovpn_count openvpn = $total total"
+    log "Populated $TPROXY_BYPASS_IPSET ipset: $xray_count xray, $user_count user, $ovpn_count openvpn = $total total"
 }
 ```
 
@@ -346,7 +346,7 @@ git add router/opt/vpn-director/lib/tproxy.sh \
        router/test/unit/tproxy.bats \
        router/test/mocks/nvram \
        router/test/mocks/nslookup
-git commit -m "feat: merge 3 sources into XRAY_SERVERS ipset (xray, user, openvpn)"
+git commit -m "feat: merge 3 sources into TPROXY_BYPASS ipset (xray, user, openvpn)"
 ```
 
 ---
@@ -1461,19 +1461,19 @@ Replace the servers ipset section (lines 386-388):
 
 ```bash
     printf '%s\n' "--- Servers Ipset ---"
-    if ipset list "$XRAY_SERVERS_IPSET" >/dev/null 2>&1; then
+    if ipset list "$TPROXY_BYPASS_IPSET" >/dev/null 2>&1; then
         local total
-        total=$(ipset list "$XRAY_SERVERS_IPSET" | grep -c '^[0-9]' || true)
-        printf 'Ipset %s: %d entries\n' "$XRAY_SERVERS_IPSET" "$total"
+        total=$(ipset list "$TPROXY_BYPASS_IPSET" | grep -c '^[0-9]' || true)
+        printf 'Ipset %s: %d entries\n' "$TPROXY_BYPASS_IPSET" "$total"
 
         # Show config-based counts
         local -a srv_arr=() excl_arr=()
-        [[ -n ${XRAY_SERVERS:-} ]] && read -ra srv_arr <<< "$XRAY_SERVERS"
+        [[ -n ${TPROXY_BYPASS:-} ]] && read -ra srv_arr <<< "$TPROXY_BYPASS"
         [[ -n ${XRAY_EXCLUDE_IPS:-} ]] && read -ra excl_arr <<< "$XRAY_EXCLUDE_IPS"
         printf '  Sources: %d xray servers, %d user exclude_ips, rest = openvpn endpoints\n' \
             "${#srv_arr[@]}" "${#excl_arr[@]}"
     else
-        printf 'Ipset %s not found\n' "$XRAY_SERVERS_IPSET"
+        printf 'Ipset %s not found\n' "$TPROXY_BYPASS_IPSET"
     fi
     printf '\n'
 ```
