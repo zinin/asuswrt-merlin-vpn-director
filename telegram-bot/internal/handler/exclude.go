@@ -16,6 +16,11 @@ type ExcludeHandler struct {
 	sender  telegram.MessageSender
 }
 
+// ClearState clears any active /exclude session for the given chat
+func (h *ExcludeHandler) ClearState(chatID int64) {
+	h.manager.Clear(chatID)
+}
+
 // NewExcludeHandler creates a new ExcludeHandler
 func NewExcludeHandler(deps *Deps) *ExcludeHandler {
 	return &ExcludeHandler{

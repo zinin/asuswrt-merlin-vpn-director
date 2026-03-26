@@ -53,6 +53,7 @@ type mockWizardHandler struct {
 }
 
 func (m *mockWizardHandler) Start(chatID int64)                        { m.startCalled = true; m.startChatID = chatID }
+func (m *mockWizardHandler) ClearState(chatID int64)                   {}
 func (m *mockWizardHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
 func (m *mockWizardHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textCalled = true }
 
@@ -71,6 +72,7 @@ type mockExcludeHandler struct {
 }
 
 func (m *mockExcludeHandler) HandleExclude(msg *tgbotapi.Message)      { m.excludeCalled = true }
+func (m *mockExcludeHandler) ClearState(chatID int64)                  {}
 func (m *mockExcludeHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
 func (m *mockExcludeHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textCalled = true }
 
@@ -199,7 +201,8 @@ func TestRouter_RouteMessage_Logs(t *testing.T) {
 
 func TestRouter_RouteMessage_Configure(t *testing.T) {
 	h := &mockWizardHandler{}
-	router := &Router{wizard: h}
+	eh := &mockExcludeHandler{}
+	router := &Router{wizard: h, exclude: eh}
 
 	msg := msgWithCommand("/configure")
 	router.RouteMessage(msg)
@@ -337,7 +340,8 @@ func TestRouter_RouteCallback_Xray(t *testing.T) {
 
 func TestRouter_RouteMessage_Exclude(t *testing.T) {
 	h := &mockExcludeHandler{}
-	router := &Router{exclude: h}
+	wh := &mockWizardHandler{}
+	router := &Router{exclude: h, wizard: wh}
 
 	router.RouteMessage(msgWithCommand("/exclude"))
 

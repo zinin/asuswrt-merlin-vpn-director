@@ -117,6 +117,11 @@ func (h *Handler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 	}
 }
 
+// ClearState clears any active /configure wizard session for the given chat
+func (h *Handler) ClearState(chatID int64) {
+	h.manager.Clear(chatID)
+}
+
 // HandleTextInput processes text messages for wizard steps
 func (h *Handler) HandleTextInput(msg *tgbotapi.Message) {
 	state := h.manager.Get(msg.Chat.ID)
@@ -128,17 +133,5 @@ func (h *Handler) HandleTextInput(msg *tgbotapi.Message) {
 	currentStep := state.GetStep()
 	if step, ok := h.steps[currentStep]; ok {
 		step.HandleMessage(msg, state)
-	}
-}
-
-// StartAtStep begins a wizard session at a specific step with optional setup
-func (h *Handler) StartAtStep(chatID int64, step Step, setup func(state *State)) {
-	state := h.manager.Start(chatID)
-	state.SetStep(step)
-	if setup != nil {
-		setup(state)
-	}
-	if stepHandler, ok := h.steps[step]; ok {
-		stepHandler.Render(chatID, state)
 	}
 }

@@ -222,7 +222,7 @@ _tproxy_validate_ipv4_cidr() {
         mask="${input#*/}"
         # Validate mask is 0-32
         [[ $mask =~ ^[0-9]+$ ]] || return 1
-        [[ $mask -ge 0 && $mask -le 32 ]] || return 1
+        [[ 10#$mask -ge 0 && 10#$mask -le 32 ]] || return 1
     else
         ip="$input"
     fi
@@ -232,7 +232,7 @@ _tproxy_validate_ipv4_cidr() {
     local i
     for i in 1 2 3 4; do
         local octet="${BASH_REMATCH[$i]}"
-        [[ $octet -le 255 ]] || return 1
+        [[ 10#$octet -le 255 ]] || return 1
     done
     return 0
 }

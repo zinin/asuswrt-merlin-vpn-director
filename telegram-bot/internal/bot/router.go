@@ -42,6 +42,7 @@ type UpdateRouterHandler interface {
 // WizardRouterHandler defines methods for wizard
 type WizardRouterHandler interface {
 	Start(chatID int64)
+	ClearState(chatID int64)
 	HandleCallback(cb *tgbotapi.CallbackQuery)
 	HandleTextInput(msg *tgbotapi.Message)
 }
@@ -55,6 +56,7 @@ type XrayRouterHandler interface {
 // ExcludeRouterHandler defines methods for exclude command
 type ExcludeRouterHandler interface {
 	HandleExclude(msg *tgbotapi.Message)
+	ClearState(chatID int64)
 	HandleCallback(cb *tgbotapi.CallbackQuery)
 	HandleTextInput(msg *tgbotapi.Message)
 }
@@ -118,10 +120,12 @@ func (r *Router) RouteMessage(msg *tgbotapi.Message) {
 	case "update":
 		r.update.HandleUpdate(msg)
 	case "configure":
+		r.exclude.ClearState(msg.Chat.ID)
 		r.wizard.Start(msg.Chat.ID)
 	case "xray":
 		r.xray.HandleXray(msg)
 	case "exclude":
+		r.wizard.ClearState(msg.Chat.ID)
 		r.exclude.HandleExclude(msg)
 	default:
 		// Non-command messages go to exclude and wizard text handlers.
