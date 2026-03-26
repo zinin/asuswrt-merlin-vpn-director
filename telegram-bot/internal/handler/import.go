@@ -90,7 +90,7 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 	totalParsed := len(servers)
 
 	for _, s := range servers {
-		if err := s.ResolveIP(); err != nil {
+		if err := s.ResolveIPs(); err != nil {
 			resolveErrors++
 			continue
 		}
@@ -99,7 +99,7 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 			Port:    s.Port,
 			UUID:    s.UUID,
 			Name:    s.Name,
-			IP:      s.IP,
+			IPs:     s.IPs,
 		})
 	}
 

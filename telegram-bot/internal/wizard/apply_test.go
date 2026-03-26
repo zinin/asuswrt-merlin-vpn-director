@@ -136,8 +136,8 @@ func TestApplier_Apply_Success(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4", Address: "srv1.example.com", Port: 443, UUID: "uuid-1"},
-				{Name: "Server2", IP: "5.6.7.8", Address: "srv2.example.com", Port: 443, UUID: "uuid-2"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}, Address: "srv1.example.com", Port: 443, UUID: "uuid-1"},
+				{Name: "Server2", IPs: []string{"5.6.7.8"}, Address: "srv2.example.com", Port: 443, UUID: "uuid-2"},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -230,7 +230,7 @@ func TestApplier_Apply_DefaultExclusions(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -308,7 +308,7 @@ func TestApplier_Apply_ClearsStateOnError(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -353,9 +353,9 @@ func TestApplier_Apply_ServerIPs(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "5.6.7.8"},
-				{Name: "Server2", IP: "1.2.3.4"},
-				{Name: "Server3", IP: "5.6.7.8"}, // Duplicate
+				{Name: "Server1", IPs: []string{"5.6.7.8"}},
+				{Name: "Server2", IPs: []string{"1.2.3.4"}},
+				{Name: "Server3", IPs: []string{"5.6.7.8"}}, // Duplicate
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -399,7 +399,7 @@ func TestApplier_Apply_MultipleClientsToSameTunnel(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -449,7 +449,7 @@ func TestApplier_Apply_SkipsXrayGenForInvalidServerIndex(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -504,7 +504,7 @@ func TestApplier_Apply_XrayGenerateError(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -566,7 +566,7 @@ func TestApplier_Apply_SaveConfigError(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -627,7 +627,7 @@ func TestApplier_Apply_RestartXrayError(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -682,7 +682,7 @@ func TestApplier_Apply_ExclusionsSorted(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -728,9 +728,9 @@ func TestApplier_Apply_FiltersEmptyServerIPs(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
-				{Name: "Server2", IP: ""},          // Empty IP
-				{Name: "Server3", IP: "5.6.7.8"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
+				{Name: "Server2", IPs: nil},         // No IPs
+				{Name: "Server3", IPs: []string{"5.6.7.8"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",
@@ -768,7 +768,7 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 		sender := &trackingSender{}
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{
 				DataDir: "/opt/vpn-director/data",

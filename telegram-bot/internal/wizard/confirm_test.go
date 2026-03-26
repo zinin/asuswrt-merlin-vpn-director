@@ -13,8 +13,8 @@ func TestConfirmStep_Render(t *testing.T) {
 		sender := &mockSender{}
 		configStore := &mockConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
-				{Name: "Server2", IP: "5.6.7.8"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
+				{Name: "Server2", IPs: []string{"5.6.7.8"}},
 			},
 		}
 
@@ -97,7 +97,7 @@ func TestConfirmStep_Render_NoClients(t *testing.T) {
 		sender := &mockSender{}
 		configStore := &mockConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 		}
 
@@ -130,7 +130,7 @@ func TestConfirmStep_Render_NoExclusions(t *testing.T) {
 		sender := &mockSender{}
 		configStore := &mockConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 		}
 
@@ -173,7 +173,7 @@ func TestConfirmStep_Render_AllExclusionsFalse(t *testing.T) {
 		sender := &mockSender{}
 		configStore := &mockConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 		}
 
@@ -208,7 +208,7 @@ func TestConfirmStep_Render_InvalidServerIndex(t *testing.T) {
 		sender := &mockSender{}
 		configStore := &mockConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 		}
 
@@ -377,7 +377,7 @@ func TestConfirmStep_ExclusionsSorted(t *testing.T) {
 		sender := &mockSender{}
 		configStore := &mockConfigStore{
 			servers: []vpnconfig.Server{
-				{Name: "Server1", IP: "1.2.3.4"},
+				{Name: "Server1", IPs: []string{"1.2.3.4"}},
 			},
 		}
 

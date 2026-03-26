@@ -39,7 +39,7 @@ func (s *ConfirmStep) Render(chatID int64, state *State) {
 	// Show selected server
 	if serverIndex >= 0 && serverIndex < len(servers) {
 		srv := servers[serverIndex]
-		sb.WriteString(telegram.EscapeMarkdownV2(fmt.Sprintf("Xray server: %s (%s)", srv.Name, srv.IP)) + "\n")
+		sb.WriteString(telegram.EscapeMarkdownV2(fmt.Sprintf("Xray server: %s (%s)", srv.Name, strings.Join(srv.IPs, ", "))) + "\n")
 	}
 
 	// Show exclusions (sorted alphabetically)

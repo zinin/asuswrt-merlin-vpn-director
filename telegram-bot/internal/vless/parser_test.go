@@ -300,9 +300,9 @@ func TestDecodeSubscription_EmptyContent(t *testing.T) {
 	}
 }
 
-// Tests for ResolveIP
+// Tests for ResolveIPs
 
-func TestResolveIP_ValidHostname(t *testing.T) {
+func TestResolveIPs_ValidHostname(t *testing.T) {
 	server := &Server{
 		Address: "google.com",
 		Port:    443,
@@ -310,17 +310,17 @@ func TestResolveIP_ValidHostname(t *testing.T) {
 		Name:    "Test",
 	}
 
-	err := server.ResolveIP()
+	err := server.ResolveIPs()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if server.IP == "" {
-		t.Error("expected IP to be resolved")
+	if len(server.IPs) == 0 {
+		t.Error("expected at least one IP to be resolved")
 	}
 }
 
-func TestResolveIP_InvalidHostname(t *testing.T) {
+func TestResolveIPs_InvalidHostname(t *testing.T) {
 	server := &Server{
 		Address: "this-hostname-definitely-does-not-exist.invalid",
 		Port:    443,
@@ -328,7 +328,7 @@ func TestResolveIP_InvalidHostname(t *testing.T) {
 		Name:    "Test",
 	}
 
-	err := server.ResolveIP()
+	err := server.ResolveIPs()
 	if err == nil {
 		t.Error("expected error for invalid hostname")
 	}

@@ -24,8 +24,8 @@ func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server) error {
 func TestXrayHandler_HandleXray_WithServers(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{
-		{Name: "Germany, Berlin", Address: "de.example.com", IP: "1.1.1.1"},
-		{Name: "USA, New York", Address: "us.example.com", IP: "2.2.2.2"},
+		{Name: "Germany, Berlin", Address: "de.example.com", IPs: []string{"1.1.1.1"}},
+		{Name: "USA, New York", Address: "us.example.com", IPs: []string{"2.2.2.2"}},
 	}
 	config := &mockConfigStore{servers: servers}
 
@@ -84,8 +84,8 @@ func TestXrayHandler_HandleXray_LoadError(t *testing.T) {
 func TestXrayHandler_HandleCallback_Success(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{
-		{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1", IP: "1.1.1.1"},
-		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IP: "2.2.2.2"},
+		{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1", IPs: []string{"1.1.1.1"}},
+		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IPs: []string{"2.2.2.2"}},
 	}
 	config := &mockConfigStore{servers: servers}
 	xray := &mockXrayGenerator{}
@@ -240,9 +240,9 @@ func TestXrayHandler_HandleCallback_InvalidData(t *testing.T) {
 func TestXrayHandler_FullFlow(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{
-		{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1", IP: "1.1.1.1"},
-		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IP: "2.2.2.2"},
-		{Name: "Japan, Tokyo", Address: "jp.example.com", Port: 443, UUID: "uuid3", IP: "3.3.3.3"},
+		{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1", IPs: []string{"1.1.1.1"}},
+		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IPs: []string{"2.2.2.2"}},
+		{Name: "Japan, Tokyo", Address: "jp.example.com", Port: 443, UUID: "uuid3", IPs: []string{"3.3.3.3"}},
 	}
 	config := &mockConfigStore{servers: servers}
 	xray := &mockXrayGenerator{}

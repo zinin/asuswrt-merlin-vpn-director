@@ -194,7 +194,7 @@ func TestBuildServersPageText(t *testing.T) {
 		servers[i] = vpnconfig.Server{
 			Name:    fmt.Sprintf("Server-%d, City", i+1),
 			Address: fmt.Sprintf("srv%d.example.com", i+1),
-			IP:      fmt.Sprintf("1.2.3.%d", i+1),
+			IPs:     []string{fmt.Sprintf("1.2.3.%d", i+1)},
 		}
 	}
 
@@ -258,7 +258,7 @@ func TestBuildServersPageText(t *testing.T) {
 
 func TestBuildServersPage_BoundaryPages(t *testing.T) {
 	servers := []vpnconfig.Server{
-		{Name: "Server-1, City", Address: "srv1.example.com", IP: "1.2.3.1"},
+		{Name: "Server-1, City", Address: "srv1.example.com", IPs: []string{"1.2.3.1"}},
 	}
 
 	// Negative page should be clamped to 0
@@ -298,8 +298,8 @@ func TestServersHandler_HandleServers_Empty(t *testing.T) {
 func TestServersHandler_HandleServers_WithServers(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{
-		{Name: "Germany, Berlin", Address: "de.example.com", IP: "1.1.1.1"},
-		{Name: "USA, New York", Address: "us.example.com", IP: "2.2.2.2"},
+		{Name: "Germany, Berlin", Address: "de.example.com", IPs: []string{"1.1.1.1"}},
+		{Name: "USA, New York", Address: "us.example.com", IPs: []string{"2.2.2.2"}},
 	}
 	config := &mockConfigStore{servers: servers}
 
@@ -351,7 +351,7 @@ func TestServersHandler_HandleCallback_PageNavigation(t *testing.T) {
 		servers[i] = vpnconfig.Server{
 			Name:    fmt.Sprintf("Server-%d, City", i+1),
 			Address: fmt.Sprintf("srv%d.example.com", i+1),
-			IP:      fmt.Sprintf("1.2.3.%d", i+1),
+			IPs:     []string{fmt.Sprintf("1.2.3.%d", i+1)},
 		}
 	}
 	config := &mockConfigStore{servers: servers}

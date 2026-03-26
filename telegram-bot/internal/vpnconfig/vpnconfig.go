@@ -6,11 +6,11 @@ import (
 )
 
 type Server struct {
-	Address string `json:"address"`
-	Port    int    `json:"port"`
-	UUID    string `json:"uuid"`
-	Name    string `json:"name"`
-	IP      string `json:"ip"`
+	Address string   `json:"address"`
+	Port    int      `json:"port"`
+	UUID    string   `json:"uuid"`
+	Name    string   `json:"name"`
+	IPs     []string `json:"ips"`
 }
 
 type VPNDirectorConfig struct {
@@ -35,6 +35,7 @@ type TunnelDirectorConfig struct {
 type XrayConfig struct {
 	Clients     []string `json:"clients"`
 	Servers     []string `json:"servers"`
+	ExcludeIPs  []string `json:"exclude_ips"`
 	ExcludeSets []string `json:"exclude_sets"`
 }
 
