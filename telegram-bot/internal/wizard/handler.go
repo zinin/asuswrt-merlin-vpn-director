@@ -25,15 +25,25 @@ func NewHandler(
 	manager := NewManager()
 
 	// Create step handlers with next callbacks
-	var serverStep, exclusionsStep, clientsStep, confirmStep StepHandler
+	var serverStep, exclusionsStep, excludeIPsStep, clientsStep, confirmStep StepHandler
 
 	// ServerStep -> ExclusionsStep
 	serverStep = NewServerStep(deps, func(chatID int64, state *State) {
 		exclusionsStep.Render(chatID, state)
 	})
 
-	// ExclusionsStep -> ClientsStep
+	// ExclusionsStep -> ExcludeIPsStep
 	exclusionsStep = NewExclusionsStep(deps, func(chatID int64, state *State) {
+		// Pre-populate ExcludeIPs from existing config
+		cfg, err := config.LoadVPNConfig()
+		if err == nil && len(cfg.Xray.ExcludeIPs) > 0 {
+			state.SetExcludeIPs(cfg.Xray.ExcludeIPs)
+		}
+		excludeIPsStep.Render(chatID, state)
+	})
+
+	// ExcludeIPsStep -> ClientsStep
+	excludeIPsStep = NewExcludeIPsStep(deps, func(chatID int64, state *State) {
 		clientsStep.Render(chatID, state)
 	})
 
@@ -50,6 +60,7 @@ func NewHandler(
 		steps: map[Step]StepHandler{
 			StepSelectServer: serverStep,
 			StepExclusions:   exclusionsStep,
+			StepExcludeIPs:   excludeIPsStep,
 			StepClients:      clientsStep,
 			StepClientIP:     clientsStep, // ClientsStep handles IP input
 			StepClientRoute:  clientsStep, // ClientsStep handles route selection
@@ -117,5 +128,17 @@ func (h *Handler) HandleTextInput(msg *tgbotapi.Message) {
 	currentStep := state.GetStep()
 	if step, ok := h.steps[currentStep]; ok {
 		step.HandleMessage(msg, state)
+	}
+}
+
+// StartAtStep begins a wizard session at a specific step with optional setup
+func (h *Handler) StartAtStep(chatID int64, step Step, setup func(state *State)) {
+	state := h.manager.Start(chatID)
+	state.SetStep(step)
+	if setup != nil {
+		setup(state)
+	}
+	if stepHandler, ok := h.steps[step]; ok {
+		stepHandler.Render(chatID, state)
 	}
 }

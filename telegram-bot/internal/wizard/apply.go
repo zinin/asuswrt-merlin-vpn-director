@@ -131,9 +131,13 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	}
 	sort.Strings(serverIPs)
 
+	// Exclude IPs from wizard state
+	excludeIPs := state.GetExcludeIPs()
+
 	// Update config
 	vpnCfg.Xray.Clients = xrayClients
 	vpnCfg.Xray.ExcludeSets = excl
+	vpnCfg.Xray.ExcludeIPs = excludeIPs
 	vpnCfg.Xray.Servers = serverIPs
 	vpnCfg.TunnelDirector.Tunnels = tunnels
 

@@ -52,6 +52,13 @@ type XrayRouterHandler interface {
 	HandleCallback(cb *tgbotapi.CallbackQuery)
 }
 
+// ExcludeRouterHandler defines methods for exclude command
+type ExcludeRouterHandler interface {
+	HandleExclude(msg *tgbotapi.Message)
+	HandleCallback(cb *tgbotapi.CallbackQuery)
+	HandleTextInput(msg *tgbotapi.Message)
+}
+
 // Router routes messages and callbacks to appropriate handlers
 type Router struct {
 	status  StatusRouterHandler
@@ -61,6 +68,7 @@ type Router struct {
 	update  UpdateRouterHandler
 	wizard  WizardRouterHandler
 	xray    XrayRouterHandler
+	exclude ExcludeRouterHandler
 }
 
 // NewRouter creates a new Router with all handlers
@@ -72,6 +80,7 @@ func NewRouter(
 	update UpdateRouterHandler,
 	wizard WizardRouterHandler,
 	xray XrayRouterHandler,
+	exclude ExcludeRouterHandler,
 ) *Router {
 	return &Router{
 		status:  status,
@@ -81,6 +90,7 @@ func NewRouter(
 		update:  update,
 		wizard:  wizard,
 		xray:    xray,
+		exclude: exclude,
 	}
 }
 
@@ -111,8 +121,13 @@ func (r *Router) RouteMessage(msg *tgbotapi.Message) {
 		r.wizard.Start(msg.Chat.ID)
 	case "xray":
 		r.xray.HandleXray(msg)
+	case "exclude":
+		r.exclude.HandleExclude(msg)
 	default:
-		// Non-command messages go to wizard text handler
+		// Non-command messages go to exclude and wizard text handlers.
+		// Both handlers check their own manager state, so double-dispatch
+		// is safe — only one will have active state.
+		r.exclude.HandleTextInput(msg)
 		r.wizard.HandleTextInput(msg)
 	}
 }
@@ -129,6 +144,10 @@ func (r *Router) RouteCallback(cb *tgbotapi.CallbackQuery) {
 	}
 	if strings.HasPrefix(cb.Data, "xray:") {
 		r.xray.HandleCallback(cb)
+		return
+	}
+	if strings.HasPrefix(cb.Data, "exclip:") {
+		r.exclude.HandleCallback(cb)
 		return
 	}
 	r.wizard.HandleCallback(cb)

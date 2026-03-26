@@ -8,6 +8,7 @@ const (
 	StepNone         Step = ""
 	StepSelectServer Step = "select_server"
 	StepExclusions   Step = "exclusions"
+	StepExcludeIPs   Step = "exclude_ips"
 	StepClients      Step = "clients"
 	StepClientIP     Step = "client_ip"
 	StepClientRoute  Step = "client_route"
@@ -25,6 +26,7 @@ type State struct {
 	Step        Step
 	ServerIndex int
 	Exclusions  map[string]bool
+	ExcludeIPs  []string
 	Clients     []ClientRoute
 	PendingIP   string
 }
@@ -72,6 +74,34 @@ func (s *State) RemoveLastClient() {
 	if len(s.Clients) > 0 {
 		s.Clients = s.Clients[:len(s.Clients)-1]
 	}
+}
+
+func (s *State) AddExcludeIP(ip string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ExcludeIPs = append(s.ExcludeIPs, ip)
+}
+
+func (s *State) RemoveExcludeIP(index int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if index >= 0 && index < len(s.ExcludeIPs) {
+		s.ExcludeIPs = append(s.ExcludeIPs[:index], s.ExcludeIPs[index+1:]...)
+	}
+}
+
+func (s *State) SetExcludeIPs(ips []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ExcludeIPs = ips
+}
+
+func (s *State) GetExcludeIPs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := make([]string, len(s.ExcludeIPs))
+	copy(cp, s.ExcludeIPs)
+	return cp
 }
 
 // Thread-safe getters (use RLock for better concurrency)
@@ -137,6 +167,7 @@ func (m *Manager) Start(chatID int64) *State {
 		ChatID:     chatID,
 		Step:       StepSelectServer,
 		Exclusions: make(map[string]bool),
+		ExcludeIPs: []string{},
 		Clients:    []ClientRoute{},
 	}
 	m.states[chatID] = state

@@ -122,9 +122,10 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 	updateHandler := handler.NewUpdateHandler(sender, b.updater, b.devMode, version)
 	wizardHandler := wizard.NewHandler(sender, configSvc, vpnSvc, xraySvc)
 	xrayHandler := handler.NewXrayHandler(deps)
+	excludeHandler := handler.NewExcludeHandler(deps)
 
 	// Create router
-	router := NewRouter(statusHandler, serversHandler, importHandler, miscHandler, updateHandler, wizardHandler, xrayHandler)
+	router := NewRouter(statusHandler, serversHandler, importHandler, miscHandler, updateHandler, wizardHandler, xrayHandler, excludeHandler)
 	b.router = router
 
 	return b, nil
@@ -138,6 +139,7 @@ func (b *Bot) RegisterCommands() error {
 		{Command: "servers", Description: "Server list"},
 		{Command: "import", Description: "Import servers from URL"},
 		{Command: "configure", Description: "Configuration wizard"},
+		{Command: "exclude", Description: "Manage excluded IPs"},
 		{Command: "restart", Description: "Restart VPN Director"},
 		{Command: "stop", Description: "Stop VPN Director"},
 		{Command: "logs", Description: "Recent logs"},
