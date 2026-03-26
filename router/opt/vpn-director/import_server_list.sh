@@ -213,36 +213,42 @@ step_parse_and_save_servers() {
             continue
         fi
 
-        # Resolve IP using common.sh resolve_ip (tries IPv4 first, then IPv6)
-        ip=$(resolve_ip -q "$server" 2>/dev/null) || ip=$(resolve_ip -6 -g -q "$server" 2>/dev/null) || ip=""
+        # Resolve ALL IPv4 addresses for the server hostname
+        ips_raw=$(resolve_ip -a -q "$server" 2>/dev/null) || ips_raw=""
 
-        if [[ -z "$ip" ]]; then
+        if [[ -z "$ips_raw" ]]; then
             log -l DEBUG "SKIP: cannot resolve $server"
             log -l WARN "Cannot resolve $server, skipping"
             continue
         fi
 
-        log -l DEBUG "Resolved: $server -> $ip"
-        printf "  %s (%s) -> %s\n" "$name" "$server" "$ip" >&2
+        ips_oneline=$(printf '%s' "$ips_raw" | tr '\n' ',' | sed 's/,$//')
+        log -l DEBUG "Resolved: $server -> $ips_oneline"
+        printf "  %s (%s) -> %s\n" "$name" "$server" "$ips_oneline" >&2
 
-        # Output JSON line (use jq to properly escape strings)
-        printf '%s\n%s\n%s\n%s\n%s\n' "$server" "$port" "$uuid" "$name" "$ip"
+        # Pack multi-line IPs into comma-separated for the pipe
+        ips_csv=$(printf '%s' "$ips_raw" | tr '\n' ',' | sed 's/,$//')
+        printf '%s\n%s\n%s\n%s\n%s\n' "$server" "$port" "$uuid" "$name" "$ips_csv"
     done | {
         # Build JSON from piped data using jq for proper escaping
         printf '[\n'
         first=1
-        while IFS= read -r server && IFS= read -r port && IFS= read -r uuid && IFS= read -r name && IFS= read -r ip; do
+        while IFS= read -r server && IFS= read -r port && IFS= read -r uuid && IFS= read -r name && IFS= read -r ips_csv; do
             [[ -z "$server" ]] && continue
             [[ "$first" -eq 0 ]] && printf ',\n'
             first=0
+
+            # Build ips JSON array from comma-separated IPs
+            ips_json=$(printf '%s\n' "$ips_csv" | tr ',' '\n' | jq -R 'select(length > 0)' | jq -s .)
+
             # Use jq to create properly escaped JSON object
             jq -n \
                 --arg addr "$server" \
                 --arg port "$port" \
                 --arg uuid "$uuid" \
                 --arg name "$name" \
-                --arg ip "$ip" \
-                '{address: $addr, port: ($port | tonumber), uuid: $uuid, name: $name, ip: $ip}' | tr -d '\n'
+                --argjson ips "$ips_json" \
+                '{address: $addr, port: ($port | tonumber), uuid: $uuid, name: $name, ips: $ips}' | tr -d '\n'
         done
         printf '\n]\n'
     } > "$SERVERS_FILE"
