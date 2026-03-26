@@ -130,3 +130,55 @@ func TestClientsHandler_HandleClients_Empty(t *testing.T) {
 		t.Errorf("expected 1 keyboard row (Add), got %d", len(sender.lastKeyboard.InlineKeyboard))
 	}
 }
+
+func TestClientsHandler_HandlePause(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		Xray: vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}},
+	}
+	config := &mockConfigClients{vpnConfig: cfg}
+	vpn := &mockVPNClients{}
+	deps := &Deps{Sender: sender, Config: config, VPN: vpn}
+	h := NewClientsHandler(deps)
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:pause:192.168.50.10",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if config.savedConfig == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(config.savedConfig.PausedClients) != 1 || config.savedConfig.PausedClients[0] != "192.168.50.10" {
+		t.Errorf("expected paused_clients=[192.168.50.10], got %v", config.savedConfig.PausedClients)
+	}
+	if sender.editMsgID != 42 {
+		t.Errorf("expected message 42 to be edited, got %d", sender.editMsgID)
+	}
+}
+
+func TestClientsHandler_HandleResume(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		Xray:          vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}},
+		PausedClients: []string{"192.168.50.10"},
+	}
+	config := &mockConfigClients{vpnConfig: cfg}
+	vpn := &mockVPNClients{}
+	deps := &Deps{Sender: sender, Config: config, VPN: vpn}
+	h := NewClientsHandler(deps)
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:resume:192.168.50.10",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	h.HandleCallback(cb)
+
+	if config.savedConfig == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(config.savedConfig.PausedClients) != 0 {
+		t.Errorf("expected empty paused_clients, got %v", config.savedConfig.PausedClients)
+	}
+}
