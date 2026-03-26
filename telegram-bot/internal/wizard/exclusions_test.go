@@ -280,9 +280,9 @@ func TestExclusionsStep_HandleCallback_Done(t *testing.T) {
 
 		step.HandleCallback(cb, state)
 
-		// Should advance to clients step
-		if state.GetStep() != StepClients {
-			t.Errorf("expected step %s, got %s", StepClients, state.GetStep())
+		// Should advance to exclude IPs step
+		if state.GetStep() != StepExcludeIPs {
+			t.Errorf("expected step %s, got %s", StepExcludeIPs, state.GetStep())
 		}
 
 		// Should call next callback

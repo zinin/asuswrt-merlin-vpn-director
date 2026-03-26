@@ -40,7 +40,7 @@ func (s *ExclusionsStep) HandleCallback(cb *tgbotapi.CallbackQuery, state *State
 	ex := strings.TrimPrefix(data, "excl:")
 
 	if ex == "done" {
-		state.SetStep(StepClients)
+		state.SetStep(StepExcludeIPs)
 		if s.next != nil {
 			s.next(cb.Message.Chat.ID, state)
 		}
