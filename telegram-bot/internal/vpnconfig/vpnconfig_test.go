@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -241,6 +242,157 @@ func TestSaveVPNDirectorConfig_RoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(loaded.Xray.ExcludeSets, original.Xray.ExcludeSets) {
 		t.Errorf("Xray.ExcludeSets mismatch")
 	}
+}
+
+func TestLoadVPNDirectorConfig_PausedClients(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "vpn-director.json")
+
+	jsonContent := `{
+		"paused_clients": ["192.168.50.10", "192.168.50.20/32"],
+		"tunnel_director": {"tunnels": {}},
+		"xray": {"clients": ["192.168.50.10"], "servers": [], "exclude_sets": []}
+	}`
+
+	err := os.WriteFile(path, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := LoadVPNDirectorConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(cfg.PausedClients) != 2 {
+		t.Fatalf("expected 2 paused clients, got %d", len(cfg.PausedClients))
+	}
+	if cfg.PausedClients[0] != "192.168.50.10" {
+		t.Errorf("expected '192.168.50.10', got '%s'", cfg.PausedClients[0])
+	}
+	if cfg.PausedClients[1] != "192.168.50.20/32" {
+		t.Errorf("expected '192.168.50.20/32', got '%s'", cfg.PausedClients[1])
+	}
+}
+
+func TestSaveVPNDirectorConfig_PausedClients_OmitEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "vpn-director.json")
+
+	cfg := &VPNDirectorConfig{
+		DataDir:        "/data",
+		TunnelDirector: TunnelDirectorConfig{Tunnels: map[string]TunnelConfig{}},
+		Xray:           XrayConfig{Clients: []string{}, Servers: []string{}, ExcludeSets: []string{}},
+	}
+
+	if err := SaveVPNDirectorConfig(path, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read: %v", err)
+	}
+
+	content := string(data)
+	if strings.Contains(content, "paused_clients") {
+		t.Error("expected paused_clients to be omitted when empty")
+	}
+}
+
+func TestCollectClients_MixedRoutes(t *testing.T) {
+	cfg := &VPNDirectorConfig{
+		Xray: XrayConfig{
+			Clients: []string{"192.168.50.10", "192.168.50.20"},
+		},
+		TunnelDirector: TunnelDirectorConfig{
+			Tunnels: map[string]TunnelConfig{
+				"wgc1": {
+					Clients: []string{"192.168.50.30/32", "192.168.50.40/32"},
+				},
+				"ovpnc1": {
+					Clients: []string{"192.168.1.5/32"},
+				},
+			},
+		},
+		PausedClients: []string{"192.168.50.20", "192.168.50.40/32"},
+	}
+
+	clients := CollectClients(cfg)
+
+	if len(clients) != 5 {
+		t.Fatalf("expected 5 clients, got %d", len(clients))
+	}
+
+	// Check xray clients
+	found := findClient(clients, "192.168.50.10", "xray")
+	if found == nil {
+		t.Error("expected 192.168.50.10 -> xray")
+	} else if found.Paused {
+		t.Error("expected 192.168.50.10 to be active")
+	}
+
+	found = findClient(clients, "192.168.50.20", "xray")
+	if found == nil {
+		t.Error("expected 192.168.50.20 -> xray")
+	} else if !found.Paused {
+		t.Error("expected 192.168.50.20 to be paused")
+	}
+
+	// Check tunnel clients
+	found = findClient(clients, "192.168.50.30/32", "wgc1")
+	if found == nil {
+		t.Error("expected 192.168.50.30/32 -> wgc1")
+	} else if found.Paused {
+		t.Error("expected 192.168.50.30/32 to be active")
+	}
+
+	found = findClient(clients, "192.168.50.40/32", "wgc1")
+	if found == nil {
+		t.Error("expected 192.168.50.40/32 -> wgc1")
+	} else if !found.Paused {
+		t.Error("expected 192.168.50.40/32 to be paused")
+	}
+
+	found = findClient(clients, "192.168.1.5/32", "ovpnc1")
+	if found == nil {
+		t.Error("expected 192.168.1.5/32 -> ovpnc1")
+	}
+}
+
+func TestCollectClients_Empty(t *testing.T) {
+	cfg := &VPNDirectorConfig{
+		Xray:           XrayConfig{},
+		TunnelDirector: TunnelDirectorConfig{},
+	}
+
+	clients := CollectClients(cfg)
+	if len(clients) != 0 {
+		t.Errorf("expected 0 clients, got %d", len(clients))
+	}
+}
+
+func TestCollectClients_NoPausedClients(t *testing.T) {
+	cfg := &VPNDirectorConfig{
+		Xray: XrayConfig{Clients: []string{"192.168.50.10"}},
+	}
+
+	clients := CollectClients(cfg)
+	if len(clients) != 1 {
+		t.Fatalf("expected 1 client, got %d", len(clients))
+	}
+	if clients[0].Paused {
+		t.Error("expected client to be active")
+	}
+}
+
+func findClient(clients []ClientInfo, ip, route string) *ClientInfo {
+	for i := range clients {
+		if clients[i].IP == ip && clients[i].Route == route {
+			return &clients[i]
+		}
+	}
+	return nil
 }
 
 func TestSaveVPNDirectorConfig_FormattedJSON(t *testing.T) {

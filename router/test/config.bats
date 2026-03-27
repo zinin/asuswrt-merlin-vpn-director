@@ -103,3 +103,55 @@ load 'test_helper'
     assert_output --partial "Invalid JSON"
     rm -f "$tmp_invalid"
 }
+
+# ============================================================================
+# config.sh: paused_clients filtering
+# ============================================================================
+
+@test "config: paused_clients filters XRAY_CLIENTS" {
+    local tmp_cfg="/tmp/bats_test_paused_config.json"
+    jq '.paused_clients = ["192.168.1.100"]' "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    [[ "$XRAY_CLIENTS" != *"192.168.1.100"* ]]
+    rm -f "$tmp_cfg"
+}
+
+@test "config: paused_clients filters TUN_DIR_TUNNELS_JSON clients" {
+    local tmp_cfg="/tmp/bats_test_paused_td_config.json"
+    jq '.paused_clients = ["192.168.50.0/24"]' "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    local clients
+    clients=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1.clients[]')
+    [[ "$clients" != *"192.168.50.0/24"* ]]
+    rm -f "$tmp_cfg"
+}
+
+@test "config: empty paused_clients changes nothing" {
+    local tmp_cfg="/tmp/bats_test_empty_paused_config.json"
+    jq '.paused_clients = []' "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    [[ "$XRAY_CLIENTS" == *"192.168.1.100"* ]]
+    rm -f "$tmp_cfg"
+}
+
+@test "config: missing paused_clients changes nothing" {
+    load_config
+    [[ "$XRAY_CLIENTS" == *"192.168.1.100"* ]]
+    local clients
+    clients=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1.clients[]')
+    [[ "$clients" == *"192.168.50.0/24"* ]]
+}
+
+@test "config: paused_clients filtering preserves tunnel exclude field" {
+    local tmp_cfg="/tmp/bats_test_paused_exclude_config.json"
+    jq '.paused_clients = ["192.168.50.0/24"]' "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    local exclude
+    exclude=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1.exclude[]')
+    [[ "$exclude" == *"ru"* ]]
+    rm -f "$tmp_cfg"
+}
