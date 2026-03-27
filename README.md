@@ -106,9 +106,11 @@ Remote management via Telegram with username-based authorization.
 | Command | Description |
 |---------|-------------|
 | `/status` | VPN Director status |
+| `/xray` | Switch Xray server |
 | `/servers` | Server list |
 | `/import <url>` | Import VLESS subscription (auto-syncs xray.servers) |
 | `/exclude` | Manage excluded IPs/CIDRs |
+| `/clients` | Manage VPN clients |
 | `/configure` | Configuration wizard |
 | `/restart` | Restart VPN Director |
 | `/stop` | Stop VPN Director |
@@ -119,12 +121,11 @@ Remote management via Telegram with username-based authorization.
 
 ### Configuration Wizard
 
-The `/configure` command starts a 5-step wizard:
+The `/configure` command starts a 4-step wizard:
 1. Select Xray server
-2. Choose country exclusions (by ISO country code)
-3. Exclude specific IPs/CIDRs from proxy
-4. Add LAN clients with routing (Xray/OpenVPN/WireGuard)
-5. Review and apply
+2. Exclude from proxy (country codes, IPs/CIDRs)
+3. Configure LAN clients with routing (Xray/OpenVPN/WireGuard)
+4. Review and apply
 
 ## How It Works
 

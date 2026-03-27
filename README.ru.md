@@ -46,7 +46,7 @@ curl -fsSL \
 - Установленный Entware
 - Необходимые пакеты:
   ```bash
-  opkg install curl coreutils-base64 coreutils-sha256sum gawk jq xray-core procps-ng-pgrep
+  opkg install curl coreutils-base64 coreutils-sha256sum gawk jq xray-core procps-ng-pgrep procps-ng-pkill procps-ng-ps
   ```
 - OpenVPN-клиент, настроенный в интерфейсе роутера (для Tunnel Director)
 
@@ -106,9 +106,11 @@ curl -fsSL \
 | Команда | Описание |
 |---------|----------|
 | `/status` | Статус VPN Director |
+| `/xray` | Переключение сервера Xray |
 | `/servers` | Список серверов |
 | `/import <url>` | Импорт VLESS-подписки (авто-синхронизация xray.servers) |
 | `/exclude` | Управление исключёнными IP/CIDR |
+| `/clients` | Управление VPN-клиентами |
 | `/configure` | Мастер настройки |
 | `/restart` | Перезапустить VPN Director |
 | `/stop` | Остановить VPN Director |
@@ -119,12 +121,11 @@ curl -fsSL \
 
 ### Мастер настройки
 
-Команда `/configure` запускает 5-шаговый мастер:
+Команда `/configure` запускает 4-шаговый мастер:
 1. Выбор сервера Xray
-2. Выбор исключений по странам (по ISO-коду страны)
-3. Исключение конкретных IP/CIDR из прокси
-4. Добавление LAN-клиентов с маршрутизацией (Xray/OpenVPN/WireGuard)
-5. Проверка и применение
+2. Исключение из прокси (коды стран, IP/CIDR)
+3. Настройка LAN-клиентов с маршрутизацией (Xray/OpenVPN/WireGuard)
+4. Проверка и применение
 
 ## Как это работает
 
