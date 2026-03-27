@@ -10,6 +10,9 @@
 .DS_Store
 Thumbs.db
 
+# Dev testdata
+telegram-bot/testdata/dev/vpn-director.json
+
 # Temporary
 *.tmp
 *.bak
