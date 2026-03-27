@@ -71,7 +71,9 @@ func (h *ClientsHandler) buildClientList(cfg *vpnconfig.VPNDirectorConfig) (stri
 		}
 	}
 
-	kb.Button("\u2795 Add client", "clients:add").Row()
+	kb.Button("\u2795 Add client", "clients:add")
+	kb.Button("\u2716 Close", "clients:close")
+	kb.Row()
 
 	return sb.String(), kb.Build()
 }
@@ -104,6 +106,8 @@ func (h *ClientsHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 		h.handleRefreshList(chatID, msgID)
 	case action == "add":
 		h.handleAddStart(chatID)
+	case action == "close":
+		h.handleClose(chatID, msgID)
 	case strings.HasPrefix(action, "route:"):
 		route := strings.TrimPrefix(action, "route:")
 		h.handleAddRoute(chatID, msgID, route)
@@ -175,6 +179,12 @@ func (h *ClientsHandler) handleRefreshList(chatID int64, msgID int) {
 	}
 	text, kb := h.buildClientList(cfg)
 	h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+}
+
+func (h *ClientsHandler) handleClose(chatID int64, msgID int) {
+	h.ClearState(chatID)
+	emptyKb := tgbotapi.InlineKeyboardMarkup{InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{}}
+	h.deps.Sender.EditMessage(chatID, msgID, telegram.EscapeMarkdownV2("Clients menu closed."), emptyKb)
 }
 
 func (h *ClientsHandler) handleRemoveConfirm(chatID int64, msgID int, ip string) {
