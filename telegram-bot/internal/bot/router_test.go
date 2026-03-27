@@ -46,14 +46,15 @@ func (m *mockMiscHandler) HandleVersion(msg *tgbotapi.Message) { m.versionCalled
 func (m *mockMiscHandler) HandleLogs(msg *tgbotapi.Message)    { m.logsCalled = true }
 
 type mockWizardHandler struct {
-	startCalled    bool
-	startChatID    int64
-	callbackCalled bool
-	textCalled     bool
+	startCalled      bool
+	startChatID      int64
+	callbackCalled   bool
+	textCalled       bool
+	clearStateCalled bool
 }
 
 func (m *mockWizardHandler) Start(chatID int64)                        { m.startCalled = true; m.startChatID = chatID }
-func (m *mockWizardHandler) ClearState(chatID int64)                   {}
+func (m *mockWizardHandler) ClearState(chatID int64)                   { m.clearStateCalled = true }
 func (m *mockWizardHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
 func (m *mockWizardHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textCalled = true }
 
@@ -66,15 +67,28 @@ func (m *mockXrayHandler) HandleXray(msg *tgbotapi.Message)          { m.xrayCal
 func (m *mockXrayHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
 
 type mockExcludeHandler struct {
-	excludeCalled  bool
-	callbackCalled bool
-	textCalled     bool
+	excludeCalled    bool
+	callbackCalled   bool
+	textCalled       bool
+	clearStateCalled bool
 }
 
-func (m *mockExcludeHandler) HandleExclude(msg *tgbotapi.Message)      { m.excludeCalled = true }
-func (m *mockExcludeHandler) ClearState(chatID int64)                  {}
+func (m *mockExcludeHandler) HandleExclude(msg *tgbotapi.Message)       { m.excludeCalled = true }
+func (m *mockExcludeHandler) ClearState(chatID int64)                   { m.clearStateCalled = true }
 func (m *mockExcludeHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
 func (m *mockExcludeHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textCalled = true }
+
+type mockClientsHandler struct {
+	clientsCalled    bool
+	callbackCalled   bool
+	textInputCalled  bool
+	clearStateCalled bool
+}
+
+func (m *mockClientsHandler) HandleClients(msg *tgbotapi.Message)       { m.clientsCalled = true }
+func (m *mockClientsHandler) HandleCallback(cb *tgbotapi.CallbackQuery) { m.callbackCalled = true }
+func (m *mockClientsHandler) HandleTextInput(msg *tgbotapi.Message)     { m.textInputCalled = true }
+func (m *mockClientsHandler) ClearState(chatID int64)                   { m.clearStateCalled = true }
 
 // Helper to create a message with command entity
 func msgWithCommand(text string) *tgbotapi.Message {
@@ -202,7 +216,8 @@ func TestRouter_RouteMessage_Logs(t *testing.T) {
 func TestRouter_RouteMessage_Configure(t *testing.T) {
 	h := &mockWizardHandler{}
 	eh := &mockExcludeHandler{}
-	router := &Router{wizard: h, exclude: eh}
+	ch := &mockClientsHandler{}
+	router := &Router{wizard: h, exclude: eh, clients: ch}
 
 	msg := msgWithCommand("/configure")
 	router.RouteMessage(msg)
@@ -218,15 +233,19 @@ func TestRouter_RouteMessage_Configure(t *testing.T) {
 func TestRouter_RouteMessage_UnknownCommand_RoutesToWizardText(t *testing.T) {
 	h := &mockWizardHandler{}
 	eh := &mockExcludeHandler{}
-	router := &Router{wizard: h, exclude: eh}
+	ch := &mockClientsHandler{}
+	router := &Router{wizard: h, exclude: eh, clients: ch}
 
-	// Plain text (no command entity) - should go to both exclude and wizard text handlers
+	// Plain text (no command entity) - should go to clients, exclude, and wizard text handlers
 	msg := &tgbotapi.Message{
 		Text: "192.168.1.100",
 		Chat: &tgbotapi.Chat{ID: 123},
 	}
 	router.RouteMessage(msg)
 
+	if !ch.textInputCalled {
+		t.Error("expected clients.HandleTextInput to be called for plain text")
+	}
 	if !h.textCalled {
 		t.Error("expected wizard.HandleTextInput to be called for plain text")
 	}
@@ -341,7 +360,8 @@ func TestRouter_RouteCallback_Xray(t *testing.T) {
 func TestRouter_RouteMessage_Exclude(t *testing.T) {
 	h := &mockExcludeHandler{}
 	wh := &mockWizardHandler{}
-	router := &Router{exclude: h, wizard: wh}
+	ch := &mockClientsHandler{}
+	router := &Router{exclude: h, wizard: wh, clients: ch}
 
 	router.RouteMessage(msgWithCommand("/exclude"))
 
@@ -377,5 +397,49 @@ func TestRouter_RouteCallback_Exclude(t *testing.T) {
 
 	if !h.callbackCalled {
 		t.Error("expected HandleCallback to be called for exclip:*")
+	}
+}
+
+func TestRouter_RouteMessage_Clients(t *testing.T) {
+	h := &mockClientsHandler{}
+	eh := &mockExcludeHandler{}
+	wh := &mockWizardHandler{}
+	router := &Router{clients: h, exclude: eh, wizard: wh}
+
+	router.RouteMessage(msgWithCommand("/clients"))
+
+	if !h.clientsCalled {
+		t.Error("expected HandleClients to be called")
+	}
+}
+
+func TestRouter_RouteCallback_Clients(t *testing.T) {
+	h := &mockClientsHandler{}
+	router := &Router{clients: h}
+
+	cb := &tgbotapi.CallbackQuery{
+		Data:    "clients:pause:192.168.50.10",
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}},
+	}
+	router.RouteCallback(cb)
+
+	if !h.callbackCalled {
+		t.Error("expected HandleCallback to be called")
+	}
+}
+
+func TestRouter_RouteMessage_Clients_ClearsOtherStates(t *testing.T) {
+	clients := &mockClientsHandler{}
+	exclude := &mockExcludeHandler{}
+	wizard := &mockWizardHandler{}
+	router := &Router{clients: clients, exclude: exclude, wizard: wizard}
+
+	router.RouteMessage(msgWithCommand("/clients"))
+
+	if !exclude.clearStateCalled {
+		t.Error("expected exclude ClearState to be called")
+	}
+	if !wizard.clearStateCalled {
+		t.Error("expected wizard ClearState to be called")
 	}
 }

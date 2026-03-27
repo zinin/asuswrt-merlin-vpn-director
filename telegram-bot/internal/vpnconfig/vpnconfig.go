@@ -3,6 +3,7 @@ package vpnconfig
 import (
 	"encoding/json"
 	"os"
+	"sort"
 )
 
 type Server struct {
@@ -15,6 +16,7 @@ type Server struct {
 
 type VPNDirectorConfig struct {
 	DataDir        string                 `json:"data_dir"`
+	PausedClients  []string               `json:"paused_clients,omitempty"`
 	TunnelDirector TunnelDirectorConfig   `json:"tunnel_director"`
 	Xray           XrayConfig             `json:"xray"`
 	Advanced       map[string]interface{} `json:"advanced,omitempty"`
@@ -37,6 +39,51 @@ type XrayConfig struct {
 	Servers     []string `json:"servers"`
 	ExcludeIPs  []string `json:"exclude_ips"`
 	ExcludeSets []string `json:"exclude_sets"`
+}
+
+// ClientInfo represents a VPN client with its route and pause status.
+type ClientInfo struct {
+	IP     string
+	Route  string
+	Paused bool
+}
+
+// CollectClients builds a unified list of all clients from xray and tunnel_director sections.
+func CollectClients(cfg *VPNDirectorConfig) []ClientInfo {
+	paused := make(map[string]bool, len(cfg.PausedClients))
+	for _, ip := range cfg.PausedClients {
+		paused[ip] = true
+	}
+
+	var clients []ClientInfo
+
+	for _, ip := range cfg.Xray.Clients {
+		clients = append(clients, ClientInfo{
+			IP:     ip,
+			Route:  "xray",
+			Paused: paused[ip],
+		})
+	}
+
+	// Sort tunnel names for deterministic order
+	tunnelNames := make([]string, 0, len(cfg.TunnelDirector.Tunnels))
+	for name := range cfg.TunnelDirector.Tunnels {
+		tunnelNames = append(tunnelNames, name)
+	}
+	sort.Strings(tunnelNames)
+
+	for _, name := range tunnelNames {
+		tunnel := cfg.TunnelDirector.Tunnels[name]
+		for _, ip := range tunnel.Clients {
+			clients = append(clients, ClientInfo{
+				IP:     ip,
+				Route:  name,
+				Paused: paused[ip],
+			})
+		}
+	}
+
+	return clients
 }
 
 func LoadServers(path string) ([]Server, error) {

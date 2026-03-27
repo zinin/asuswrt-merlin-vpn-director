@@ -40,16 +40,31 @@ fi
 _cfg() { jq -r "$1 // empty" "$VPD_CONFIG_FILE"; }
 _cfg_arr() { jq -r "$1 // [] | .[]" "$VPD_CONFIG_FILE" | tr '\n' ' ' | sed 's/ $//'; }
 
+# Paused clients mask: filtered from all clients arrays
+_PAUSED_CLIENTS_JSON=$(jq -c '.paused_clients // []' "$VPD_CONFIG_FILE")
+
+# Array loader that subtracts paused_clients
+_cfg_arr_active() {
+    jq -r --argjson p "$_PAUSED_CLIENTS_JSON" \
+        "($1 // []) - \$p | .[]" "$VPD_CONFIG_FILE" | tr '\n' ' ' | sed 's/ $//';
+}
+
 ###################################################################################################
 # 4. Tunnel Director variables
 ###################################################################################################
-TUN_DIR_TUNNELS_JSON=$(_cfg '.tunnel_director.tunnels // {}')
+TUN_DIR_TUNNELS_JSON=$(jq --argjson p "$_PAUSED_CLIENTS_JSON" \
+    '(.tunnel_director.tunnels // {})
+     | to_entries
+     | map(if (.value | type) == "object"
+           then .value.clients = ((.value.clients // []) - $p)
+           else . end)
+     | from_entries' "$VPD_CONFIG_FILE")
 IPS_BDR_DIR=$(_cfg '.data_dir')
 
 ###################################################################################################
 # 5. Xray variables
 ###################################################################################################
-XRAY_CLIENTS=$(_cfg_arr '.xray.clients')
+XRAY_CLIENTS=$(_cfg_arr_active '.xray.clients')
 XRAY_SERVERS=$(_cfg_arr '.xray.servers')
 XRAY_EXCLUDE_IPS=$(_cfg_arr '.xray.exclude_ips')
 XRAY_EXCLUDE_SETS=$(_cfg_arr '.xray.exclude_sets')

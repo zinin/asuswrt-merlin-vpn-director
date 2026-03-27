@@ -61,6 +61,14 @@ type ExcludeRouterHandler interface {
 	HandleTextInput(msg *tgbotapi.Message)
 }
 
+// ClientsRouterHandler defines methods for clients command
+type ClientsRouterHandler interface {
+	HandleClients(msg *tgbotapi.Message)
+	ClearState(chatID int64)
+	HandleCallback(cb *tgbotapi.CallbackQuery)
+	HandleTextInput(msg *tgbotapi.Message)
+}
+
 // Router routes messages and callbacks to appropriate handlers
 type Router struct {
 	status  StatusRouterHandler
@@ -71,6 +79,7 @@ type Router struct {
 	wizard  WizardRouterHandler
 	xray    XrayRouterHandler
 	exclude ExcludeRouterHandler
+	clients ClientsRouterHandler
 }
 
 // NewRouter creates a new Router with all handlers
@@ -83,6 +92,7 @@ func NewRouter(
 	wizard WizardRouterHandler,
 	xray XrayRouterHandler,
 	exclude ExcludeRouterHandler,
+	clients ClientsRouterHandler,
 ) *Router {
 	return &Router{
 		status:  status,
@@ -93,6 +103,7 @@ func NewRouter(
 		wizard:  wizard,
 		xray:    xray,
 		exclude: exclude,
+		clients: clients,
 	}
 }
 
@@ -121,16 +132,23 @@ func (r *Router) RouteMessage(msg *tgbotapi.Message) {
 		r.update.HandleUpdate(msg)
 	case "configure":
 		r.exclude.ClearState(msg.Chat.ID)
+		r.clients.ClearState(msg.Chat.ID)
 		r.wizard.Start(msg.Chat.ID)
 	case "xray":
 		r.xray.HandleXray(msg)
 	case "exclude":
 		r.wizard.ClearState(msg.Chat.ID)
+		r.clients.ClearState(msg.Chat.ID)
 		r.exclude.HandleExclude(msg)
+	case "clients":
+		r.exclude.ClearState(msg.Chat.ID)
+		r.wizard.ClearState(msg.Chat.ID)
+		r.clients.HandleClients(msg)
 	default:
-		// Non-command messages go to exclude and wizard text handlers.
-		// Both handlers check their own manager state, so double-dispatch
+		// Non-command messages go to clients, exclude, and wizard text handlers.
+		// All handlers check their own manager state, so multi-dispatch
 		// is safe — only one will have active state.
+		r.clients.HandleTextInput(msg)
 		r.exclude.HandleTextInput(msg)
 		r.wizard.HandleTextInput(msg)
 	}
@@ -152,6 +170,10 @@ func (r *Router) RouteCallback(cb *tgbotapi.CallbackQuery) {
 	}
 	if strings.HasPrefix(cb.Data, "exclip:") {
 		r.exclude.HandleCallback(cb)
+		return
+	}
+	if strings.HasPrefix(cb.Data, "clients:") {
+		r.clients.HandleCallback(cb)
 		return
 	}
 	r.wizard.HandleCallback(cb)
