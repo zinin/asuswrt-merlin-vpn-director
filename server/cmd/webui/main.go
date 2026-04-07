@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -67,6 +68,12 @@ func main() {
 	if vpnCfg.WebUI.Port == 0 {
 		vpnCfg.WebUI.Port = 8444
 	}
+	if vpnCfg.WebUI.CertFile == "" {
+		vpnCfg.WebUI.CertFile = "/opt/vpn-director/certs/server.crt"
+	}
+	if vpnCfg.WebUI.KeyFile == "" {
+		vpnCfg.WebUI.KeyFile = "/opt/vpn-director/certs/server.key"
+	}
 
 	// Auto-generate JWT secret if empty
 	if vpnCfg.WebUI.JWTSecret == "" {
@@ -88,8 +95,14 @@ func main() {
 	if *devFlag {
 		executor = devmode.NewExecutor()
 	}
-	configSvc := service.NewConfigService(p.ScriptsDir, p.DefaultDataDir)
-	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, executor)
+
+	// Derive scripts directory from --config path so runtime reads/writes
+	// honour the flag instead of hardcoding /opt/vpn-director.
+	scriptsDir := filepath.Dir(*configPath)
+	defaultDataDir := filepath.Join(scriptsDir, "data")
+
+	configSvc := service.NewConfigService(scriptsDir, defaultDataDir)
+	vpnSvc := service.NewVPNDirectorService(scriptsDir, executor)
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
 	networkSvc := service.NewNetworkService(executor)
 	logSvc := service.NewLogService(executor)

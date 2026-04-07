@@ -180,6 +180,9 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		if err := deps.Config.SaveServers(resolved); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to save servers")
 			return
