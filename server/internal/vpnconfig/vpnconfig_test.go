@@ -395,6 +395,80 @@ func findClient(clients []ClientInfo, ip, route string) *ClientInfo {
 	return nil
 }
 
+func TestLoadVPNDirectorConfig_WithWebUI(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "vpn-director.json")
+
+	jsonContent := `{
+		"data_dir": "/opt/vpn-director/data",
+		"webui": {
+			"port": 8444,
+			"cert_file": "/opt/vpn-director/certs/server.crt",
+			"key_file": "/opt/vpn-director/certs/server.key",
+			"jwt_secret": "supersecret123"
+		},
+		"tunnel_director": {"tunnels": {}},
+		"xray": {"clients": [], "servers": [], "exclude_sets": []}
+	}`
+
+	err := os.WriteFile(path, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := LoadVPNDirectorConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.WebUI.Port != 8444 {
+		t.Errorf("expected WebUI.Port 8444, got %d", cfg.WebUI.Port)
+	}
+	if cfg.WebUI.CertFile != "/opt/vpn-director/certs/server.crt" {
+		t.Errorf("expected WebUI.CertFile '/opt/vpn-director/certs/server.crt', got '%s'", cfg.WebUI.CertFile)
+	}
+	if cfg.WebUI.KeyFile != "/opt/vpn-director/certs/server.key" {
+		t.Errorf("expected WebUI.KeyFile '/opt/vpn-director/certs/server.key', got '%s'", cfg.WebUI.KeyFile)
+	}
+	if cfg.WebUI.JWTSecret != "supersecret123" {
+		t.Errorf("expected WebUI.JWTSecret 'supersecret123', got '%s'", cfg.WebUI.JWTSecret)
+	}
+}
+
+func TestLoadVPNDirectorConfig_WithoutWebUI(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "vpn-director.json")
+
+	jsonContent := `{
+		"data_dir": "/opt/vpn-director/data",
+		"tunnel_director": {"tunnels": {}},
+		"xray": {"clients": [], "servers": [], "exclude_sets": []}
+	}`
+
+	err := os.WriteFile(path, []byte(jsonContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	cfg, err := LoadVPNDirectorConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.WebUI.Port != 0 {
+		t.Errorf("expected WebUI.Port 0 when webui section absent, got %d", cfg.WebUI.Port)
+	}
+	if cfg.WebUI.CertFile != "" {
+		t.Errorf("expected WebUI.CertFile '' when webui section absent, got '%s'", cfg.WebUI.CertFile)
+	}
+	if cfg.WebUI.KeyFile != "" {
+		t.Errorf("expected WebUI.KeyFile '' when webui section absent, got '%s'", cfg.WebUI.KeyFile)
+	}
+	if cfg.WebUI.JWTSecret != "" {
+		t.Errorf("expected WebUI.JWTSecret '' when webui section absent, got '%s'", cfg.WebUI.JWTSecret)
+	}
+}
+
 func TestSaveVPNDirectorConfig_FormattedJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "vpn-director.json")

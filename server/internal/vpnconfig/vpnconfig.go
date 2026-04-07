@@ -14,8 +14,16 @@ type Server struct {
 	IPs     []string `json:"ips"`
 }
 
+type WebUIConfig struct {
+	Port      int    `json:"port,omitempty"`
+	CertFile  string `json:"cert_file,omitempty"`
+	KeyFile   string `json:"key_file,omitempty"`
+	JWTSecret string `json:"jwt_secret,omitempty"`
+}
+
 type VPNDirectorConfig struct {
 	DataDir        string                 `json:"data_dir"`
+	WebUI          WebUIConfig            `json:"webui,omitempty"`
 	PausedClients  []string               `json:"paused_clients,omitempty"`
 	TunnelDirector TunnelDirectorConfig   `json:"tunnel_director"`
 	Xray           XrayConfig             `json:"xray"`
