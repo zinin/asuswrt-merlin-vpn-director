@@ -10,6 +10,28 @@
 
 **Design spec:** `docs/superpowers/specs/2026-04-07-webui-design.md`
 
+> **IMPORTANT — Design Review Sync (Iterations 1-2):**
+> The code examples in this plan were written before design review. During implementation, the following must be adjusted to match the updated design spec:
+> - **JWT:** Use `golang-jwt/jwt/v5` library (not hand-rolled HMAC)
+> - **Router:** Add routes for `POST /api/apply`, `POST /api/ipsets/update`, `POST /api/clients/pause`, `POST /api/clients/resume`
+> - **CIDR in DELETE:** Use query parameter `?ip=...` (not path parameter `{ip}`), update handlers to use `r.URL.Query().Get("ip")` and Vue api.ts to use `params: { ip }`
+> - **Rate limiting:** Add in-memory rate limiter middleware for `/api/login`
+> - **Config redaction:** Filter `jwt_secret` from `GET /api/config` response
+> - **SPA fallback:** `spaHandler` must check file existence and fall back to `index.html`
+> - **Import handler:** Fully implement using `internal/vless/parser.go` (not stub)
+> - **Update handler:** Fully implement using `internal/updater/` package
+> - **flock():** Add `syscall.Flock()` to `ConfigService` for concurrent access protection
+> - **Operation mutex:** Add `sync.Mutex` in webui for serializing shell operations
+> - **Crypt:** Support `$1$/$5$/$6$` hash formats in pure Go (no cgo)
+> - **jwt_secret:** Auto-generate via `crypto/rand` if empty at startup
+> - **TLS cert:** Generate with SAN (IP + hostname) in installer
+> - **Import URL:** Validate HTTPS-only, deny private IPs, 10s timeout, 1MB limit
+> - **Log sources:** Add "xray" to logPaths map
+> - **removeString:** Use exact `==` comparison, not `strings.EqualFold`
+> - **ClientInfo.paused:** Wire up `paused_clients` from config in `CollectClients()`
+> - **Go module rename (Task 1):** Mass-update import paths across all files
+> - **Init script:** Use `PREARGS=""` (rc.func handles daemonization)
+
 ---
 
 ## File Structure

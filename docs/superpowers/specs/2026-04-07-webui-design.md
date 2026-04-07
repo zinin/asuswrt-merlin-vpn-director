@@ -29,7 +29,7 @@ Browser / Mobile App
 
 Нет file polling, нет custom_settings, нет service-event — стандартный HTTP request-response.
 
-**Concurrency:** Telegram bot and Web UI both read/write `vpn-director.json`. File locking via `flock()` on a lockfile (`/tmp/vpn-director.lock`) protects against concurrent writes. Implemented in shared `service.ConfigService` (both binaries already use it).
+**Concurrency:** Telegram bot and Web UI both read/write `vpn-director.json`. File locking via `syscall.Flock()` on a lockfile (`/tmp/vpn-director.lock`) must be added to shared `service.ConfigService` — exclusive lock for writes, shared lock for reads. Both binaries use ConfigService, so locking is transparent. A `sync.Mutex` in the webui process also serializes mutating shell operations (apply, restart, stop) to prevent overlapping vpn-director.sh calls.
 
 ### Why Not Merlin Addon
 
@@ -132,9 +132,13 @@ Merlin Addons API (file polling через httpd, custom_settings с лимит�
 ### /etc/shadow Verification
 
 ```
-/etc/shadow содержит SHA-256 hash ($5$salt$hash) пароля admin.
-Go использует crypt() для сравнения: crypt(input_password, stored_salt) == stored_hash.
-Универсально работает на всех моделях роутеров.
+/etc/shadow contains a crypt hash (MCF format) of the admin password.
+Go verifies in pure Go (no cgo) by detecting the hash prefix:
+  $1$  → MD5 crypt
+  $5$  → SHA-256 crypt
+  $6$  → SHA-512 crypt
+Use a pure-Go crypt library (e.g. github.com/tredoe/osutil/user/crypt)
+that supports all common MCF formats. No libc dependency — cross-compiles cleanly.
 ```
 
 ## HTTPS
@@ -144,6 +148,7 @@ Go использует crypt() для сравнения: crypt(input_password,
 - Пути настраиваются в `vpn-director.json` (`webui.cert_file`, `webui.key_file`)
 - Пользователь может заменить на свой сертификат (Let's Encrypt и т.д.)
 - Go-сервер просто читает файлы при старте
+- If `jwt_secret` is empty at startup, Go server auto-generates one via `crypto/rand`, saves to config via `SaveVPNConfig()`, and logs a warning. No dependency on `jq` in installer for this.
 
 ## REST API
 
@@ -173,7 +178,7 @@ Go использует crypt() для сравнения: crypt(input_password,
 |--------|----------|-------------|----------------|
 | GET | `/api/servers` | List Xray servers | `/servers` |
 | POST | `/api/servers/active` | Select active server | `/xray` |
-| POST | `/api/servers/import` | Import VLESS subscription | `/import` |
+| POST | `/api/servers/import` | Import VLESS subscription (HTTPS only, deny private IPs, 10s timeout, 1MB limit) | `/import` |
 
 ### Clients
 
@@ -290,8 +295,10 @@ PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:
 1. Download `webui` binary (arm64/arm, same pattern as telegram-bot)
 2. Generate self-signed TLS certificate if `/opt/vpn-director/certs/` doesn't exist:
    ```bash
+   LAN_IP=$(nvram get lan_ipaddr)
    openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt \
-     -days 3650 -nodes -subj "/CN=vpn-director"
+     -days 3650 -nodes -subj "/CN=vpn-director" \
+     -addext "subjectAltName=IP:${LAN_IP},DNS:$(nvram get lan_hostname),IP:127.0.0.1"
    ```
 3. Generate JWT secret if not in config:
    ```bash
