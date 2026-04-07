@@ -11,9 +11,19 @@
 Thumbs.db
 
 # Dev testdata
-telegram-bot/testdata/dev/vpn-director.json
+server/testdata/dev/vpn-director.json
+
+# Superpowers brainstorming
+.superpowers/
 
 # Temporary
 *.tmp
 *.bak
 
+web/node_modules/
+web/dist/
+web/vite.config.js
+web/vite.config.d.ts
+web/tsconfig.tsbuildinfo
+web/tsconfig.node.tsbuildinfo
+server/cmd/webui/web/

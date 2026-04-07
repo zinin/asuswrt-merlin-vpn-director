@@ -1,4 +1,4 @@
-name: Build Telegram Bot
+name: Build
 
 on:
   push:
@@ -19,21 +19,37 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.5'
+          go-version: '1.24'
 
-      - name: Build arm64
-        run: make -C telegram-bot build-arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-      - name: Build arm
-        run: make -C telegram-bot build-arm
+      - name: Build Vue SPA
+        run: make web
+
+      - name: Prepare embed
+        run: make web-embed
+
+      - name: Build bot arm64
+        run: make -C server build-arm64
+
+      - name: Build bot arm
+        run: make -C server build-arm
+
+      - name: Build webui arm64
+        run: make -C server build-webui-arm64
+
+      - name: Build webui arm
+        run: make -C server build-webui-arm
 
       - name: Move binaries
-        run: mkdir -p bin && mv telegram-bot/bin/* bin/
+        run: mkdir -p bin && mv server/bin/* bin/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: telegram-bot-binaries
+          name: binaries
           path: bin/
 
       - name: Upload to Release
@@ -44,3 +60,5 @@ jobs:
           files: |
             bin/telegram-bot-arm64
             bin/telegram-bot-arm
+            bin/webui-arm64
+            bin/webui-arm

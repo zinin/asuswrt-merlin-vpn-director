@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 | `router/opt/vpn-director/vpn-director.json.template` | Unified config template |
 | `router/opt/etc/xray/config.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
-| `telegram-bot/` | Go-based Telegram bot for remote management |
+| `server/` | Go server: Telegram bot (+ future WebUI) for remote management |
 | `router/opt/vpn-director/setup_telegram_bot.sh` | Bot configuration script |
 
 ## Key Concepts

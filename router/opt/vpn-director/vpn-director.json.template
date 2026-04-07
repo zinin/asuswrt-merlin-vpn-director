@@ -1,5 +1,11 @@
 {
   "data_dir": "/opt/vpn-director/data",
+  "webui": {
+    "port": 8444,
+    "cert_file": "/opt/vpn-director/certs/server.crt",
+    "key_file": "/opt/vpn-director/certs/server.key",
+    "jwt_secret": ""
+  },
   "tunnel_director": {
     "tunnels": {}
   },
