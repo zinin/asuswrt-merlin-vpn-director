@@ -42,7 +42,7 @@ func handleLogs(deps *Deps) http.HandlerFunc {
 
 			output, err := deps.Logs.Read(path, lines)
 			if err != nil {
-				jsonError(w, http.StatusInternalServerError, err.Error())
+				jsonError(w, http.StatusInternalServerError, "failed to read log file")
 				return
 			}
 
@@ -71,14 +71,15 @@ func handleConfig(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 
-		// Redact sensitive fields.
-		cfg.WebUI.JWTSecret = ""
+		// Make a shallow copy to avoid mutating the original.
+		redacted := *cfg
+		redacted.WebUI.JWTSecret = ""
 
-		jsonOK(w, cfg)
+		jsonOK(w, &redacted)
 	}
 }
 

@@ -6,7 +6,8 @@ import type { Server } from '../types'
 const servers = ref<Server[]>([])
 const loading = ref(false)
 const importLoading = ref(false)
-const selectLoading = ref('')
+const selectLoading = ref(-1)
+const importUrl = ref('')
 const error = ref('')
 
 async function loadServers() {
@@ -22,23 +23,27 @@ async function loadServers() {
   }
 }
 
-async function selectServer(name: string) {
-  selectLoading.value = name
+async function selectServer(index: number) {
+  selectLoading.value = index
   try {
-    await api.selectServer(name)
-    alert('Server selected: ' + name)
+    await api.selectServer(index)
+    alert('Server selected: ' + (servers.value[index]?.name ?? index))
     await loadServers()
   } catch (e: any) {
     alert('Error: ' + (e.response?.data?.error || e.message))
   } finally {
-    selectLoading.value = ''
+    selectLoading.value = -1
   }
 }
 
 async function importServers() {
+  if (!importUrl.value) {
+    alert('Please enter a subscription URL')
+    return
+  }
   importLoading.value = true
   try {
-    await api.importServers()
+    await api.importServers(importUrl.value)
     await loadServers()
   } catch (e: any) {
     alert('Error: ' + (e.response?.data?.error || e.message))
@@ -54,12 +59,13 @@ onMounted(loadServers)
   <div class="card">
     <div class="card-title">Servers</div>
 
-    <div class="actions">
+    <div class="actions" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
       <button class="btn btn-blue" :disabled="loading" @click="loadServers">
         {{ loading ? '...' : '⟳ Refresh' }}
       </button>
-      <button class="btn btn-primary" :disabled="importLoading" @click="importServers">
-        {{ importLoading ? '...' : '⬇ Import Subscription' }}
+      <input v-model="importUrl" type="text" placeholder="https://... subscription URL" style="flex: 1; min-width: 200px;" />
+      <button class="btn btn-primary" :disabled="importLoading || !importUrl" @click="importServers">
+        {{ importLoading ? '...' : '⬇ Import' }}
       </button>
     </div>
 
@@ -84,10 +90,10 @@ onMounted(loadServers)
           <td>
             <button
               class="btn btn-green"
-              :disabled="!!selectLoading"
-              @click="selectServer(server.name)"
+              :disabled="selectLoading >= 0"
+              @click="selectServer(idx)"
             >
-              {{ selectLoading === server.name ? '...' : 'Select' }}
+              {{ selectLoading === idx ? '...' : 'Select' }}
             </button>
           </td>
         </tr>

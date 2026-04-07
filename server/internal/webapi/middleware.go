@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -67,14 +68,21 @@ type rateLimiter struct {
 // newRateLimiter creates a rate limiter that allows maxAttempts failed attempts
 // within window duration, then locks out the IP for lockout duration.
 // It starts a background goroutine to clean up stale entries every minute.
-func newRateLimiter(maxAttempts int, window, lockout time.Duration) *rateLimiter {
+// The goroutine stops when ctx is cancelled.
+func newRateLimiter(maxAttempts int, window, lockout time.Duration, ctx ...context.Context) *rateLimiter {
 	rl := &rateLimiter{
 		attempts:    make(map[string]*attemptInfo),
 		maxAttempts: maxAttempts,
 		window:      window,
 		lockout:     lockout,
 	}
-	go rl.cleanupLoop()
+	var c context.Context
+	if len(ctx) > 0 && ctx[0] != nil {
+		c = ctx[0]
+	} else {
+		c = context.Background()
+	}
+	go rl.cleanupLoop(c)
 	return rl
 }
 
@@ -140,11 +148,17 @@ func (rl *rateLimiter) record(ip string) {
 }
 
 // cleanupLoop periodically removes stale entries from the rate limiter.
-func (rl *rateLimiter) cleanupLoop() {
+// It stops when ctx is cancelled.
+func (rl *rateLimiter) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.cleanup()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.cleanup()
+		}
 	}
 }
 

@@ -9,7 +9,7 @@ func handleListExcludeSets(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 		jsonOK(w, map[string]interface{}{"sets": cfg.Xray.ExcludeSets})
@@ -18,28 +18,36 @@ func handleListExcludeSets(deps *Deps) http.HandlerFunc {
 
 // updateExcludeSetsRequest is the expected JSON body for POST /api/excludes/sets.
 type updateExcludeSetsRequest struct {
-	Sets []string `json:"sets"`
+	Sets *[]string `json:"sets"`
 }
 
 // handleUpdateExcludeSets returns a handler that replaces the exclusion sets list.
 func handleUpdateExcludeSets(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		var req updateExcludeSetsRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+		if req.Sets == nil {
+			jsonError(w, http.StatusBadRequest, "sets field is required")
 			return
 		}
 
-		cfg.Xray.ExcludeSets = req.Sets
+		cfg, err := deps.Config.LoadVPNConfig()
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
+			return
+		}
+
+		cfg.Xray.ExcludeSets = *req.Sets
 
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 			return
 		}
 
@@ -52,7 +60,7 @@ func handleListExcludeIPs(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 		jsonOK(w, map[string]interface{}{"ips": cfg.Xray.ExcludeIPs})
@@ -67,6 +75,9 @@ type addExcludeIPRequest struct {
 // handleAddExcludeIP returns a handler that adds an IP/CIDR to the exclusion list.
 func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		var req addExcludeIPRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -77,10 +88,14 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "ip is required")
 			return
 		}
+		if !isValidIPOrCIDR(req.IP) {
+			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+			return
+		}
 
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 
@@ -89,7 +104,7 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 		}
 
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 			return
 		}
 
@@ -100,22 +115,29 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 // handleDeleteExcludeIP returns a handler that removes an IP/CIDR from the exclusion list.
 func handleDeleteExcludeIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		ip := r.URL.Query().Get("ip")
 		if ip == "" {
 			jsonError(w, http.StatusBadRequest, "ip query parameter is required")
 			return
 		}
+		if !isValidIPOrCIDR(ip) {
+			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+			return
+		}
 
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 
 		cfg.Xray.ExcludeIPs = removeString(cfg.Xray.ExcludeIPs, ip)
 
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 			return
 		}
 

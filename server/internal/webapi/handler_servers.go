@@ -19,7 +19,7 @@ func handleListServers(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		servers, err := deps.Config.LoadServers()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load servers")
 			return
 		}
 		jsonOK(w, map[string]interface{}{"servers": servers})
@@ -28,7 +28,7 @@ func handleListServers(deps *Deps) http.HandlerFunc {
 
 // selectServerRequest is the expected JSON body for POST /api/servers/active.
 type selectServerRequest struct {
-	Index int `json:"index"`
+	Index *int `json:"index"`
 }
 
 // handleSelectServer returns a handler that selects a server by index,
@@ -41,41 +41,46 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		servers, err := deps.Config.LoadServers()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("load servers: %s", err))
+		if req.Index == nil {
+			jsonError(w, http.StatusBadRequest, "index is required")
 			return
 		}
 
-		if req.Index < 0 || req.Index >= len(servers) {
-			jsonError(w, http.StatusBadRequest, fmt.Sprintf("index out of range: %d (have %d servers)", req.Index, len(servers)))
+		servers, err := deps.Config.LoadServers()
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "failed to load servers")
+			return
+		}
+
+		if *req.Index < 0 || *req.Index >= len(servers) {
+			jsonError(w, http.StatusBadRequest, fmt.Sprintf("index out of range: %d (have %d servers)", *req.Index, len(servers)))
 			return
 		}
 
 		deps.OpMutex.Lock()
 		defer deps.OpMutex.Unlock()
 
-		server := servers[req.Index]
+		server := servers[*req.Index]
 
 		if err := deps.Xray.GenerateConfig(server); err != nil {
-			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("generate xray config: %s", err))
+			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
 			return
 		}
 
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("load vpn config: %s", err))
+			jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
 			return
 		}
 
 		cfg.Xray.Servers = server.IPs
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("save vpn config: %s", err))
+			jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
 			return
 		}
 
 		if err := deps.VPN.RestartXray(); err != nil {
-			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("restart xray: %s", err))
+			jsonError(w, http.StatusInternalServerError, "failed to restart xray")
 			return
 		}
 
@@ -176,7 +181,7 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 		}
 
 		if err := deps.Config.SaveServers(resolved); err != nil {
-			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("save servers: %s", err))
+			jsonError(w, http.StatusInternalServerError, "failed to save servers")
 			return
 		}
 
@@ -226,12 +231,14 @@ func isPrivateHost(host string) bool {
 // isPrivateIP returns true if the IP is private, loopback, or link-local.
 func isPrivateIP(ip net.IP) bool {
 	privateRanges := []string{
+		"0.0.0.0/8",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"127.0.0.0/8",
 		"169.254.0.0/16",
 		"::1/128",
+		"::/128",
 		"fc00::/7",
 		"fe80::/10",
 	}

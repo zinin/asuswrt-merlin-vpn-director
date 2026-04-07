@@ -9,7 +9,7 @@ func handleStatus(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		output, err := deps.VPN.Status()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to get status")
 			return
 		}
 		jsonOK(w, map[string]string{"output": output})
@@ -23,7 +23,7 @@ func handleApply(deps *Deps) http.HandlerFunc {
 		defer deps.OpMutex.Unlock()
 
 		if err := deps.VPN.Apply(); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to apply configuration")
 			return
 		}
 		jsonOK(w, map[string]bool{"ok": true})
@@ -37,7 +37,7 @@ func handleRestart(deps *Deps) http.HandlerFunc {
 		defer deps.OpMutex.Unlock()
 
 		if err := deps.VPN.Restart(); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to restart")
 			return
 		}
 		jsonOK(w, map[string]bool{"ok": true})
@@ -51,7 +51,7 @@ func handleStop(deps *Deps) http.HandlerFunc {
 		defer deps.OpMutex.Unlock()
 
 		if err := deps.VPN.Stop(); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to stop")
 			return
 		}
 		jsonOK(w, map[string]bool{"ok": true})
@@ -68,7 +68,7 @@ func handleUpdateIPsets(deps *Deps) http.HandlerFunc {
 		defer deps.OpMutex.Unlock()
 
 		if err := deps.VPN.Apply(); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to update ipsets")
 			return
 		}
 		jsonOK(w, map[string]bool{"ok": true})
@@ -80,7 +80,7 @@ func handleIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		ip, err := deps.Network.GetExternalIP()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to get external IP")
 			return
 		}
 		jsonOK(w, map[string]string{"ip": ip})

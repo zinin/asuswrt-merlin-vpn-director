@@ -15,7 +15,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/api/login')) {
       localStorage.removeItem('token')
       window.location.reload()
     }
@@ -25,8 +25,8 @@ api.interceptors.response.use(
 
 export default {
   // Auth
-  login: (password: string) =>
-    api.post('/api/login', { password }),
+  login: (username: string, password: string) =>
+    api.post('/api/login', { username, password }),
   logout: () =>
     api.post('/api/logout'),
 
@@ -51,10 +51,10 @@ export default {
   // Servers
   getServers: () =>
     api.get('/api/servers'),
-  selectServer: (name: string) =>
-    api.post('/api/servers/select', { name }),
-  importServers: () =>
-    api.post('/api/servers/import'),
+  selectServer: (index: number) =>
+    api.post('/api/servers/active', { index }),
+  importServers: (url: string) =>
+    api.post('/api/servers/import', { url }),
 
   // Clients
   getClients: () =>
@@ -72,7 +72,7 @@ export default {
   getExcludeSets: () =>
     api.get('/api/excludes/sets'),
   updateExcludeSets: (sets: string[]) =>
-    api.put('/api/excludes/sets', { sets }),
+    api.post('/api/excludes/sets', { sets }),
   getExcludeIPs: () =>
     api.get('/api/excludes/ips'),
   addExcludeIP: (ip: string) =>
@@ -81,8 +81,8 @@ export default {
     api.delete('/api/excludes/ips', { params: { ip } }),
 
   // Logs & Config
-  getLogs: (lines?: number) =>
-    api.get('/api/logs', { params: lines ? { lines } : undefined }),
+  getLogs: (source?: string, lines?: number) =>
+    api.get('/api/logs', { params: { ...(source ? { source } : {}), ...(lines ? { lines } : {}) } }),
   getConfig: () =>
     api.get('/api/config'),
 

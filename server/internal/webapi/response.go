@@ -23,8 +23,10 @@ func jsonError(w http.ResponseWriter, status int, message string) {
 }
 
 // decodeJSON reads and decodes the request body as JSON into v.
-// Returns an error if the body cannot be decoded.
+// Limits the body to 64KB to prevent abuse. Returns an error if the
+// body cannot be decoded.
 func decodeJSON(r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, 64*1024) // 64KB max
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		return fmt.Errorf("decode request body: %w", err)

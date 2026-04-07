@@ -1,10 +1,35 @@
 package webapi
 
 import (
+	"net"
 	"net/http"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
+
+// isValidIPOrCIDR checks if the string is a valid IP address or CIDR notation.
+func isValidIPOrCIDR(s string) bool {
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	_, _, err := net.ParseCIDR(s)
+	return err == nil
+}
+
+// validRoutes is the set of allowed route names for client assignment.
+var validRoutes = map[string]bool{
+	"xray":   true,
+	"wgc1":   true,
+	"wgc2":   true,
+	"wgc3":   true,
+	"wgc4":   true,
+	"wgc5":   true,
+	"ovpnc1": true,
+	"ovpnc2": true,
+	"ovpnc3": true,
+	"ovpnc4": true,
+	"ovpnc5": true,
+}
 
 // handleListClients returns a handler that lists all VPN clients with their
 // route assignment and pause status.
@@ -12,7 +37,7 @@ func handleListClients(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 		clients := vpnconfig.CollectClients(cfg)
@@ -29,6 +54,9 @@ type addClientRequest struct {
 // handleAddClient returns a handler that adds a client IP to the specified route.
 func handleAddClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		var req addClientRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -39,14 +67,22 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "ip is required")
 			return
 		}
+		if !isValidIPOrCIDR(req.IP) {
+			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+			return
+		}
 		if req.Route == "" {
 			jsonError(w, http.StatusBadRequest, "route is required")
+			return
+		}
+		if !validRoutes[req.Route] {
+			jsonError(w, http.StatusBadRequest, "invalid route: must be one of xray, wgc1-wgc5, ovpnc1-ovpnc5")
 			return
 		}
 
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 
@@ -73,7 +109,7 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 		}
 
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 			return
 		}
 
@@ -84,15 +120,22 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 // handlePauseClient returns a handler that pauses a client by IP.
 func handlePauseClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		ip := r.URL.Query().Get("ip")
 		if ip == "" {
 			jsonError(w, http.StatusBadRequest, "ip query parameter is required")
 			return
 		}
+		if !isValidIPOrCIDR(ip) {
+			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+			return
+		}
 
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 
@@ -101,7 +144,7 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 		}
 
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 			return
 		}
 
@@ -112,22 +155,29 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 // handleResumeClient returns a handler that resumes a paused client by IP.
 func handleResumeClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		ip := r.URL.Query().Get("ip")
 		if ip == "" {
 			jsonError(w, http.StatusBadRequest, "ip query parameter is required")
 			return
 		}
+		if !isValidIPOrCIDR(ip) {
+			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+			return
+		}
 
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 
 		cfg.PausedClients = removeString(cfg.PausedClients, ip)
 
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 			return
 		}
 
@@ -138,15 +188,22 @@ func handleResumeClient(deps *Deps) http.HandlerFunc {
 // handleDeleteClient returns a handler that removes a client from all routes.
 func handleDeleteClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		deps.OpMutex.Lock()
+		defer deps.OpMutex.Unlock()
+
 		ip := r.URL.Query().Get("ip")
 		if ip == "" {
 			jsonError(w, http.StatusBadRequest, "ip query parameter is required")
 			return
 		}
+		if !isValidIPOrCIDR(ip) {
+			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+			return
+		}
 
 		cfg, err := deps.Config.LoadVPNConfig()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 			return
 		}
 
@@ -159,8 +216,11 @@ func handleDeleteClient(deps *Deps) http.HandlerFunc {
 			cfg.TunnelDirector.Tunnels[name] = tunnel
 		}
 
+		// Also remove from paused clients list.
+		cfg.PausedClients = removeString(cfg.PausedClients, ip)
+
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
+			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 			return
 		}
 

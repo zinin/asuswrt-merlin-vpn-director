@@ -51,9 +51,9 @@ type XrayConfig struct {
 
 // ClientInfo represents a VPN client with its route and pause status.
 type ClientInfo struct {
-	IP     string
-	Route  string
-	Paused bool
+	IP     string `json:"ip"`
+	Route  string `json:"route"`
+	Paused bool   `json:"paused"`
 }
 
 // CollectClients builds a unified list of all clients from xray and tunnel_director sections.

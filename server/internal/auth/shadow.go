@@ -44,9 +44,9 @@ func (sa *ShadowAuth) Verify(username, password string) (bool, error) {
 		return false, nil
 	}
 
-	// Locked or disabled accounts.
+	// Locked or no-password accounts.
 	hash := entry.hash
-	if hash == "" || hash == "!" || hash == "*" || hash == "!!" {
+	if hash == "" || strings.HasPrefix(hash, "!") || strings.HasPrefix(hash, "*") {
 		return false, nil
 	}
 

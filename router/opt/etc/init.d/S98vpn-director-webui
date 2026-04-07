@@ -1,6 +1,6 @@
 #!/opt/bin/bash
 ENABLED=yes
-PROCS=webui
+PROCS=/opt/vpn-director/webui
 ARGS="--config /opt/vpn-director/vpn-director.json"
 PREARGS=""
 DESC="VPN Director Web UI"
