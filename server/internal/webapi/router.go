@@ -33,9 +33,7 @@ func NewRouter(deps *Deps, staticFS fs.FS) http.Handler {
 	deps.loginLimiter = newRateLimiter(5, 1*time.Minute, 30*time.Second)
 
 	// Public routes (no auth required).
-	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
-		jsonError(w, http.StatusNotImplemented, "not implemented")
-	})
+	mux.HandleFunc("POST /api/login", handleLogin(deps))
 
 	// Protected routes (require valid JWT).
 	protectedMux := http.NewServeMux()
@@ -59,20 +57,20 @@ func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
 	}
 
 	// Auth
-	mux.HandleFunc("POST /api/logout", stub)
+	mux.HandleFunc("POST /api/logout", handleLogout)
 
 	// Status & control
-	mux.HandleFunc("GET /api/status", stub)
-	mux.HandleFunc("POST /api/apply", stub)
-	mux.HandleFunc("POST /api/restart", stub)
-	mux.HandleFunc("POST /api/stop", stub)
+	mux.HandleFunc("GET /api/status", handleStatus(deps))
+	mux.HandleFunc("POST /api/apply", handleApply(deps))
+	mux.HandleFunc("POST /api/restart", handleRestart(deps))
+	mux.HandleFunc("POST /api/stop", handleStop(deps))
 
 	// IPSets
-	mux.HandleFunc("POST /api/ipsets/update", stub)
+	mux.HandleFunc("POST /api/ipsets/update", handleUpdateIPsets(deps))
 
 	// Info
-	mux.HandleFunc("GET /api/ip", stub)
-	mux.HandleFunc("GET /api/version", stub)
+	mux.HandleFunc("GET /api/ip", handleIP(deps))
+	mux.HandleFunc("GET /api/version", handleVersion(deps))
 
 	// Servers
 	mux.HandleFunc("GET /api/servers", stub)
