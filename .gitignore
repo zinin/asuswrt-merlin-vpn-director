@@ -20,3 +20,5 @@ server/testdata/dev/vpn-director.json
 *.tmp
 *.bak
 
+web/node_modules/
+web/dist/
