@@ -1,0 +1,9 @@
+#!/opt/bin/bash
+ENABLED=yes
+PROCS=webui
+ARGS="--config /opt/vpn-director/vpn-director.json"
+PREARGS=""
+DESC="VPN Director Web UI"
+PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+. /opt/etc/init.d/rc.func

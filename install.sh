@@ -149,7 +149,8 @@ download_scripts() {
         "router/jffs/scripts/firewall-start" \
         "router/jffs/scripts/wan-event" \
         "router/opt/etc/init.d/S99vpn-director" \
-        "router/opt/etc/init.d/S98telegram-bot"
+        "router/opt/etc/init.d/S98telegram-bot" \
+        "router/opt/etc/init.d/S98vpn-director-webui"
     do
         target="/${script#router/}"
         curl -fsSL "$REPO_URL/$script" -o "$target" || {
@@ -224,6 +225,127 @@ download_telegram_bot() {
 }
 
 ###############################################################################
+# Download webui binary (optional)
+###############################################################################
+
+download_webui() {
+    print_info "Downloading Web UI binary..."
+
+    local arch
+    arch=$(uname -m)
+    local webui_binary=""
+    local webui_path="$VPD_DIR/webui"
+    local tmp_path="${webui_path}.tmp"
+    local was_running=false
+
+    case "$arch" in
+        aarch64) webui_binary="webui-arm64" ;;
+        armv7l)  webui_binary="webui-arm" ;;
+        *)
+            print_info "Architecture $arch not supported for webui (optional component)"
+            return 0
+            ;;
+    esac
+
+    if ! curl -fsSL "$RELEASE_ASSET_URL/$webui_binary" -o "$tmp_path"; then
+        print_info "Warning: Failed to download webui (optional component)"
+        rm -f "$tmp_path" 2>/dev/null || true
+        return 0
+    fi
+
+    # Stop running webui before overwriting binary
+    if pidof webui >/dev/null 2>&1; then
+        was_running=true
+        print_info "Stopping running webui..."
+        if [[ -x /opt/etc/init.d/S98vpn-director-webui ]]; then
+            /opt/etc/init.d/S98vpn-director-webui stop >/dev/null 2>&1 || true
+        else
+            killall webui 2>/dev/null || true
+        fi
+        sleep 1
+    fi
+
+    mv "$tmp_path" "$webui_path"
+    chmod +x "$webui_path"
+    print_success "Installed webui"
+
+    if [[ "$was_running" == true ]] && [[ -x /opt/etc/init.d/S98vpn-director-webui ]]; then
+        print_info "Starting webui..."
+        /opt/etc/init.d/S98vpn-director-webui start >/dev/null 2>&1 || true
+    fi
+}
+
+###############################################################################
+# Generate self-signed TLS certificate
+###############################################################################
+
+generate_tls_cert() {
+    local cert_dir="$VPD_DIR/certs"
+
+    if [[ -f "$cert_dir/server.crt" ]] && [[ -f "$cert_dir/server.key" ]]; then
+        print_success "TLS certificate already exists"
+        return 0
+    fi
+
+    print_info "Generating self-signed TLS certificate..."
+
+    mkdir -p "$cert_dir"
+
+    local lan_ip
+    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || echo "192.168.1.1")
+    local hostname
+    hostname=$(nvram get lan_hostname 2>/dev/null || echo "router")
+
+    openssl req -x509 -newkey rsa:2048 \
+        -keyout "$cert_dir/server.key" \
+        -out "$cert_dir/server.crt" \
+        -days 3650 -nodes \
+        -subj "/CN=vpn-director" \
+        -addext "subjectAltName=IP:${lan_ip},DNS:${hostname},IP:127.0.0.1" 2>/dev/null || {
+        # Fallback for older openssl without -addext
+        openssl req -x509 -newkey rsa:2048 \
+            -keyout "$cert_dir/server.key" \
+            -out "$cert_dir/server.crt" \
+            -days 3650 -nodes \
+            -subj "/CN=vpn-director" 2>/dev/null || {
+            print_error "Failed to generate TLS certificate"
+            return 1
+        }
+    }
+
+    chmod 600 "$cert_dir/server.key"
+    print_success "TLS certificate generated"
+}
+
+###############################################################################
+# Setup webui config section
+###############################################################################
+
+setup_webui_config() {
+    local config_path="$VPD_DIR/vpn-director.json"
+
+    if [[ ! -f "$config_path" ]]; then
+        return 0
+    fi
+
+    # Check if webui section already exists
+    if command -v jq >/dev/null 2>&1; then
+        if jq -e '.webui' "$config_path" >/dev/null 2>&1; then
+            print_success "WebUI config section already exists"
+            return 0
+        fi
+
+        local tmp
+        tmp=$(mktemp)
+        jq '. + {"webui": {"port": 8444, "cert_file": "/opt/vpn-director/certs/server.crt", "key_file": "/opt/vpn-director/certs/server.key", "jwt_secret": ""}}' "$config_path" > "$tmp" && mv "$tmp" "$config_path"
+        print_success "Added webui section to config"
+    else
+        print_info "Install jq for automatic webui config setup: opkg install jq"
+        print_info "Or the webui server will auto-configure on first start"
+    fi
+}
+
+###############################################################################
 # Print next steps
 ###############################################################################
 
@@ -237,6 +359,9 @@ print_next_steps() {
     printf "     ${GREEN}/opt/vpn-director/configure.sh${NC}\n\n"
     printf "  3. (Optional) Setup Telegram bot:\n"
     printf "     ${GREEN}/opt/vpn-director/setup_telegram_bot.sh${NC}\n\n"
+    printf "  4. (Optional) Start Web UI:\n"
+    printf "     ${GREEN}/opt/etc/init.d/S98vpn-director-webui start${NC}\n"
+    printf "     Then open https://<router-ip>:8444\n\n"
     printf "Or edit configs manually:\n"
     printf "  /opt/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"
@@ -255,6 +380,9 @@ main() {
     create_directories
     download_scripts
     download_telegram_bot
+    download_webui
+    generate_tls_cert
+    setup_webui_config
     print_next_steps
 }
 
