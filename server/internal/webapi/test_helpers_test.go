@@ -39,20 +39,28 @@ func (m *mockLogs) Read(_ string, _ int) (string, error) { return m.output, m.er
 
 // mockConfig implements service.ConfigStore for testing.
 type mockConfig struct {
-	cfg     *vpnconfig.VPNDirectorConfig
-	servers []vpnconfig.Server
-	err     error
+	cfg          *vpnconfig.VPNDirectorConfig
+	servers      []vpnconfig.Server
+	err          error
+	savedCfg     *vpnconfig.VPNDirectorConfig // captured by SaveVPNConfig
+	savedServers []vpnconfig.Server           // captured by SaveServers
 }
 
 func (m *mockConfig) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
 	return m.cfg, m.err
 }
 func (m *mockConfig) LoadServers() ([]vpnconfig.Server, error) { return m.servers, m.err }
-func (m *mockConfig) SaveVPNConfig(_ *vpnconfig.VPNDirectorConfig) error { return m.err }
-func (m *mockConfig) SaveServers(_ []vpnconfig.Server) error   { return m.err }
-func (m *mockConfig) DataDir() (string, error)                 { return "/tmp/test-data", m.err }
-func (m *mockConfig) DataDirOrDefault() string                 { return "/tmp/test-data" }
-func (m *mockConfig) ScriptsDir() string                       { return "/tmp/test-scripts" }
+func (m *mockConfig) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
+	m.savedCfg = cfg
+	return m.err
+}
+func (m *mockConfig) SaveServers(servers []vpnconfig.Server) error {
+	m.savedServers = servers
+	return m.err
+}
+func (m *mockConfig) DataDir() (string, error) { return "/tmp/test-data", m.err }
+func (m *mockConfig) DataDirOrDefault() string  { return "/tmp/test-data" }
+func (m *mockConfig) ScriptsDir() string        { return "/tmp/test-scripts" }
 
 // mockXray implements service.XrayGenerator for testing.
 type mockXray struct {

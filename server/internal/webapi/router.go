@@ -52,10 +52,6 @@ func NewRouter(deps *Deps, staticFS fs.FS) http.Handler {
 
 // registerProtectedRoutes adds all authenticated API endpoints to the mux.
 func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
-	stub := func(w http.ResponseWriter, _ *http.Request) {
-		jsonError(w, http.StatusNotImplemented, "not implemented")
-	}
-
 	// Auth
 	mux.HandleFunc("POST /api/logout", handleLogout)
 
@@ -73,32 +69,32 @@ func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
 	mux.HandleFunc("GET /api/version", handleVersion(deps))
 
 	// Servers
-	mux.HandleFunc("GET /api/servers", stub)
-	mux.HandleFunc("POST /api/servers/active", stub)
-	mux.HandleFunc("POST /api/servers/import", stub)
+	mux.HandleFunc("GET /api/servers", handleListServers(deps))
+	mux.HandleFunc("POST /api/servers/active", handleSelectServer(deps))
+	mux.HandleFunc("POST /api/servers/import", handleImportServers(deps))
 
 	// Clients
-	mux.HandleFunc("GET /api/clients", stub)
-	mux.HandleFunc("POST /api/clients", stub)
-	mux.HandleFunc("POST /api/clients/pause", stub)
-	mux.HandleFunc("POST /api/clients/resume", stub)
-	mux.HandleFunc("DELETE /api/clients", stub)
+	mux.HandleFunc("GET /api/clients", handleListClients(deps))
+	mux.HandleFunc("POST /api/clients", handleAddClient(deps))
+	mux.HandleFunc("POST /api/clients/pause", handlePauseClient(deps))
+	mux.HandleFunc("POST /api/clients/resume", handleResumeClient(deps))
+	mux.HandleFunc("DELETE /api/clients", handleDeleteClient(deps))
 
 	// Exclusions — sets
-	mux.HandleFunc("GET /api/excludes/sets", stub)
-	mux.HandleFunc("POST /api/excludes/sets", stub)
+	mux.HandleFunc("GET /api/excludes/sets", handleListExcludeSets(deps))
+	mux.HandleFunc("POST /api/excludes/sets", handleUpdateExcludeSets(deps))
 
 	// Exclusions — IPs
-	mux.HandleFunc("GET /api/excludes/ips", stub)
-	mux.HandleFunc("POST /api/excludes/ips", stub)
-	mux.HandleFunc("DELETE /api/excludes/ips", stub)
+	mux.HandleFunc("GET /api/excludes/ips", handleListExcludeIPs(deps))
+	mux.HandleFunc("POST /api/excludes/ips", handleAddExcludeIP(deps))
+	mux.HandleFunc("DELETE /api/excludes/ips", handleDeleteExcludeIP(deps))
 
 	// Logs & config
-	mux.HandleFunc("GET /api/logs", stub)
-	mux.HandleFunc("GET /api/config", stub)
+	mux.HandleFunc("GET /api/logs", handleLogs(deps))
+	mux.HandleFunc("GET /api/config", handleConfig(deps))
 
 	// Self-update
-	mux.HandleFunc("POST /api/update", stub)
+	mux.HandleFunc("POST /api/update", handleUpdate(deps))
 }
 
 // spaHandler serves static files from the embedded filesystem. If a file is
