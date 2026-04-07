@@ -10,16 +10,18 @@ import (
 	"time"
 )
 
-// ServerConfig holds HTTPS server configuration.
+// ServerConfig holds HTTP/HTTPS server configuration.
 type ServerConfig struct {
 	Port     int
 	CertFile string
 	KeyFile  string
+	DevMode  bool // when true, use plain HTTP instead of TLS
 }
 
-// ListenAndServe starts the HTTPS server and blocks until ctx is cancelled or
-// an unrecoverable error occurs. On context cancellation it performs a graceful
-// shutdown with a 5-second deadline.
+// ListenAndServe starts the HTTP/HTTPS server and blocks until ctx is cancelled
+// or an unrecoverable error occurs. When cfg.DevMode is true it uses plain HTTP;
+// otherwise it requires TLS certificates. On context cancellation it performs a
+// graceful shutdown with a 5-second deadline.
 func ListenAndServe(ctx context.Context, cfg ServerConfig, deps *Deps, staticFS fs.FS) error {
 	router := NewRouter(deps, staticFS)
 
@@ -31,15 +33,22 @@ func ListenAndServe(ctx context.Context, cfg ServerConfig, deps *Deps, staticFS 
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MB
-		TLSConfig: &tls.Config{
+	}
+	if !cfg.DevMode {
+		server.TLSConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
-		},
+		}
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("starting HTTPS server", "addr", server.Addr)
-		errCh <- server.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
+		if cfg.DevMode {
+			slog.Info("starting HTTP server (dev mode)", "addr", server.Addr)
+			errCh <- server.ListenAndServe()
+		} else {
+			slog.Info("starting HTTPS server", "addr", server.Addr)
+			errCh <- server.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
+		}
 	}()
 
 	select {

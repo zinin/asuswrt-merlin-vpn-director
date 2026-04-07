@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/devmode"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
@@ -29,9 +31,31 @@ var (
 func main() {
 	configPath := flag.String("config", "/opt/vpn-director/vpn-director.json", "path to vpn-director.json")
 	shadowPath := flag.String("shadow", "/etc/shadow", "path to shadow file")
+	devFlag := flag.Bool("dev", false, "run in development mode (HTTP, mock executor, testdata paths)")
 	flag.Parse()
 
-	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit)
+	// In dev mode, override defaults with testdata paths.
+	var p paths.Paths
+	if *devFlag {
+		p = paths.DevPaths()
+		if *configPath == "/opt/vpn-director/vpn-director.json" {
+			*configPath = p.ScriptsDir + "/vpn-director.json"
+		}
+		if *shadowPath == "/etc/shadow" {
+			*shadowPath = p.ScriptsDir + "/shadow"
+		}
+		// Validate testdata/dev exists before proceeding.
+		if _, err := os.Stat(p.ScriptsDir); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: %s not found\n", p.ScriptsDir)
+			fmt.Fprintf(os.Stderr, "Run from server/ directory: cd server && go run ./cmd/webui --dev\n")
+			os.Exit(1)
+		}
+		ensureDevFiles(*configPath, *shadowPath, p.DefaultDataDir)
+	} else {
+		p = paths.Default()
+	}
+
+	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag)
 
 	// Load config
 	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(*configPath)
@@ -59,14 +83,16 @@ func main() {
 		}
 	}
 
-	// Services (same pattern as Telegram bot).
-	// Passing nil executor uses the default shell.Exec wrapper.
-	p := paths.Default()
+	// Services — in dev mode use devmode executor for mock shell responses.
+	var executor service.ShellExecutor
+	if *devFlag {
+		executor = devmode.NewExecutor()
+	}
 	configSvc := service.NewConfigService(p.ScriptsDir, p.DefaultDataDir)
-	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, nil)
+	vpnSvc := service.NewVPNDirectorService(p.ScriptsDir, executor)
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
-	networkSvc := service.NewNetworkService(nil)
-	logSvc := service.NewLogService(nil)
+	networkSvc := service.NewNetworkService(executor)
+	logSvc := service.NewLogService(executor)
 
 	// Auth
 	shadowAuth := auth.NewShadowAuth(*shadowPath)
@@ -102,10 +128,64 @@ func main() {
 		Port:     vpnCfg.WebUI.Port,
 		CertFile: vpnCfg.WebUI.CertFile,
 		KeyFile:  vpnCfg.WebUI.KeyFile,
+		DevMode:  *devFlag,
+	}
+
+	if *devFlag {
+		slog.Info("dev mode: HTTP server, mock executor, testdata paths",
+			"config", *configPath,
+			"shadow", *shadowPath,
+			"port", vpnCfg.WebUI.Port,
+		)
 	}
 
 	if err := webapi.ListenAndServe(ctx, serverCfg, deps, staticFS); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
+	}
+}
+
+// ensureDevFiles creates default dev config and shadow files if they don't exist,
+// so that `go run ./cmd/webui --dev` works out of the box.
+func ensureDevFiles(configPath, shadowPath, dataDir string) {
+	// Create data directory if needed.
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		slog.Warn("failed to create data dir", "path", dataDir, "error", err)
+	}
+
+	// Shadow file with admin:admin (SHA-256 crypt).
+	if _, err := os.Stat(shadowPath); os.IsNotExist(err) {
+		// Hash generated with: openssl passwd -5 -salt devsalt admin
+		const devShadow = "admin:$5$devsalt$LMFogNzwzA8X4bCMYZf22bdOkeaX6VqsdOAtuYDFXYB:19000:0:99999:7:::\n"
+		if err := os.WriteFile(shadowPath, []byte(devShadow), 0600); err != nil {
+			slog.Warn("failed to create dev shadow file", "error", err)
+		} else {
+			slog.Info("created dev shadow file (admin:admin)", "path", shadowPath)
+		}
+	}
+
+	// VPN Director config with webui section.
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		devConfig := &vpnconfig.VPNDirectorConfig{
+			DataDir: dataDir,
+			WebUI: vpnconfig.WebUIConfig{
+				Port:      8444,
+				JWTSecret: "dev-secret-not-for-production-use!!",
+			},
+			Xray: vpnconfig.XrayConfig{
+				Clients:     []string{"192.168.50.0/24"},
+				Servers:     []string{},
+				ExcludeIPs:  []string{},
+				ExcludeSets: []string{"ru"},
+			},
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: map[string]vpnconfig.TunnelConfig{},
+			},
+		}
+		if err := vpnconfig.SaveVPNDirectorConfig(configPath, devConfig); err != nil {
+			slog.Warn("failed to create dev config", "error", err)
+		} else {
+			slog.Info("created dev vpn-director.json", "path", configPath)
+		}
 	}
 }

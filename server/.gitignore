@@ -4,4 +4,5 @@ bin/
 # Dev mode secrets and generated files
 testdata/dev/telegram-bot.json
 testdata/dev/xray.json
+testdata/dev/shadow
 testdata/dev/*.log
