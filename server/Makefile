@@ -1,4 +1,4 @@
-.PHONY: build build-arm64 build-arm clean test
+.PHONY: build build-arm64 build-arm build-webui build-webui-arm64 build-webui-arm clean test
 
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 VERSION_FULL ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -15,6 +15,15 @@ build-arm64:
 
 build-arm:
 	GOOS=linux GOARCH=arm GOARM=7 go build -trimpath $(LDFLAGS) -o bin/telegram-bot-arm ./cmd/bot
+
+build-webui:
+	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o bin/webui ./cmd/webui
+
+build-webui-arm64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath $(LDFLAGS) -o bin/webui-arm64 ./cmd/webui
+
+build-webui-arm:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath $(LDFLAGS) -o bin/webui-arm ./cmd/webui
 
 clean:
 	rm -rf bin/
