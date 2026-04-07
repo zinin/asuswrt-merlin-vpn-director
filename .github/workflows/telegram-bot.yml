@@ -22,13 +22,13 @@ jobs:
           go-version: '1.25.5'
 
       - name: Build arm64
-        run: make -C telegram-bot build-arm64
+        run: make -C server build-arm64
 
       - name: Build arm
-        run: make -C telegram-bot build-arm
+        run: make -C server build-arm
 
       - name: Move binaries
-        run: mkdir -p bin && mv telegram-bot/bin/* bin/
+        run: mkdir -p bin && mv server/bin/* bin/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -1,5 +1,5 @@
 ---
-paths: "telegram-bot/**/*"
+paths: "server/**/*"
 ---
 
 # Telegram Bot
@@ -9,7 +9,7 @@ Go-based Telegram bot for remote VPN Director management.
 ## Architecture
 
 ```
-telegram-bot/
+server/
 ├── cmd/bot/main.go           # Entry point, signal handling, DI setup
 ├── internal/
 │   ├── bot/                  # Core bot orchestration
@@ -152,7 +152,7 @@ When `update_check_interval` is set, the bot periodically checks GitHub for new 
 ## Build
 
 ```bash
-cd telegram-bot
+cd server
 
 # Native build
 make build
@@ -174,7 +174,7 @@ Binary: `bin/telegram-bot-{arch}`
 
 ```bash
 # Run all Go tests
-cd telegram-bot && go test ./...
+cd server && go test ./...
 
 # Run with verbose output
 go test -v ./internal/bot/...

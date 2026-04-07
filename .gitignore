@@ -11,7 +11,10 @@
 Thumbs.db
 
 # Dev testdata
-telegram-bot/testdata/dev/vpn-director.json
+server/testdata/dev/vpn-director.json
+
+# Superpowers brainstorming
+.superpowers/
 
 # Temporary
 *.tmp
