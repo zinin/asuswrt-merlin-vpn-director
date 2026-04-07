@@ -335,8 +335,7 @@ setup_webui_config() {
             return 0
         fi
 
-        local tmp
-        tmp=$(mktemp)
+        local tmp="${config_path}.tmp.$$"
         jq '. + {"webui": {"port": 8444, "cert_file": "/opt/vpn-director/certs/server.crt", "key_file": "/opt/vpn-director/certs/server.key", "jwt_secret": ""}}' "$config_path" > "$tmp" && mv "$tmp" "$config_path"
         print_success "Added webui section to config"
     else
