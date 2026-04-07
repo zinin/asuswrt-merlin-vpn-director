@@ -24,7 +24,7 @@ const tabs = [
 
 async function checkAuth() {
   try {
-    const resp = await api.getVersion()
+    const resp = await api.checkAuth()
     version.value = resp.data.version || ''
     authenticated.value = true
   } catch {

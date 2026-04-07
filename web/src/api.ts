@@ -7,7 +7,13 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && !error.config?.url?.includes('/api/login')) {
+    // Only reload on 401 for requests that expect auth (not login or auth-check).
+    // skipAuthRedirect can be set on individual requests to suppress the reload.
+    if (
+      error.response?.status === 401 &&
+      !error.config?.url?.includes('/api/login') &&
+      !error.config?.skipAuthRedirect
+    ) {
       window.location.reload()
     }
     return Promise.reject(error)
@@ -16,6 +22,8 @@ api.interceptors.response.use(
 
 export default {
   // Auth
+  checkAuth: () =>
+    api.get('/api/version', { skipAuthRedirect: true } as any),
   login: (username: string, password: string) =>
     api.post('/api/login', { username, password }),
   logout: () =>

@@ -12,6 +12,7 @@ export default defineConfig({
       '/api': {
         target: apiTarget,
         secure: false,
+        changeOrigin: true,
       },
     },
   },
