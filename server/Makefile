@@ -1,4 +1,4 @@
-.PHONY: build build-arm64 build-arm build-webui build-webui-arm64 build-webui-arm clean test
+.PHONY: build build-bot build-arm64 build-arm build-webui build-webui-arm64 build-webui-arm clean test
 
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 VERSION_FULL ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -7,7 +7,9 @@ BUILD_DATE ?= $(shell date -u +%Y-%m-%d)
 
 LDFLAGS = -ldflags "-s -w -X main.Version=$(VERSION) -X main.VersionFull=$(VERSION_FULL) -X main.Commit=$(COMMIT) -X main.BuildDate=$(BUILD_DATE)"
 
-build:
+build: build-bot build-webui
+
+build-bot:
 	go build -trimpath $(LDFLAGS) -o bin/telegram-bot ./cmd/bot
 
 build-arm64:
