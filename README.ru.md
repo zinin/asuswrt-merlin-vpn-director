@@ -9,6 +9,7 @@
 - **Xray TPROXY**: Прозрачный прокси для выбранных LAN-клиентов через VLESS
 - **Tunnel Director**: Маршрутизация трафика через OpenVPN/WireGuard по назначению
 - **Маршрутизация по странам**: Направление трафика напрямую или через VPN в зависимости от географии назначения
+- **Веб-интерфейс**: HTTPS веб-интерфейс для управления VPN Director из браузера
 - **Telegram-бот**: Удалённое управление через Telegram (статус, настройка, перезапуск)
 - **Простая установка**: Установка одной командой с интерактивной настройкой
 
@@ -35,7 +36,13 @@ curl -fsSL \
    /opt/vpn-director/configure.sh
    ```
 
-3. Настройте Telegram-бота (опционально):
+3. Откройте веб-интерфейс (устанавливается автоматически):
+   ```
+   https://<ip-роутера>:8444
+   ```
+   Войдите с паролем администратора роутера.
+
+4. Настройте Telegram-бота (опционально):
    ```bash
    /opt/vpn-director/setup_telegram_bot.sh
    ```
@@ -86,6 +93,52 @@ curl -fsSL \
 
 # Импорт серверов
 /opt/vpn-director/import_server_list.sh
+```
+
+## Веб-интерфейс
+
+HTTPS веб-интерфейс для управления VPN Director из браузера.
+
+### Доступ
+
+Откройте `https://<ip-роутера>:8444` и войдите с паролем администратора роутера (аутентификация через `/etc/shadow`).
+
+Самоподписанный TLS-сертификат генерируется автоматически при установке. Браузер покажет предупреждение безопасности — это нормально.
+
+### Возможности
+
+| Вкладка | Описание |
+|---------|----------|
+| **Status** | Обзор состояния VPN Director |
+| **Servers** | Управление серверами Xray, переключение активного сервера |
+| **Clients** | Назначение маршрутов LAN-клиентам (пауза/возобновление/удаление) |
+| **Exclusions** | Списки исключений по странам и IP/CIDR |
+| **Logs** | Просмотр логов в реальном времени (бот, vpn, все) |
+| **Settings** | Настройки и системные параметры |
+
+### Конфигурация
+
+Настройки веб-интерфейса находятся в `/opt/vpn-director/vpn-director.json` в секции `webui`:
+
+```json
+{
+  "webui": {
+    "port": 8444,
+    "cert_file": "/opt/vpn-director/certs/server.crt",
+    "key_file": "/opt/vpn-director/certs/server.key",
+    "jwt_secret": ""
+  }
+}
+```
+
+`jwt_secret` генерируется автоматически при первом запуске, если оставлен пустым.
+
+### Управление сервисом
+
+```bash
+/opt/etc/init.d/S98vpn-director-webui start
+/opt/etc/init.d/S98vpn-director-webui stop
+/opt/etc/init.d/S98vpn-director-webui restart
 ```
 
 ## Telegram-бот
@@ -161,7 +214,7 @@ curl -fsSL \
 
 ## Мониторинг процессов
 
-Xray и Telegram-бот могут иногда падать. Используйте monit для автоматического перезапуска.
+Xray, Telegram-бот и веб-интерфейс могут иногда падать. Используйте monit для автоматического перезапуска.
 
 ### Настройка
 
@@ -185,6 +238,14 @@ Xray и Telegram-бот могут иногда падать. Используй
    check process telegram-bot matching "telegram-bot"
        start program = "/opt/etc/init.d/S98telegram-bot start"
        stop program = "/opt/etc/init.d/S98telegram-bot stop"
+       if does not exist then restart
+   ```
+
+   **webui:**
+   ```
+   check process webui matching "webui"
+       start program = "/opt/etc/init.d/S98vpn-director-webui start"
+       stop program = "/opt/etc/init.d/S98vpn-director-webui stop"
        if does not exist then restart
    ```
 

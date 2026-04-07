@@ -9,6 +9,7 @@ Selective traffic routing through Xray TPROXY and OpenVPN tunnels.
 - **Xray TPROXY**: Transparent proxy for selected LAN clients via VLESS
 - **Tunnel Director**: Route traffic through OpenVPN/WireGuard by destination
 - **Country-based routing**: Route traffic directly or through VPN based on destination geography
+- **Web UI**: HTTPS web interface for managing VPN Director from the browser
 - **Telegram Bot**: Remote management via Telegram (status, config, restart)
 - **Easy installation**: One-command setup with interactive configuration
 
@@ -35,7 +36,13 @@ After installation:
    /opt/vpn-director/configure.sh
    ```
 
-3. Setup Telegram bot (optional):
+3. Access Web UI (installed automatically):
+   ```
+   https://<router-ip>:8444
+   ```
+   Log in with your router's admin password.
+
+4. Setup Telegram bot (optional):
    ```bash
    /opt/vpn-director/setup_telegram_bot.sh
    ```
@@ -86,6 +93,52 @@ After installation, configs are located at:
 
 # Import servers
 /opt/vpn-director/import_server_list.sh
+```
+
+## Web UI
+
+HTTPS web interface for managing VPN Director from the browser.
+
+### Access
+
+Open `https://<router-ip>:8444` and log in with the router's admin password (authenticated via `/etc/shadow`).
+
+A self-signed TLS certificate is generated automatically during installation. Your browser will show a security warning — this is expected.
+
+### Features
+
+| Tab | Description |
+|-----|-------------|
+| **Status** | VPN Director operational overview |
+| **Servers** | Xray server management, switch active server |
+| **Clients** | LAN client routing assignment (pause/resume/delete) |
+| **Exclusions** | Country and IP/CIDR exclusion lists |
+| **Logs** | Real-time log viewer (bot, vpn, all) |
+| **Settings** | Configuration and system settings |
+
+### Configuration
+
+Web UI settings are in `/opt/vpn-director/vpn-director.json` under the `webui` section:
+
+```json
+{
+  "webui": {
+    "port": 8444,
+    "cert_file": "/opt/vpn-director/certs/server.crt",
+    "key_file": "/opt/vpn-director/certs/server.key",
+    "jwt_secret": ""
+  }
+}
+```
+
+`jwt_secret` is auto-generated on first start if left empty.
+
+### Service Management
+
+```bash
+/opt/etc/init.d/S98vpn-director-webui start
+/opt/etc/init.d/S98vpn-director-webui stop
+/opt/etc/init.d/S98vpn-director-webui restart
 ```
 
 ## Telegram Bot
@@ -161,7 +214,7 @@ To enable user scripts: Administration -> System -> Enable JFFS custom scripts a
 
 ## Process Monitoring
 
-Xray and Telegram bot may occasionally crash. Use monit for automatic restart.
+Xray, Telegram bot, and Web UI may occasionally crash. Use monit for automatic restart.
 
 ### Setup
 
@@ -185,6 +238,14 @@ Xray and Telegram bot may occasionally crash. Use monit for automatic restart.
    check process telegram-bot matching "telegram-bot"
        start program = "/opt/etc/init.d/S98telegram-bot start"
        stop program = "/opt/etc/init.d/S98telegram-bot stop"
+       if does not exist then restart
+   ```
+
+   **webui:**
+   ```
+   check process webui matching "webui"
+       start program = "/opt/etc/init.d/S98vpn-director-webui start"
+       stop program = "/opt/etc/init.d/S98vpn-director-webui stop"
        if does not exist then restart
    ```
 
