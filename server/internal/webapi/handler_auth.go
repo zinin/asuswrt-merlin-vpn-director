@@ -60,7 +60,7 @@ func handleLogin(deps *Deps) http.HandlerFunc {
 			MaxAge:   int(24 * time.Hour / time.Second),
 		})
 
-		jsonOK(w, map[string]string{"token": token})
+		jsonOK(w, map[string]bool{"ok": true})
 	}
 }
 

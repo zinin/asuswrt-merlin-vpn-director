@@ -42,7 +42,6 @@ async function logout() {
   } catch {
     // ignore
   }
-  localStorage.removeItem('token')
   authenticated.value = false
 }
 

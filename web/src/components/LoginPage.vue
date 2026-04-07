@@ -13,8 +13,7 @@ async function submit() {
   error.value = ''
   loading.value = true
   try {
-    const res = await api.login(username.value, password.value)
-    localStorage.setItem('token', res.data.token)
+    await api.login(username.value, password.value)
     emit('login')
   } catch (e: any) {
     error.value = e.response?.data?.error || 'Connection failed'

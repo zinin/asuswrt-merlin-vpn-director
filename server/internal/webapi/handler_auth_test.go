@@ -46,13 +46,13 @@ func TestHandleLogin_ValidCredentials(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Check response body contains token.
-	var resp map[string]string
+	// Check response body contains ok: true (no token).
+	var resp map[string]bool
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["token"] == "" {
-		t.Error("expected non-empty token in response body")
+	if !resp["ok"] {
+		t.Error("expected ok: true in response body")
 	}
 
 	// Check HttpOnly cookie is set.
@@ -73,8 +73,8 @@ func TestHandleLogin_ValidCredentials(t *testing.T) {
 	if tokenCookie.SameSite != http.SameSiteStrictMode {
 		t.Error("expected SameSite=Strict on token cookie")
 	}
-	if tokenCookie.Value != resp["token"] {
-		t.Error("expected cookie token to match response body token")
+	if tokenCookie.Value == "" {
+		t.Error("expected non-empty token in cookie")
 	}
 }
 
