@@ -2,19 +2,19 @@
 
 # Note: We don't source rc.func because we need to start the bot via absolute path
 # so that pgrep -f "/opt/vpn-director/telegram-bot" works reliably in update scripts.
+PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENABLED=yes
 DESC="Telegram Bot for VPN Director"
 BOT_PATH="/opt/vpn-director/telegram-bot"
 BOT_NAME="telegram-bot"
-
-# Check if telegram-bot binary exists
-if [ ! -x "$BOT_PATH" ]; then
-    logger -t "S98telegram-bot" "telegram-bot not found at $BOT_PATH"
-    exit 0
-fi
+LOGTAG="S98telegram-bot"
 
 start() {
     [ "$ENABLED" != "yes" ] && return 0
+    if [ ! -x "$BOT_PATH" ]; then
+        logger -t "$LOGTAG" "telegram-bot not found at $BOT_PATH"
+        return 0
+    fi
     echo "Starting $DESC..."
     if pidof "$BOT_NAME" >/dev/null 2>&1; then
         echo "$DESC is already running"
@@ -27,10 +27,10 @@ start() {
     sleep 2
     if pidof "$BOT_NAME" >/dev/null 2>&1; then
         echo "$DESC started"
-        logger "Started $DESC"
+        logger -t "$LOGTAG" "Started $DESC"
     else
         echo "Failed to start $DESC"
-        logger "Failed to start $DESC"
+        logger -t "$LOGTAG" "Failed to start $DESC"
         return 1
     fi
 }
@@ -44,27 +44,38 @@ stop() {
     killall "$BOT_NAME" 2>/dev/null
     # Wait up to 10 seconds
     count=0
-    while pidof "$BOT_NAME" >/dev/null 2>&1 && [ $count -lt 10 ]; do
+    while pidof "$BOT_NAME" >/dev/null 2>&1 && [ "$count" -lt 10 ]; do
         sleep 1
         count=$((count + 1))
     done
     if pidof "$BOT_NAME" >/dev/null 2>&1; then
         echo "Force killing $DESC..."
         killall -9 "$BOT_NAME" 2>/dev/null
+        sleep 1
+    fi
+    if pidof "$BOT_NAME" >/dev/null 2>&1; then
+        echo "Failed to stop $DESC"
+        logger -t "$LOGTAG" "Failed to stop $DESC"
+        return 1
     fi
     echo "$DESC stopped"
+    return 0
+}
+
+check() {
+    if pidof "$BOT_NAME" >/dev/null 2>&1; then
+        echo "$DESC is running"
+        return 0
+    fi
+    echo "$DESC is not running"
+    return 1
 }
 
 case "$1" in
     start)   start ;;
     stop)    stop ;;
     restart) stop; start ;;
-    check)
-        if pidof "$BOT_NAME" >/dev/null 2>&1; then
-            echo "$DESC is running"
-        else
-            echo "$DESC is not running"
-        fi
-        ;;
-    *)       echo "Usage: $0 {start|stop|restart|check}" ;;
+    kill)    killall -9 "$BOT_NAME" 2>/dev/null ;;
+    check)   check ;;
+    *)       echo "Usage: $0 {start|stop|restart|kill|check}" ;;
 esac
