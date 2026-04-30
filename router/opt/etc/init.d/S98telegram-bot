@@ -20,8 +20,10 @@ start() {
         echo "$DESC is already running"
         return 0
     fi
-    # Start with full path so pgrep -f "/opt/vpn-director/telegram-bot" works
-    "$BOT_PATH" >/dev/null 2>&1 &
+    # Start with full path so pgrep -f "/opt/vpn-director/telegram-bot" works.
+    # nohup detaches from the controlling terminal so the daemon survives
+    # SSH logout when the script is invoked manually.
+    nohup "$BOT_PATH" </dev/null >/dev/null 2>&1 &
     sleep 2
     if pidof "$BOT_NAME" >/dev/null 2>&1; then
         echo "$DESC started"

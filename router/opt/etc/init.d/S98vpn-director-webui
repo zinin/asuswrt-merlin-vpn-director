@@ -1,9 +1,69 @@
-#!/opt/bin/bash
-ENABLED=yes
-PROCS=/opt/vpn-director/webui
-ARGS="--config /opt/vpn-director/vpn-director.json"
-PREARGS=""
-DESC="VPN Director Web UI"
-PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+#!/bin/sh
 
-. /opt/etc/init.d/rc.func
+# Note: We don't source rc.func because it calls `pidof $PROCS` with the full
+# path stored in $PROCS, but BusyBox pidof matches by basename only. Running
+# the script via rc.func would always report "failed" after ~10s even though
+# the process started successfully. We also use `nohup` to detach the daemon
+# from the controlling terminal so it survives an SSH logout when the script
+# is invoked manually. (`setsid` is not provided by BusyBox 1.25 on Merlin.)
+ENABLED=yes
+DESC="VPN Director Web UI"
+WEBUI_PATH="/opt/vpn-director/webui"
+WEBUI_NAME="webui"
+WEBUI_CONFIG="/opt/vpn-director/vpn-director.json"
+
+start() {
+    [ "$ENABLED" != "yes" ] && return 0
+    if [ ! -x "$WEBUI_PATH" ]; then
+        logger -t "S98vpn-director-webui" "webui not found at $WEBUI_PATH"
+        return 0
+    fi
+    echo "Starting $DESC..."
+    if pidof "$WEBUI_NAME" >/dev/null 2>&1; then
+        echo "$DESC is already running"
+        return 0
+    fi
+    nohup "$WEBUI_PATH" --config "$WEBUI_CONFIG" </dev/null >/dev/null 2>&1 &
+    sleep 2
+    if pidof "$WEBUI_NAME" >/dev/null 2>&1; then
+        echo "$DESC started"
+        logger "Started $DESC"
+    else
+        echo "Failed to start $DESC"
+        logger "Failed to start $DESC"
+        return 1
+    fi
+}
+
+stop() {
+    echo "Stopping $DESC..."
+    if ! pidof "$WEBUI_NAME" >/dev/null 2>&1; then
+        echo "$DESC is not running"
+        return 0
+    fi
+    killall "$WEBUI_NAME" 2>/dev/null
+    count=0
+    while pidof "$WEBUI_NAME" >/dev/null 2>&1 && [ $count -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if pidof "$WEBUI_NAME" >/dev/null 2>&1; then
+        echo "Force killing $DESC..."
+        killall -9 "$WEBUI_NAME" 2>/dev/null
+    fi
+    echo "$DESC stopped"
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    check)
+        if pidof "$WEBUI_NAME" >/dev/null 2>&1; then
+            echo "$DESC is running"
+        else
+            echo "$DESC is not running"
+        fi
+        ;;
+    *)       echo "Usage: $0 {start|stop|restart|check}" ;;
+esac
