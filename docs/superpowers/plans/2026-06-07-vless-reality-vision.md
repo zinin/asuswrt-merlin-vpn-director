@@ -60,7 +60,7 @@ substitution aborted *sourcing* `config.sh` inside the bats test body → no res
 array. Introduced by the `paused_clients` feature, not this branch (config.sh was byte-identical to
 base — the bug is the interaction). `tunnel_apply` already validated string clients correctly.
 
-**External mesh review (7 reviewers: claude/codex + 5 ext models) — applied:**
+**External mesh review — ROUND 1 (7 reviewers: claude/codex + 5 ext models) — applied:**
 - `a0de79a` (auto-fixes): atomic `config.json` write in `configure.sh` (the `>` redirect truncated
   the live config on generator failure — codex Critical); `_cfg_arr_active` got the same array-guard
   as `98f72db`; `xrayconf_build_outbound` rejects empty/null/non-object stdin; `parse_vless_uri`
@@ -69,14 +69,37 @@ base — the bug is the interaction). `tunnel_apply` already validated string cl
   (shortId optional) in both `xray.go` and `xrayconf.sh` + tests.
 - Verified after each: Go **738** green, bats **246/246** green.
 
-**DISMISSED but worth a SEPARATE follow-up (pre-existing, out of scope here):** the Telegram bot
-`/import` (`server/internal/handler/import.go`) fetches arbitrary URLs with **no SSRF guard**
-(no private/loopback/scheme check), unlike the WebAPI `/api/servers/import`. This branch only changed
-the `ToVPNConfig()` wiring there, so it is not part of this work — but it is a real gap.
+**External mesh review — ROUND 2 (this session 2026-06-07, same 7 reviewers) — applied:**
+- `07e7ac1` (auto-fixes): Go `GenerateConfig` now writes `config.json` atomically
+  (`os.CreateTemp`+`os.Rename`, 0600) like the shell twin — a truncated/interrupted write can no
+  longer brick Xray (and the bot proxying through it); `ParseURI` now propagates `url.ParseQuery`
+  errors instead of silently discarding them (would drop stream params → broken outbound)
+  (+`TestParseURI_MalformedQuery`).
+- `22db1e6` (decision, Variant A): reject out-of-range port (1–65535) at the **import entry points**
+  — Go `parser.go` + shell `import_server_list.sh` (`10#` radix avoids octal misread). Keeps
+  `servers.json` clean so both generators stay safe without duplicate checks (+Go & bats tests).
+- Round 2 found **0 Critical / 0 Important** happy-path bugs; strong 7-reviewer convergence
+  confirmed REALITY/TLS generation, backward-compat, and Go↔shell parity. Everything else dismissed
+  as pre-existing / out-of-scope / documented / false-positive. Verified: Go all packages green,
+  bats green (+3 new tests). Delegation guard: all 6 wrappers REAL.
+
+**DISMISSED but worth SEPARATE follow-ups (all pre-existing, out of scope here — confirmed not in
+this branch's diff hunks / present at base `aebb84af`):**
+- SSRF: Telegram `/import` (`server/internal/handler/import.go`) fetches arbitrary URLs with **no
+  SSRF guard** (no private/loopback/scheme check), unlike the guarded WebAPI `/api/servers/import`.
+- `server/internal/webapi/handler_servers.go:199` swallows the `SaveVPNConfig` error (`_ =`) — API
+  returns 200 while `xray.servers` stays stale (the bot twin at `import.go:126` warns on failure).
+- `handleSelectServer` (`handler_servers.go:76`) sets only the selected server's IPs into
+  `xray.servers` (shell `configure.sh` sets all imported IPs) — possible routing loop on switch.
+- Minor pre-existing: `import_server_list.sh` `curl` has no `--max-time`; DEBUG log line prints the
+  UUID; `base64 -d` is std-only (Go tries 4 variants); IPv6-in-brackets host parse is broken in shell.
+- This branch only changed `ToVPNConfig()` wiring in those handler files — none of the above is part
+  of this work, but all are real and worth their own issue/PR.
 
 → Only remaining: finish the branch — `git rm` all tracked files under `docs/superpowers/` in a
 SEPARATE commit (per repo workflow), then open the PR. See
-`2026-06-07-vless-reality-pr-continuation-prompt.md`.
+`2026-06-07-vless-reality-pr-v2-continuation-prompt.md` (supersedes the earlier `-pr-` prompt;
+round-2 mesh-review now also applied).
 
 ---
 
