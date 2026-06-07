@@ -23,12 +23,15 @@ NC='\033[0m' # No Color
 VPD_DIR="/opt/vpn-director"
 XRAY_CONFIG_DIR="/opt/etc/xray"
 
+# Library: Xray config generator (self-contained pure-jq; no common.sh needed)
+. "$VPD_DIR/lib/xrayconf.sh"
+
 # Temporary storage for parsed data
 XRAY_CLIENTS_LIST=""
 TUN_DIR_TUNNELS_JSON='{}'
 SELECTED_SERVER_ADDRESS=""
 SELECTED_SERVER_PORT=""
-SELECTED_SERVER_UUID=""
+SELECTED_SERVER_JSON=""
 XRAY_EXCLUDE_SETS_LIST="ru"
 
 ###############################################################################
@@ -115,7 +118,7 @@ step_select_xray_server() {
 
     # Read servers from JSON and display
     i=1
-    jq -r '.[] | "\(.name)|\(.address)|\(.ip)"' "$SERVERS_FILE" | \
+    jq -r '.[] | "\(.name)|\(.address)|\(.ips | join(", "))"' "$SERVERS_FILE" | \
     while IFS='|' read -r name address ip; do
         printf "  %2d) %s\n      %s -> %s\n\n" "$i" "$name" "$address" "$ip"
         i=$((i + 1))
@@ -137,7 +140,7 @@ step_select_xray_server() {
     idx=$((choice - 1))
     SELECTED_SERVER_ADDRESS=$(jq -r ".[$idx].address" "$SERVERS_FILE")
     SELECTED_SERVER_PORT=$(jq -r ".[$idx].port" "$SERVERS_FILE")
-    SELECTED_SERVER_UUID=$(jq -r ".[$idx].uuid" "$SERVERS_FILE")
+    SELECTED_SERVER_JSON=$(jq -c ".[$idx]" "$SERVERS_FILE")
     selected_name=$(jq -r ".[$idx].name" "$SERVERS_FILE")
 
     print_success "Selected: $selected_name ($SELECTED_SERVER_ADDRESS)"
@@ -426,10 +429,8 @@ step_generate_configs() {
     # Generate xray/config.json from template
     print_info "Generating Xray config..."
 
-    sed "s|{{XRAY_SERVER_ADDRESS}}|$SELECTED_SERVER_ADDRESS|g" \
-        /opt/etc/xray/config.json.template 2>/dev/null | \
-        sed "s|{{XRAY_SERVER_PORT}}|$SELECTED_SERVER_PORT|g" | \
-        sed "s|{{XRAY_USER_UUID}}|$SELECTED_SERVER_UUID|g" \
+    printf '%s' "$SELECTED_SERVER_JSON" \
+        | xrayconf_generate "$XRAY_CONFIG_DIR/config.json.template" \
         > "$XRAY_CONFIG_DIR/config.json"
     print_success "Generated $XRAY_CONFIG_DIR/config.json"
 
@@ -451,7 +452,7 @@ step_generate_configs() {
     # Build xray servers array from servers.json (unique IPs)
     xray_servers_json="[]"
     if [[ -f "$SERVERS_FILE" ]]; then
-        xray_servers_json=$(jq '[.[].ip] | unique' "$SERVERS_FILE")
+        xray_servers_json=$(jq '[.[].ips[]] | unique' "$SERVERS_FILE")
     fi
 
     # Read template and update with jq
