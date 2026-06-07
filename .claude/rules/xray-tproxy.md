@@ -23,6 +23,30 @@ vpn-director.sh apply             # Apply all (including TPROXY)
 3. Remaining traffic → TPROXY to Xray port
 4. Xray dokodemo-door inbound → VLESS outbound
 
+## Outbound Generation (REALITY/TLS)
+
+`config.json.template` is valid JSON with an empty `outbounds: []`. The proxy-out outbound
+is generated per selected server from `servers.json` stream params and injected as `outbounds[0]`:
+
+- Shell: `lib/xrayconf.sh` (`xrayconf_generate`, jq) — used by `configure.sh`.
+- Go: `service/xray.go` (`buildOutbound` + `encoding/json`) — used by bot wizard and `/xray`.
+
+Per-server params (parsed from the VLESS URI): `security` (`reality`|`tls`), `network`, `flow`,
+`sni`, `fingerprint` (fp), `public_key` (pbk), `short_id` (sid), `alpn`.
+
+- `security=reality` -> `realitySettings { serverName, fingerprint, publicKey, shortId }`, user `flow`.
+- `security=tls` -> `tlsSettings { serverName (sni||address), fingerprint?, alpn? }`.
+- empty `security` -> legacy `tlsSettings { alpn:["h2"], serverName:address }`, no flow.
+
+**Migration after upgrade:** the previously generated `/opt/etc/xray/config.json` stays on disk as
+plain TLS until regenerated, so Xray — and the Telegram bot, which proxies its API connection
+through it — cannot connect to a REALITY server until the user acts:
+
+1. Re-run `/import` (or, over SSH if the bot is unreachable through the broken proxy:
+   `/opt/vpn-director/import_server_list.sh`) so params land in `servers.json`.
+2. Re-select the server (`/configure` wizard or `/xray`, or over SSH `/opt/vpn-director/configure.sh`)
+   to regenerate `config.json`.
+
 ## Configuration
 
 In `vpn-director.json`:

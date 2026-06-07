@@ -34,6 +34,7 @@ var scriptFiles = []string{
 	"router/opt/vpn-director/lib/ipset.sh",
 	"router/opt/vpn-director/lib/tunnel.sh",
 	"router/opt/vpn-director/lib/tproxy.sh",
+	"router/opt/vpn-director/lib/xrayconf.sh",
 	"router/opt/vpn-director/lib/send-email.sh",
 	"router/opt/etc/xray/config.json.template",
 	"router/opt/etc/init.d/S99vpn-director",
