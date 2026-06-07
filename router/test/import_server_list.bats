@@ -231,3 +231,22 @@ vless://uuid2@server2:443#Name2"
     [ "$(jq -r '.[0].sni' "$out")" = "cdn.example.com" ]
     [ "$(jq -r '.[0] | has("alpn")' "$out")" = "false" ]
 }
+
+@test "step_parse_and_save_servers skips out-of-range port, keeps valid server" {
+    load_import_server_list
+
+    tmp_data="$BATS_TEST_TMPDIR/data"
+    mkdir -p "$tmp_data"
+    cfg="$BATS_TEST_TMPDIR/vpn-director.json"
+    printf '{"data_dir":"%s"}' "$tmp_data" > "$cfg"
+    VPD_CONFIG="$cfg"
+    # First URI has an out-of-range port (must be skipped); the second is valid
+    # and must still be saved (one bad entry does not drop the rest).
+    VLESS_SERVERS=$'vless://uuid@1.2.3.4:99999?type=tcp#Bad\nvless://uuid@5.6.7.8:443?type=tcp#Good'
+    run step_parse_and_save_servers
+    [ "$status" -eq 0 ]
+    out="$tmp_data/servers.json"
+    [ "$(jq length "$out")" -eq 1 ]
+    [ "$(jq -r '.[0].address' "$out")" = "5.6.7.8" ]
+    [ "$(jq -r '.[0].port' "$out")" -eq 443 ]
+}

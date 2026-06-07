@@ -136,6 +136,9 @@ func ParseURI(uri string) (*Server, error) {
 	if err != nil {
 		return nil, errors.New("invalid port")
 	}
+	if port < 1 || port > 65535 {
+		return nil, errors.New("port out of range")
+	}
 
 	if address == "" || uuid == "" {
 		return nil, errors.New("missing required fields")

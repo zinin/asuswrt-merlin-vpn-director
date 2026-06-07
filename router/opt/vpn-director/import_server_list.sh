@@ -248,7 +248,11 @@ step_parse_and_save_servers() {
             log -l WARN "Skipping invalid URI (missing server/port/uuid)"
             continue
         fi
-        if ! printf '%s' "$port" | grep -qE '^[0-9]+$'; then
+        # Reject non-numeric and out-of-range ports here so a broken entry never
+        # lands in servers.json. 10# forces base-10 so a zero-padded port (e.g.
+        # 0443) is not misread as octal. Arithmetic in an if-condition is exempt
+        # from set -e, and 10#$port only runs once $port is known all-digit.
+        if ! printf '%s' "$port" | grep -qE '^[0-9]+$' || (( 10#$port < 1 || 10#$port > 65535 )); then
             log -l WARN "Skipping $server: invalid port '$port'"
             continue
         fi

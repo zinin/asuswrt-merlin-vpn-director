@@ -145,6 +145,19 @@ func TestParseURI_MalformedQuery(t *testing.T) {
 	}
 }
 
+func TestParseURI_PortOutOfRange(t *testing.T) {
+	// Numeric but out-of-range ports must be rejected at the entry point so a
+	// broken (port 0 / >65535) server never lands in servers.json.
+	for _, uri := range []string{
+		"vless://uuid@server.example.com:0#Name",
+		"vless://uuid@server.example.com:99999#Name",
+	} {
+		if _, err := ParseURI(uri); err == nil {
+			t.Fatalf("expected error for out-of-range port in %q", uri)
+		}
+	}
+}
+
 func TestParseURI_EmptyUUID(t *testing.T) {
 	uri := "vless://@server.example.com:443"
 
