@@ -498,6 +498,30 @@ func TestGenerateConfig_MissingTemplate(t *testing.T) {
 		t.Error("expected error for missing template")
 	}
 }
+
+func TestGenerateConfig_UnsupportedNetwork(t *testing.T) {
+	tmpDir := t.TempDir()
+	templatePath := filepath.Join(tmpDir, "config.json.template")
+	if err := os.WriteFile(templatePath, []byte(testTemplate), 0644); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewXrayService(templatePath, filepath.Join(tmpDir, "config.json"))
+	if err := svc.GenerateConfig(vpnconfig.Server{Address: "1.2.3.4", Port: 443, UUID: "u", Network: "ws", Security: "reality"}); err == nil {
+		t.Error("expected error for unsupported network 'ws'")
+	}
+}
+
+func TestGenerateConfig_UnsupportedSecurity(t *testing.T) {
+	tmpDir := t.TempDir()
+	templatePath := filepath.Join(tmpDir, "config.json.template")
+	if err := os.WriteFile(templatePath, []byte(testTemplate), 0644); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewXrayService(templatePath, filepath.Join(tmpDir, "config.json"))
+	if err := svc.GenerateConfig(vpnconfig.Server{Address: "1.2.3.4", Port: 443, UUID: "u", Security: "xtls"}); err == nil {
+		t.Error("expected error for unsupported security 'xtls'")
+	}
+}
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -616,9 +640,29 @@ func buildOutbound(s vpnconfig.Server) xrayOutbound {
 	}
 }
 
+// validateStreamParams rejects inputs this generator cannot produce a working
+// config for (only tcp transport and tls/reality security), so a future ws/grpc
+// or unknown security fails loudly instead of silently emitting a broken outbound.
+func validateStreamParams(s vpnconfig.Server) error {
+	switch s.Network {
+	case "", "tcp":
+	default:
+		return fmt.Errorf("unsupported network %q (only tcp is supported)", s.Network)
+	}
+	switch s.Security {
+	case "", "tls", "reality":
+	default:
+		return fmt.Errorf("unsupported security %q (only tls/reality are supported)", s.Security)
+	}
+	return nil
+}
+
 // GenerateConfig parses the (valid-JSON) template and replaces outbounds
 // with a single proxy-out outbound built from the server's stream params.
 func (s *XrayService) GenerateConfig(server vpnconfig.Server) error {
+	if err := validateStreamParams(server); err != nil {
+		return err
+	}
 	template, err := os.ReadFile(s.templatePath)
 	if err != nil {
 		return fmt.Errorf("read template: %w", err)
@@ -642,7 +686,7 @@ func (s *XrayService) GenerateConfig(server vpnconfig.Server) error {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd server && go test ./internal/service/ -v -run TestGenerateConfig`
-Expected: PASS (Reality, TLS, Legacy, MissingTemplate).
+Expected: PASS (Reality, TLS, Legacy, MissingTemplate, UnsupportedNetwork, UnsupportedSecurity).
 
 - [ ] **Step 5: Commit**
 
@@ -699,6 +743,18 @@ setup() {
     [ "$(printf '%s' "$output" | jq -r '.settings.vnext[0].users[0] | has("flow")')" = "false" ]
 }
 
+@test "build_outbound: unsupported network -> error" {
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","network":"ws","sni":"s","public_key":"PBK","short_id":"sid"}'
+    run xrayconf_build_outbound <<< "$server"
+    [ "$status" -ne 0 ]
+}
+
+@test "build_outbound: unsupported security -> error" {
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"xtls"}'
+    run xrayconf_build_outbound <<< "$server"
+    [ "$status" -ne 0 ]
+}
+
 @test "generate: replaces outbounds and preserves inbounds/routing" {
     tmpl="$BATS_TEST_TMPDIR/t.json"
     printf '%s' '{"inbounds":[{"tag":"tproxy-in"},{"tag":"socks-in"}],"outbounds":[],"routing":{"rules":[{"outboundTag":"proxy-out"}]}}' > "$tmpl"
@@ -731,9 +787,17 @@ Expected: FAIL — `xrayconf.sh` does not exist (source error).
 ###############################################################################
 
 # xrayconf_build_outbound: reads one server JSON object on stdin,
-# prints the proxy-out outbound JSON object on stdout.
+# prints the proxy-out outbound JSON object on stdout. Fails (rc=1) on an
+# unsupported network (non-tcp) or security (not tls/reality) instead of
+# emitting a silently-broken outbound. Self-contained: pure jq; errors to stderr.
 xrayconf_build_outbound() {
-    jq '
+    local server_json net sec
+    server_json="$(cat)"
+    net="$(printf '%s' "$server_json" | jq -r '.network // ""')"
+    sec="$(printf '%s' "$server_json" | jq -r '.security // ""')"
+    case "$net" in ""|tcp) ;; *) printf 'xrayconf: unsupported network "%s" (only tcp)\n' "$net" >&2; return 1 ;; esac
+    case "$sec" in ""|tls|reality) ;; *) printf 'xrayconf: unsupported security "%s" (only tls/reality)\n' "$sec" >&2; return 1 ;; esac
+    printf '%s' "$server_json" | jq '
       def trimempty: with_entries(select(.value != null and .value != "" and .value != []));
       ((.network // "") | if . == "" then "tcp" else . end) as $net
       | (.security // "") as $sec
@@ -778,7 +842,7 @@ xrayconf_generate() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `bats router/test/unit/xrayconf.bats`
-Expected: PASS (4 tests).
+Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1045,6 +1109,15 @@ In `step_generate_configs`, replace the `sed ... > "$XRAY_CONFIG_DIR/config.json
         > "$XRAY_CONFIG_DIR/config.json"
 ```
 
+- [ ] **Step 4b: Fix the `.ip` → `.ips` server-IP bug (folded in per iter-1 review)**
+
+`servers.json` stores `ips` (array); `configure.sh` reads a non-existent `.ip` (singular) in two spots:
+
+- `:454` (build `xray.servers` for the `TPROXY_BYPASS` set): replace `jq '[.[].ip] | unique'` with `jq '[.[].ips[]] | unique'` (flatten every server's IP array). Currently yields `[null]`, so Xray server IPs never enter the bypass — a plausible co-cause of the proxy-out breakage.
+- `:118` (server-list display): replace `\(.ip)` with `\(.ips | join(", "))` so the list shows resolved IPs instead of empty.
+
+(Previously marked out-of-scope; included after iter-1 review because Task 7 already edits these functions.)
+
 - [ ] **Step 5: Verify wiring (lint + smoke)**
 
 Run: `bash -n router/opt/vpn-director/configure.sh` (syntax check).
@@ -1059,13 +1132,20 @@ bash -c '
     | jq -e ".outbounds[0].streamSettings.security == \"reality\""
 '
 ```
-Expected: `bash -n` clean; smoke prints `true`.
+
+Also smoke-test the `.ips` flatten fix (Step 4b):
+
+```bash
+printf '%s' '[{"ips":["1.1.1.1","2.2.2.2"]},{"ips":["1.1.1.1"]}]' \
+  | jq -e '([.[].ips[]] | unique) == ["1.1.1.1","2.2.2.2"]'
+```
+Expected: `bash -n` clean; both smokes print `true`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add router/opt/vpn-director/configure.sh
-git commit -m "feat(configure): generate Xray config via xrayconf from selected server"
+git commit -m "feat(configure): generate Xray config via xrayconf; fix .ip->.ips server IPs"
 ```
 
 ---
@@ -1185,4 +1265,4 @@ Expected: outbound with `security:"reality"`, `realitySettings` populated, user 
 
 **Type/name consistency:** `xrayconf_build_outbound`/`xrayconf_generate` (Tasks 5,7); `ToVPNConfig` (Task 3, used Task 3); `buildOutbound`/`GenerateConfig` (Task 4); servers.json keys `security/network/flow/sni/fingerprint/public_key/short_id/alpn` consistent across Go structs, jq filter, and shell builder. Pipe field order (1-12) consistent between Task 6 parser output and builder cut. ✓
 
-**Note:** `configure.sh` line 118/454 use `.ip` (singular) vs servers.json `.ips` — a pre-existing latent issue, out of scope; not touched.
+**Note:** `configure.sh` lines 118/454 used `.ip` (singular) vs servers.json `.ips` — folded into Task 7 Step 4b after iter-1 review (previously out of scope).

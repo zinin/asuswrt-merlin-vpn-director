@@ -85,6 +85,10 @@ Old `servers.json` without these keys → all empty (handled in Section 4).
 - **Shell `parse_vless_uri`** (`import_server_list.sh`): add a dependency-free query mini-parser
   (parameter expansion). Extend the function output and the `step_parse_and_save_servers` builder so
   new fields land in the per-server `jq` object; empty values are omitted to match Go `omitempty`.
+  Note: the shell parser does **not** URL-decode `%XX` (unlike Go's `url.ParseQuery`). Accepted as a
+  known limitation — real VLESS params are URL-safe (base64url `pbk`; token `flow`/`sni`/`fp`/`sid`;
+  no `alpn`), so the two paths agree on current data. If a subscription ever ships percent-encoded
+  values, add a busybox-safe `_url_decode` helper and a mirrored Go test to restore exact parity.
 - **Conversion sites** `vless.Server → vpnconfig.Server` must copy the new fields. Two identical
   literal constructions exist and both must be updated:
   - `server/internal/handler/import.go:98` (bot `/import`)
@@ -109,6 +113,12 @@ the selected server's fields and replace the `outbounds` array wholesale (a sing
   `tlsSettings { alpn:["h2"], serverName=address }`, no `flow`.
 
 `network` = field value or `tcp` default. All `{{...}}` placeholders are removed from the template.
+
+Unsupported inputs fail loudly rather than emitting a silently-broken outbound: a `network` other
+than `tcp` (empty allowed → `tcp`), or a `security` other than `tls`/`reality` (empty allowed →
+legacy TLS), makes both generators error out (Go `GenerateConfig` returns an error; shell
+`xrayconf_build_outbound` returns non-zero). This guards a future ws/grpc subscription without
+expanding generation scope.
 
 Generated outbound skeleton:
 
