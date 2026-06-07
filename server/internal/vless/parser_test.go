@@ -134,6 +134,17 @@ func TestParseURI_InvalidPort(t *testing.T) {
 	}
 }
 
+func TestParseURI_MalformedQuery(t *testing.T) {
+	// A bad %-escape in the query must fail loudly rather than silently
+	// dropping stream params and emitting a broken (plain-TLS) outbound.
+	uri := "vless://uuid@server.example.com:443?security=reality&pbk=%ZZ#Name"
+
+	_, err := ParseURI(uri)
+	if err == nil {
+		t.Fatal("expected error for malformed query")
+	}
+}
+
 func TestParseURI_EmptyUUID(t *testing.T) {
 	uri := "vless://@server.example.com:443"
 

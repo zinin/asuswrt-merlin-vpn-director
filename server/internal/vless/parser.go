@@ -85,7 +85,15 @@ func ParseURI(uri string) (*Server, error) {
 	// Extract and parse query params
 	var params url.Values
 	if idx := strings.Index(rest, "?"); idx != -1 {
-		params, _ = url.ParseQuery(rest[idx+1:])
+		var err error
+		params, err = url.ParseQuery(rest[idx+1:])
+		if err != nil {
+			// A malformed query (e.g. a bad %-escape) would otherwise silently
+			// drop stream params (security/pbk/sid/...) and emit a broken
+			// outbound. Fail loudly; DecodeSubscription skips this URI and keeps
+			// the rest of the subscription.
+			return nil, fmt.Errorf("invalid query: %w", err)
+		}
 		rest = rest[:idx]
 	}
 

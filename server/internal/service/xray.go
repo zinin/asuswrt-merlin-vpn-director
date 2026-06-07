@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -164,8 +165,26 @@ func (s *XrayService) GenerateConfig(server vpnconfig.Server) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(s.outputPath, append(out, '\n'), 0644); err != nil {
+	// Write atomically: temp file in the same dir, then rename. Prevents an
+	// interrupted/partial write from truncating the live config.json and
+	// bricking Xray (and the bot, which proxies through it). Mirrors the
+	// mktemp+mv in configure.sh. 0600 keeps the UUID-bearing config owner-only.
+	dir := filepath.Dir(s.outputPath)
+	tmp, err := os.CreateTemp(dir, "config.json.*")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if _, err := tmp.Write(append(out, '\n')); err != nil {
+		tmp.Close()
 		return fmt.Errorf("write config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	if err := os.Rename(tmpName, s.outputPath); err != nil {
+		return fmt.Errorf("rename config: %w", err)
 	}
 	return nil
 }
