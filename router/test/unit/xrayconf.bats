@@ -55,7 +55,7 @@ setup() {
 @test "generate: replaces outbounds and preserves inbounds/routing" {
     tmpl="$BATS_TEST_TMPDIR/t.json"
     printf '%s' '{"inbounds":[{"tag":"tproxy-in"},{"tag":"socks-in"}],"outbounds":[],"routing":{"rules":[{"outboundTag":"proxy-out"}]}}' > "$tmpl"
-    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","sni":"s","public_key":"PBK","short_id":"sid"}'
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","sni":"s","fingerprint":"firefox","public_key":"PBK","short_id":"sid"}'
     run xrayconf_generate "$tmpl" <<< "$server"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.outbounds[0].streamSettings.security')" = "reality" ]
@@ -80,4 +80,20 @@ setup() {
     server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"xtls"}'
     run xrayconf_generate "$tmpl" <<< "$server"
     [ "$status" -ne 0 ]
+}
+
+@test "build_outbound: reality missing public_key/sni/fingerprint -> error" {
+    run xrayconf_build_outbound <<< '{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","sni":"s","fingerprint":"firefox"}'
+    [ "$status" -ne 0 ]
+    run xrayconf_build_outbound <<< '{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","public_key":"P","fingerprint":"firefox"}'
+    [ "$status" -ne 0 ]
+    run xrayconf_build_outbound <<< '{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","public_key":"P","sni":"s"}'
+    [ "$status" -ne 0 ]
+}
+
+@test "build_outbound: reality without short_id (optional) -> ok" {
+    run xrayconf_build_outbound <<< '{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","public_key":"P","sni":"s","fingerprint":"firefox"}'
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.streamSettings.realitySettings.publicKey')" = "P" ]
+    [ "$(printf '%s' "$output" | jq -r '.streamSettings.realitySettings | has("shortId")')" = "false" ]
 }

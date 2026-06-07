@@ -124,6 +124,24 @@ func validateStreamParams(s vpnconfig.Server) error {
 	default:
 		return fmt.Errorf("unsupported security %q (only tls/reality are supported)", s.Security)
 	}
+	// REALITY cannot complete a handshake without these; fail at generation time
+	// rather than emit an incomplete realitySettings that only breaks at runtime.
+	// shortId is optional (Xray accepts an empty shortId when the server allows it).
+	if s.Security == "reality" {
+		var missing []string
+		if s.PublicKey == "" {
+			missing = append(missing, "public_key")
+		}
+		if s.SNI == "" {
+			missing = append(missing, "sni")
+		}
+		if s.Fingerprint == "" {
+			missing = append(missing, "fingerprint")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("reality security requires non-empty fields: %v", missing)
+		}
+	}
 	return nil
 }
 

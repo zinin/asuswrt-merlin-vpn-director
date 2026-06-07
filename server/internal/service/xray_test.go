@@ -144,3 +144,38 @@ func TestGenerateConfig_UnsupportedSecurity(t *testing.T) {
 		t.Error("expected error for unsupported security 'xtls'")
 	}
 }
+
+func TestGenerateConfig_RealityMissingRequiredFields(t *testing.T) {
+	mkSvc := func() *XrayService {
+		tmpDir := t.TempDir()
+		templatePath := filepath.Join(tmpDir, "config.json.template")
+		if err := os.WriteFile(templatePath, []byte(testTemplate), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return NewXrayService(templatePath, filepath.Join(tmpDir, "config.json"))
+	}
+	base := vpnconfig.Server{
+		Address: "1.2.3.4", Port: 443, UUID: "u", Security: "reality",
+		SNI: "s.example.com", Fingerprint: "chrome", PublicKey: "PBK", ShortID: "sid",
+	}
+	for _, f := range []string{"public_key", "sni", "fingerprint"} {
+		s := base
+		switch f {
+		case "public_key":
+			s.PublicKey = ""
+		case "sni":
+			s.SNI = ""
+		case "fingerprint":
+			s.Fingerprint = ""
+		}
+		if err := mkSvc().GenerateConfig(s); err == nil {
+			t.Errorf("expected error when reality %s is empty", f)
+		}
+	}
+	// shortId is optional: reality without it must still generate.
+	s := base
+	s.ShortID = ""
+	if err := mkSvc().GenerateConfig(s); err != nil {
+		t.Errorf("reality without shortId should succeed, got %v", err)
+	}
+}
