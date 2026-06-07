@@ -30,11 +30,19 @@ func cleanName(s string) string {
 }
 
 type Server struct {
-	Address string   `json:"address"`
-	Port    int      `json:"port"`
-	UUID    string   `json:"uuid"`
-	Name    string   `json:"name"`
-	IPs     []string `json:"ips"`
+	Address     string   `json:"address"`
+	Port        int      `json:"port"`
+	UUID        string   `json:"uuid"`
+	Name        string   `json:"name"`
+	IPs         []string `json:"ips"`
+	Security    string   `json:"security,omitempty"`
+	Network     string   `json:"network,omitempty"`
+	Flow        string   `json:"flow,omitempty"`
+	SNI         string   `json:"sni,omitempty"`
+	Fingerprint string   `json:"fingerprint,omitempty"`
+	PublicKey   string   `json:"public_key,omitempty"`
+	ShortID     string   `json:"short_id,omitempty"`
+	ALPN        []string `json:"alpn,omitempty"`
 }
 
 func ParseURI(uri string) (*Server, error) {
@@ -52,8 +60,10 @@ func ParseURI(uri string) (*Server, error) {
 		rest = rest[:idx]
 	}
 
-	// Remove query params
+	// Extract and parse query params
+	var params url.Values
 	if idx := strings.Index(rest, "?"); idx != -1 {
+		params, _ = url.ParseQuery(rest[idx+1:])
 		rest = rest[:idx]
 	}
 
@@ -105,12 +115,25 @@ func ParseURI(uri string) (*Server, error) {
 		name = address
 	}
 
-	return &Server{
+	s := &Server{
 		Address: address,
 		Port:    port,
 		UUID:    uuid,
 		Name:    name,
-	}, nil
+	}
+	if params != nil {
+		s.Security = params.Get("security")
+		s.Network = params.Get("type")
+		s.Flow = params.Get("flow")
+		s.SNI = params.Get("sni")
+		s.Fingerprint = params.Get("fp")
+		s.PublicKey = params.Get("pbk")
+		s.ShortID = params.Get("sid")
+		if alpn := params.Get("alpn"); alpn != "" {
+			s.ALPN = strings.Split(alpn, ",")
+		}
+	}
+	return s, nil
 }
 
 func (s *Server) ResolveIPs() error {

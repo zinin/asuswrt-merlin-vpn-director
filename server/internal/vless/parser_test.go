@@ -159,13 +159,62 @@ func TestParseURI_ComplexQueryParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if server.Address != "server.com" {
 		t.Errorf("expected Address 'server.com', got '%s'", server.Address)
 	}
-
 	if server.Port != 443 {
 		t.Errorf("expected Port 443, got %d", server.Port)
+	}
+	if server.Security != "tls" {
+		t.Errorf("expected Security 'tls', got '%s'", server.Security)
+	}
+	if server.SNI != "server.com" {
+		t.Errorf("expected SNI 'server.com', got '%s'", server.SNI)
+	}
+	if server.Fingerprint != "chrome" {
+		t.Errorf("expected Fingerprint 'chrome', got '%s'", server.Fingerprint)
+	}
+}
+
+func TestParseURI_Reality(t *testing.T) {
+	// Real subscription format: headerType=none present, pbk/sid at the end, type after headerType
+	// (guards against `type` parsing accidentally matching `headerType`).
+	uri := "vless://9ca8@162.249.126.77:443?security=reality&encryption=none&fp=firefox&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6d9bd269aac46#NL"
+
+	s, err := ParseURI(uri)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Security != "reality" {
+		t.Errorf("Security = %q, want reality", s.Security)
+	}
+	if s.Flow != "xtls-rprx-vision" {
+		t.Errorf("Flow = %q, want xtls-rprx-vision", s.Flow)
+	}
+	if s.Network != "tcp" {
+		t.Errorf("Network = %q, want tcp", s.Network)
+	}
+	if s.SNI != "cdn3-87.yahoo.com" {
+		t.Errorf("SNI = %q, want cdn3-87.yahoo.com", s.SNI)
+	}
+	if s.Fingerprint != "firefox" {
+		t.Errorf("Fingerprint = %q, want firefox", s.Fingerprint)
+	}
+	if s.PublicKey != "PBKEY" {
+		t.Errorf("PublicKey = %q, want PBKEY", s.PublicKey)
+	}
+	if s.ShortID != "55e6d9bd269aac46" {
+		t.Errorf("ShortID = %q, want 55e6d9bd269aac46", s.ShortID)
+	}
+}
+
+func TestParseURI_NoParams(t *testing.T) {
+	s, err := ParseURI("vless://uuid@host:443#X")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Security != "" || s.Flow != "" || s.SNI != "" {
+		t.Errorf("expected empty stream params, got security=%q flow=%q sni=%q", s.Security, s.Flow, s.SNI)
 	}
 }
 
