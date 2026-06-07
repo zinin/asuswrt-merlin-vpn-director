@@ -48,28 +48,35 @@ now-dead `SELECTED_SERVER_UUID`).
   `realitySettings{publicKey/serverName/shortId}`, user `flow=xtls-rprx-vision`, single outbound,
   inbounds preserved, valid JSON).
 
-## POST-COMPLETION FINDING — pre-existing unrelated test failure (remaining work)
+## POST-COMPLETION — #193 FIXED + external review applied (2026-06-07)
 
-The full bats sweep (`bats router/test/ router/test/unit/ router/test/integration/`) exits **1**
-because ONE test aborts without emitting a result line: **`tunnel_apply: handles clients as string
-instead of array`** (`router/test/unit/tunnel.bats:245`; #193 in the full run / #27 when running
-`tunnel.bats` alone). There are **no `not ok` failures** (240 ok, 0 not ok, 1 missing) — bats warns
-`Executed 240 instead of expected 241 tests`.
+**#193 (`tunnel_apply: handles clients as string instead of array`) — FIXED in `98f72db`.**
+Root cause (confirmed; differs from the earlier *unverified* hypothesis): NOT the "invalid JSON →
+exit" path — the fixture is valid JSON. `config.sh` built `TUN_DIR_TUNNELS_JSON` with
+`(.value.clients // []) - $p` (the `paused_clients` filter); a string-valued `clients` makes that a
+jq `string - array` type error (exit 5), and under `set -euo pipefail` the failing command
+substitution aborted *sourcing* `config.sh` inside the bats test body → no result line →
+`Executed 240 instead of expected 241`. Fix: subtract `paused_clients` only when `clients` is an
+array. Introduced by the `paused_clients` feature, not this branch (config.sh was byte-identical to
+base — the bug is the interaction). `tunnel_apply` already validated string clients correctly.
 
-This is **pre-existing and unrelated** to the VLESS REALITY work:
-- This branch (`d2aef54..HEAD`) never touched the test's dependency chain — `tunnel.bats`,
-  `tunnel.sh`, `config.sh`, `common.sh`, `firewall.sh`, `ipset.sh`, `test_helper.bash`, `fixtures/`
-  are all byte-identical to base `d2aef54`.
-- The test + fixture `vpn-director-clients-string.json` were introduced in commit `e9516c8`
-  (2026-01-22), long before this branch.
-- Reproduces deterministically in isolation.
-- **Hypothesis (unverified):** `source "$LIB_DIR/config.sh"` with the malformed `clients`-as-string
-  fixture likely calls `exit` during sourcing (same code path as the passing test
-  "config.sh: fails on invalid JSON"), aborting the bats test body before `run tunnel_apply` ever
-  runs — so no `ok`/`not ok` line is printed and bats counts one short. Verify this before fixing.
+**External mesh review (7 reviewers: claude/codex + 5 ext models) — applied:**
+- `a0de79a` (auto-fixes): atomic `config.json` write in `configure.sh` (the `>` redirect truncated
+  the live config on generator failure — codex Critical); `_cfg_arr_active` got the same array-guard
+  as `98f72db`; `xrayconf_build_outbound` rejects empty/null/non-object stdin; `parse_vless_uri`
+  locals; user `flow` emitted only when `security` non-empty (legacy contract); `alpn` tests + regressions.
+- `4991cd0` (decision): REALITY generators now require non-empty `public_key`+`sni`+`fingerprint`
+  (shortId optional) in both `xray.go` and `xrayconf.sh` + tests.
+- Verified after each: Go **738** green, bats **246/246** green.
 
-→ Fixing this test (via `superpowers:systematic-debugging`) and then finishing the branch are the
-two jobs for the fresh session — see `2026-06-07-vless-reality-finish-continuation-prompt.md`.
+**DISMISSED but worth a SEPARATE follow-up (pre-existing, out of scope here):** the Telegram bot
+`/import` (`server/internal/handler/import.go`) fetches arbitrary URLs with **no SSRF guard**
+(no private/loopback/scheme check), unlike the WebAPI `/api/servers/import`. This branch only changed
+the `ToVPNConfig()` wiring there, so it is not part of this work — but it is a real gap.
+
+→ Only remaining: finish the branch — `git rm` all tracked files under `docs/superpowers/` in a
+SEPARATE commit (per repo workflow), then open the PR. See
+`2026-06-07-vless-reality-pr-continuation-prompt.md`.
 
 ---
 
