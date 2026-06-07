@@ -49,6 +49,32 @@ TEST_URI_CYRILLIC='vless://11111111-2222-3333-4444-555555555555@server5.test.exa
     [ "$name" = "Prague, Czechia" ]
 }
 
+@test "parse_vless_uri extracts reality stream params" {
+    load_import_server_list
+    # Real subscription format includes headerType=none before type=tcp — guards the
+    # `_vless_query_get type` lookup against matching `headerType`.
+    uri='vless://uuid@1.2.3.4:443?security=reality&encryption=none&fp=firefox&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6#NL'
+    run parse_vless_uri "$uri"
+    [ "$status" -eq 0 ]
+    # fields: server|port|uuid|name|security|network|flow|sni|fp|pbk|sid|alpn
+    [ "$(printf '%s' "$output" | cut -d'|' -f5)" = "reality" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f6)" = "tcp" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f7)" = "xtls-rprx-vision" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f8)" = "cdn3-87.yahoo.com" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f9)" = "firefox" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f10)" = "PBKEY" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f11)" = "55e6" ]
+}
+
+@test "parse_vless_uri keeps core fields without params" {
+    load_import_server_list
+    run parse_vless_uri 'vless://uuid@1.2.3.4:443#Name'
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f1)" = "1.2.3.4" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f3)" = "uuid" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f5)" = "" ]
+}
+
 # ============================================================================
 # parse_vless_uri: Name handling
 # ============================================================================
@@ -183,4 +209,25 @@ vless://uuid2@server2:443#Name2"
     [ "$result" = "93.184.216.34" ]
 
     rm -rf "$DATA_DIR"
+}
+
+@test "step_parse_and_save_servers writes reality params to servers.json" {
+    load_import_server_list
+
+    tmp_data="$BATS_TEST_TMPDIR/data"
+    mkdir -p "$tmp_data"
+    # get_data_dir reads VPD_CONFIG/VPD_TEMPLATE; override to a temp config
+    cfg="$BATS_TEST_TMPDIR/vpn-director.json"
+    printf '{"data_dir":"%s"}' "$tmp_data" > "$cfg"
+    VPD_CONFIG="$cfg"
+    VLESS_SERVERS='vless://uuid@1.2.3.4:443?security=reality&flow=xtls-rprx-vision&sni=cdn.example.com&pbk=PBK&sid=sid1&type=tcp#NL'
+    run step_parse_and_save_servers
+    [ "$status" -eq 0 ]
+    out="$tmp_data/servers.json"
+    [ "$(jq -r '.[0].security' "$out")" = "reality" ]
+    [ "$(jq -r '.[0].flow' "$out")" = "xtls-rprx-vision" ]
+    [ "$(jq -r '.[0].public_key' "$out")" = "PBK" ]
+    [ "$(jq -r '.[0].short_id' "$out")" = "sid1" ]
+    [ "$(jq -r '.[0].sni' "$out")" = "cdn.example.com" ]
+    [ "$(jq -r '.[0] | has("alpn")' "$out")" = "false" ]
 }
