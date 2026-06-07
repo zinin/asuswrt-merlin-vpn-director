@@ -44,6 +44,9 @@ with no bypass; LAN TPROXY traffic partially masks the breakage via its exclusio
 - Transports other than `tcp` (`network` field is parsed & stored, but only `tcp` generation is built).
 - `ws` / `grpc` / `httpupgrade` stream settings generation.
 - WebUI feature work beyond carrying the new fields through existing conversion.
+- Storing `headerType` / `encryption` query params: `headerType=none` is the Xray default for `tcp`
+  (no `tcpSettings` is emitted), and VLESS `encryption` is always `none` (hardcoded on the user
+  object). Both are intentionally dropped during parsing; revisit only if a non-`none` value appears.
 
 ## Decisions Summary
 
@@ -51,10 +54,10 @@ with no bypass; LAN TPROXY traffic partially masks the breakage via its exclusio
 |---|---|
 | Scope | REALITY **and** TLS, generalized |
 | Transports generated | `tcp` only (field stored for future) |
-| Generation mechanism | **B**: template becomes valid JSON; generators replace `outbounds[0]` wholesale (`jq` in shell, `encoding/json` in Go) |
+| Generation mechanism | **B**: template becomes valid JSON; generators replace the `outbounds` array wholesale (`jq` in shell, `encoding/json` in Go) |
 | `alpn` | parsed from URI; emitted in `tlsSettings` only when present |
 | reality `spiderX`/`show` | omitted (Xray defaults); may revisit if a client needs them |
-| Backward compat | empty `security` → byte-identical legacy TLS output |
+| Backward compat | empty `security` → semantically identical legacy TLS output (parsed structure, not byte order — Go marshals map keys alphabetically; Xray is order-insensitive) |
 
 ## Section 1 — Data Model: extend `Server`
 
@@ -92,9 +95,9 @@ Old `servers.json` without these keys → all empty (handled in Section 4).
 ## Section 3 — Config generation (mechanism B)
 
 `config.json.template` becomes **valid JSON**. Both generators build the `proxy-out` outbound from
-the selected server's fields and replace `outbounds[0]` wholesale:
+the selected server's fields and replace the `outbounds` array wholesale (a single `proxy-out`):
 
-- **Shell** (`configure.sh`): `jq --argjson ob "$out" '.outbounds[0] = $ob' template > config.json`
+- **Shell** (`configure.sh`): `jq --argjson ob "$out" '.outbounds = [$ob]' template > config.json`
 - **Go** (`xray.go`): `json.Unmarshal(template)` → replace `outbounds` → `json.MarshalIndent`
 
 `streamSettings` shape by `security`:
@@ -102,7 +105,7 @@ the selected server's fields and replace `outbounds[0]` wholesale:
 - `reality` → `realitySettings { serverName=sni, fingerprint=fp, publicKey=pbk, shortId=sid }`;
   user object gets `flow`.
 - `tls` → `tlsSettings { serverName = sni || address, fingerprint? , alpn? }`.
-- `""` (legacy) → byte-identical current output:
+- `""` (legacy) → semantically identical current output (parsed structure, not byte order):
   `tlsSettings { alpn:["h2"], serverName=address }`, no `flow`.
 
 `network` = field value or `tcp` default. All `{{...}}` placeholders are removed from the template.
@@ -125,11 +128,14 @@ Config.json is regenerated only at configure / server-switch time, not by `vpn-d
 
 ## Section 4 — Backward compatibility & migration
 
-- Empty `security` (old `servers.json`) → legacy TLS output identical to today → **no regression**.
+- Empty `security` (old `servers.json`) → legacy TLS output semantically identical to today (parsed structure, not byte order) → **no regression**.
 - New fields use `omitempty` (Go) / are omitted when empty (shell) → legacy files stay clean.
 - **Migration steps for the user (documented):**
   1. Re-run `/import` (or `import_server_list.sh`) so params land in `servers.json`.
   2. Re-select the server via `/configure` wizard or `/xray` to regenerate `config.json`.
+  - ⚠️ Until both steps run, the on-disk `config.json` stays plain-TLS → Xray and the Telegram bot
+    cannot connect to a REALITY server. If the bot is unreachable through the broken proxy, perform
+    the steps over SSH (`import_server_list.sh`, then `configure.sh`).
 
 ## Section 5 — Testing (TDD)
 
@@ -145,6 +151,7 @@ Config.json is regenerated only at configure / server-switch time, not by `vpn-d
 ## Files Touched
 
 - `router/opt/etc/xray/config.json.template` — convert to valid JSON, drop placeholders.
+- `server/testdata/dev/xray.template.json` — dev-mode template (same placeholders); convert to valid JSON with empty `outbounds` (else Go dev-mode `json.Unmarshal` fails).
 - `router/opt/vpn-director/import_server_list.sh` — query parser + extended servers.json.
 - `router/opt/vpn-director/configure.sh` — jq-based generation replacing `outbounds[0]`.
 - `server/internal/vless/parser.go` — parse query → fields.

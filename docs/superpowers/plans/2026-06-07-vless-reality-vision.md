@@ -4,7 +4,7 @@
 
 **Goal:** Parse and persist per-server VLESS stream parameters (REALITY + TLS) end-to-end so generated Xray configs connect to REALITY/XTLS-Vision servers, fixing the Telegram bot (socks5) and LAN TPROXY.
 
-**Architecture:** Extend the `Server` schema (Go `vless` + `vpnconfig`, shell `servers.json`) with `security/network/flow/sni/fingerprint/public_key/short_id/alpn`. Both parsers read URI query params; config generation replaces `outbounds[0]` wholesale built from those params — `encoding/json` in Go (`xray.go`), a sourceable jq helper (`lib/xrayconf.sh`) in shell. The template becomes valid JSON with empty `outbounds`.
+**Architecture:** Extend the `Server` schema (Go `vless` + `vpnconfig`, shell `servers.json`) with `security/network/flow/sni/fingerprint/public_key/short_id/alpn`. Both parsers read URI query params; config generation replaces the `outbounds` array wholesale built from those params — `encoding/json` in Go (`xray.go`), a sourceable jq helper (`lib/xrayconf.sh`) in shell. The template becomes valid JSON with empty `outbounds`.
 
 **Tech Stack:** Go (`encoding/json`, `net/url`), Bash + `jq`, bats (bats-support/bats-assert), `go test`.
 
@@ -21,6 +21,7 @@
 
 **Files:**
 - Modify: `router/opt/etc/xray/config.json.template`
+- Modify: `server/testdata/dev/xray.template.json` (dev-mode template; carries the SAME `{{...}}` placeholders — `paths.go:34` → `bot.go:96` / `webui/main.go:106`. After Task 4 rewrites Go `GenerateConfig` to `json.Unmarshal`, an invalid-JSON dev template breaks dev-mode generation. Must also become valid JSON with `outbounds: []`.)
 - Test: `router/test/unit/xray_template.bats` (create)
 
 - [ ] **Step 1: Write the failing test**
@@ -38,6 +39,11 @@ load '../test_helper.bash'
 
 @test "config.json.template has empty outbounds (filled by generator)" {
     run jq -e '.outbounds == []' "$PROJECT_ROOT/opt/etc/xray/config.json.template"
+    [ "$status" -eq 0 ]
+}
+
+@test "config.json.template keeps both inbounds (tproxy-in, socks-in)" {
+    run jq -e '.inbounds | length == 2' "$PROJECT_ROOT/opt/etc/xray/config.json.template"
     [ "$status" -eq 0 ]
 }
 ```
@@ -81,16 +87,20 @@ In `router/opt/etc/xray/config.json.template`, replace the entire `"outbounds": 
 }
 ```
 
+- [ ] **Step 3b: Make the dev-mode template valid JSON too**
+
+`server/testdata/dev/xray.template.json` carries the same `{{XRAY_SERVER_ADDRESS}}` / `{{XRAY_SERVER_PORT}}` / `{{XRAY_USER_UUID}}` placeholders and is loaded in dev mode (`paths.go:34` → `bot.go:96`, `webui/main.go:106`). Since Task 4 switches Go generation to `json.Unmarshal`, an invalid-JSON dev template would make dev-mode `GenerateConfig` fail at parse time. Replace its `"outbounds": [ ... ]` (the placeholder `proxy-out` object) with `"outbounds": []`, leaving `inbounds`/`routing` intact, so it parses as valid JSON. (Go `xray_test.go` uses its own in-memory `testTemplate`, so this fix is for the dev runtime, not the unit tests.)
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `bats router/test/unit/xray_template.bats`
-Expected: PASS (both tests).
+Expected: PASS (all three tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add router/opt/etc/xray/config.json.template router/test/unit/xray_template.bats
-git commit -m "feat(xray): make config template valid JSON with empty outbounds"
+git add router/opt/etc/xray/config.json.template server/testdata/dev/xray.template.json router/test/unit/xray_template.bats
+git commit -m "feat(xray): make config templates valid JSON with empty outbounds"
 ```
 
 ---
@@ -131,7 +141,9 @@ func TestParseURI_ComplexQueryParams(t *testing.T) {
 }
 
 func TestParseURI_Reality(t *testing.T) {
-	uri := "vless://9ca8@162.249.126.77:443?security=reality&encryption=none&fp=firefox&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6d9bd269aac46#NL"
+	// Real subscription format: headerType=none present, pbk/sid at the end, type after headerType
+	// (guards against `type` parsing accidentally matching `headerType`).
+	uri := "vless://9ca8@162.249.126.77:443?security=reality&encryption=none&fp=firefox&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6d9bd269aac46#NL"
 
 	s, err := ParseURI(uri)
 	if err != nil {
@@ -429,6 +441,12 @@ func TestGenerateConfig_Reality(t *testing.T) {
 	if rs["publicKey"] != "PBKEY" || rs["shortId"] != "55e6" || rs["serverName"] != "cdn3-87.yahoo.com" || rs["fingerprint"] != "firefox" {
 		t.Errorf("realitySettings wrong: %v", rs)
 	}
+	if ss["network"] != "tcp" {
+		t.Errorf("network = %v, want tcp", ss["network"])
+	}
+	if _, ok := ss["tlsSettings"]; ok {
+		t.Errorf("reality outbound must not contain tlsSettings")
+	}
 	u0 := ob["settings"].(map[string]interface{})["vnext"].([]interface{})[0].(map[string]interface{})["users"].([]interface{})[0].(map[string]interface{})
 	if u0["flow"] != "xtls-rprx-vision" {
 		t.Errorf("flow = %v, want xtls-rprx-vision", u0["flow"])
@@ -446,6 +464,9 @@ func TestGenerateConfig_TLS(t *testing.T) {
 	tls := ss["tlsSettings"].(map[string]interface{})
 	if tls["serverName"] != "host.example.com" || tls["fingerprint"] != "chrome" {
 		t.Errorf("tlsSettings wrong: %v", tls)
+	}
+	if _, ok := ss["realitySettings"]; ok {
+		t.Errorf("tls outbound must not contain realitySettings")
 	}
 }
 
@@ -652,7 +673,7 @@ setup() {
 
 @test "build_outbound: reality -> realitySettings + flow" {
     server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","network":"tcp","flow":"xtls-rprx-vision","sni":"cdn.example.com","fingerprint":"firefox","public_key":"PBK","short_id":"sid1"}'
-    run bash -c "printf '%s' '$server' | xrayconf_build_outbound"
+    run xrayconf_build_outbound <<< "$server"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.security')" = "reality" ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.realitySettings.publicKey')" = "PBK" ]
@@ -662,7 +683,7 @@ setup() {
 
 @test "build_outbound: tls -> tlsSettings serverName from sni" {
     server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"tls","sni":"host.example.com","fingerprint":"chrome"}'
-    run bash -c "printf '%s' '$server' | xrayconf_build_outbound"
+    run xrayconf_build_outbound <<< "$server"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.security')" = "tls" ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.tlsSettings.serverName')" = "host.example.com" ]
@@ -670,7 +691,7 @@ setup() {
 
 @test "build_outbound: legacy (no security) -> tls alpn h2, no flow" {
     server='{"address":"example.com","port":443,"uuid":"u1"}'
-    run bash -c "printf '%s' '$server' | xrayconf_build_outbound"
+    run xrayconf_build_outbound <<< "$server"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.security')" = "tls" ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.tlsSettings.serverName')" = "example.com" ]
@@ -678,16 +699,21 @@ setup() {
     [ "$(printf '%s' "$output" | jq -r '.settings.vnext[0].users[0] | has("flow")')" = "false" ]
 }
 
-@test "generate: replaces outbounds in template" {
+@test "generate: replaces outbounds and preserves inbounds/routing" {
     tmpl="$BATS_TEST_TMPDIR/t.json"
-    printf '%s' '{"inbounds":[],"outbounds":[],"routing":{}}' > "$tmpl"
+    printf '%s' '{"inbounds":[{"tag":"tproxy-in"},{"tag":"socks-in"}],"outbounds":[],"routing":{"rules":[{"outboundTag":"proxy-out"}]}}' > "$tmpl"
     server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","sni":"s","public_key":"PBK","short_id":"sid"}'
-    run bash -c "printf '%s' '$server' | xrayconf_generate '$tmpl'"
+    run xrayconf_generate "$tmpl" <<< "$server"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.outbounds[0].streamSettings.security')" = "reality" ]
     [ "$(printf '%s' "$output" | jq -r '.outbounds | length')" = "1" ]
+    # inbounds/routing from the template must be preserved untouched
+    [ "$(printf '%s' "$output" | jq -r '.inbounds | length')" = "2" ]
+    [ "$(printf '%s' "$output" | jq -r '.routing.rules[0].outboundTag')" = "proxy-out" ]
 }
 ```
+
+> Note: tests invoke the shell functions directly (`run xrayconf_build_outbound <<< "$server"`), NOT via `run bash -c "… | xrayconf_build_outbound"` — a `bash -c` child shell does not inherit functions sourced in `setup()`, so that form fails with `command not found`. The herestring also avoids re-quoting the JSON (`$`/apostrophe safe). `setup()` sources only `xrayconf.sh`, which must stay self-contained (no `common.sh`/mock deps); if a future test here needs the `test_helper.bash` mocks, switch to a `load_*`-style helper instead of overriding `setup()`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -775,7 +801,9 @@ Add to `router/test/import_server_list.bats` (it already sources the script with
 
 ```bash
 @test "parse_vless_uri extracts reality stream params" {
-    uri='vless://uuid@1.2.3.4:443?security=reality&encryption=none&fp=firefox&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6#NL'
+    # Real subscription format includes headerType=none before type=tcp — guards the
+    # `_vless_query_get type` lookup against matching `headerType`.
+    uri='vless://uuid@1.2.3.4:443?security=reality&encryption=none&fp=firefox&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6#NL'
     run parse_vless_uri "$uri"
     [ "$status" -eq 0 ]
     # fields: server|port|uuid|name|security|network|flow|sni|fp|pbk|sid|alpn
@@ -819,6 +847,18 @@ _vless_query_get() {
     esac
 }
 ```
+
+Also harden the existing name extraction so a URI **without** a `#fragment` doesn't capture the query string as the name. Replace the bare `raw_name="${rest##*#}"` line with a guard:
+
+```bash
+    if [[ "$rest" == *#* ]]; then
+        raw_name="${rest##*#}"
+    else
+        raw_name=""
+    fi
+```
+
+(The existing `if [[ -z "$name" ]]; then name="$server"; fi` fallback then yields the server hostname. Real subscription URIs always include `#name`, so this only affects malformed/fragment-less input.)
 
 Then in `parse_vless_uri()`, after `rest="${rest#*@}"` and the existing `server_port="${rest%%\?*}"` line, add query capture and param extraction, and replace the final `printf` (line 100) so it emits all 12 fields:
 
@@ -971,11 +1011,13 @@ git commit -m "feat(import): capture REALITY/TLS stream params into servers.json
 
 - [ ] **Step 1: Source the new lib**
 
-Near the top of `configure.sh`, where `lib/common.sh` is sourced, add (use the same `SCRIPT_DIR` variable the file already uses):
+`configure.sh` is self-contained — it does **not** source `lib/common.sh` and has **no** `SCRIPT_DIR`; it only defines `VPD_DIR="/opt/vpn-director"` (line 23). Under `set -euo pipefail`, sourcing via an undefined `$SCRIPT_DIR` would abort with `unbound variable`. Add the source right after the `VPD_DIR=...` line, using `$VPD_DIR`:
 
 ```bash
-. "$SCRIPT_DIR/lib/xrayconf.sh"
+. "$VPD_DIR/lib/xrayconf.sh"
 ```
+
+(`xrayconf.sh` is self-contained — pure `jq`, no `common.sh` dependency — so sourcing it alone is safe.)
 
 - [ ] **Step 2: Add a global for the selected server JSON**
 
@@ -1077,8 +1119,14 @@ Per-server params (parsed from the VLESS URI): `security` (`reality`|`tls`), `ne
 - `security=tls` -> `tlsSettings { serverName (sni||address), fingerprint?, alpn? }`.
 - empty `security` -> legacy `tlsSettings { alpn:["h2"], serverName:address }`, no flow.
 
-**Migration after upgrade:** re-run `/import` (or `import_server_list.sh`) so params land in
-`servers.json`, then re-select the server (`/configure` wizard or `/xray`) to regenerate `config.json`.
+**Migration after upgrade:** the previously generated `/opt/etc/xray/config.json` stays on disk as
+plain TLS until regenerated, so Xray — and the Telegram bot, which proxies its API connection
+through it — cannot connect to a REALITY server until the user acts:
+
+1. Re-run `/import` (or, over SSH if the bot is unreachable through the broken proxy:
+   `/opt/vpn-director/import_server_list.sh`) so params land in `servers.json`.
+2. Re-select the server (`/configure` wizard or `/xray`, or over SSH `/opt/vpn-director/configure.sh`)
+   to regenerate `config.json`.
 ```
 
 In `CLAUDE.md`, add a row to the Architecture table after the `lib/tproxy.sh` row:
