@@ -13,6 +13,10 @@
 xrayconf_build_outbound() {
     local server_json net sec
     server_json="$(cat)"
+    if ! printf '%s' "$server_json" | jq -e 'type == "object" and (.address // "") != "" and (.uuid // "") != ""' >/dev/null 2>&1; then
+        printf 'xrayconf: invalid/empty server JSON (need object with address and uuid)\n' >&2
+        return 1
+    fi
     net="$(printf '%s' "$server_json" | jq -r '.network // ""')"
     sec="$(printf '%s' "$server_json" | jq -r '.security // ""')"
     case "$net" in ""|tcp) ;; *) printf 'xrayconf: unsupported network "%s" (only tcp)\n' "$net" >&2; return 1 ;; esac
@@ -27,7 +31,7 @@ xrayconf_build_outbound() {
             address: .address,
             port: .port,
             users: [ ( { id: .uuid, encryption: "none" }
-                       + (if (.flow // "") != "" then { flow: .flow } else {} end) ) ]
+                       + (if (.flow // "") != "" and (.security // "") != "" then { flow: .flow } else {} end) ) ]
           } ] },
           streamSettings: (
             if $sec == "reality" then

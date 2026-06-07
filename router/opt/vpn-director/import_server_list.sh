@@ -74,7 +74,9 @@ _vless_query_get() {
 # Output: pipe-separated fields
 #   server|port|uuid|name|security|network|flow|sni|fp|pbk|sid|alpn
 parse_vless_uri() {
-    uri="$1"
+    local uri="$1"
+    local rest raw_name name uuid server_port server port query
+    local security network flow sni fp pbk sid alpn
 
     # Remove vless:// prefix
     rest="${uri#vless://}"

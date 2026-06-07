@@ -90,13 +90,19 @@ func buildOutbound(s vpnconfig.Server) xrayOutbound {
 		stream.Security = "tls"
 		stream.TLSSettings = &xrayTLS{ServerName: s.Address, ALPN: []string{"h2"}}
 	}
+	// Per spec, flow belongs only to tls/reality outbounds; a legacy record
+	// (empty security) must not carry it even if the field is populated.
+	userFlow := s.Flow
+	if s.Security == "" {
+		userFlow = ""
+	}
 	return xrayOutbound{
 		Protocol: "vless",
 		Settings: map[string]interface{}{
 			"vnext": []xrayVnext{{
 				Address: s.Address,
 				Port:    s.Port,
-				Users:   []xrayUser{{ID: s.UUID, Encryption: "none", Flow: s.Flow}},
+				Users:   []xrayUser{{ID: s.UUID, Encryption: "none", Flow: userFlow}},
 			}},
 		},
 		StreamSettings: stream,

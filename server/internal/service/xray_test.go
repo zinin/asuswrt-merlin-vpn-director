@@ -73,6 +73,7 @@ func TestGenerateConfig_Reality(t *testing.T) {
 func TestGenerateConfig_TLS(t *testing.T) {
 	cfg := generate(t, vpnconfig.Server{
 		Address: "1.2.3.4", Port: 443, UUID: "u", Security: "tls", SNI: "host.example.com", Fingerprint: "chrome",
+		ALPN: []string{"h2", "http/1.1"},
 	})
 	ss := outbound0(t, cfg)["streamSettings"].(map[string]interface{})
 	if ss["security"] != "tls" {
@@ -82,13 +83,17 @@ func TestGenerateConfig_TLS(t *testing.T) {
 	if tls["serverName"] != "host.example.com" || tls["fingerprint"] != "chrome" {
 		t.Errorf("tlsSettings wrong: %v", tls)
 	}
+	alpn, ok := tls["alpn"].([]interface{})
+	if !ok || len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
+		t.Errorf("tls alpn = %v, want [h2 http/1.1]", tls["alpn"])
+	}
 	if _, ok := ss["realitySettings"]; ok {
 		t.Errorf("tls outbound must not contain realitySettings")
 	}
 }
 
 func TestGenerateConfig_Legacy(t *testing.T) {
-	cfg := generate(t, vpnconfig.Server{Address: "example.com", Port: 443, UUID: "abc-123"})
+	cfg := generate(t, vpnconfig.Server{Address: "example.com", Port: 443, UUID: "abc-123", Flow: "xtls-rprx-vision"})
 	ob := outbound0(t, cfg)
 	ss := ob["streamSettings"].(map[string]interface{})
 	if ss["security"] != "tls" {

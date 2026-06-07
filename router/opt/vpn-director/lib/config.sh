@@ -46,7 +46,8 @@ _PAUSED_CLIENTS_JSON=$(jq -c '.paused_clients // []' "$VPD_CONFIG_FILE")
 # Array loader that subtracts paused_clients
 _cfg_arr_active() {
     jq -r --argjson p "$_PAUSED_CLIENTS_JSON" \
-        "($1 // []) - \$p | .[]" "$VPD_CONFIG_FILE" | tr '\n' ' ' | sed 's/ $//';
+        "($1 // []) | if type == \"array\" then (. - \$p)[] else empty end" \
+        "$VPD_CONFIG_FILE" | tr '\n' ' ' | sed 's/ $//';
 }
 
 ###################################################################################################

@@ -23,8 +23,15 @@ setup() {
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.tlsSettings.serverName')" = "host.example.com" ]
 }
 
+@test "build_outbound: tls -> alpn emitted when present" {
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"tls","sni":"host.example.com","alpn":["h2","http/1.1"]}'
+    run xrayconf_build_outbound <<< "$server"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.streamSettings.tlsSettings.alpn | join(",")')" = "h2,http/1.1" ]
+}
+
 @test "build_outbound: legacy (no security) -> tls alpn h2, no flow" {
-    server='{"address":"example.com","port":443,"uuid":"u1"}'
+    server='{"address":"example.com","port":443,"uuid":"u1","flow":"xtls-rprx-vision"}'
     run xrayconf_build_outbound <<< "$server"
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.security')" = "tls" ]
@@ -56,4 +63,21 @@ setup() {
     # inbounds/routing from the template must be preserved untouched
     [ "$(printf '%s' "$output" | jq -r '.inbounds | length')" = "2" ]
     [ "$(printf '%s' "$output" | jq -r '.routing.rules[0].outboundTag')" = "proxy-out" ]
+}
+
+@test "build_outbound: empty/null/non-object input -> error (no silent null outbound)" {
+    run xrayconf_build_outbound <<< ""
+    [ "$status" -ne 0 ]
+    run xrayconf_build_outbound <<< "null"
+    [ "$status" -ne 0 ]
+    run xrayconf_build_outbound <<< '{"port":443}'
+    [ "$status" -ne 0 ]
+}
+
+@test "generate: returns non-zero on unsupported security (caller must not truncate)" {
+    tmpl="$BATS_TEST_TMPDIR/t.json"
+    printf '%s' '{"outbounds":[]}' > "$tmpl"
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"xtls"}'
+    run xrayconf_generate "$tmpl" <<< "$server"
+    [ "$status" -ne 0 ]
 }

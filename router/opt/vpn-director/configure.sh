@@ -118,7 +118,7 @@ step_select_xray_server() {
 
     # Read servers from JSON and display
     i=1
-    jq -r '.[] | "\(.name)|\(.address)|\(.ips | join(", "))"' "$SERVERS_FILE" | \
+    jq -r '.[] | "\(.name)|\(.address)|\((.ips // []) | join(", "))"' "$SERVERS_FILE" | \
     while IFS='|' read -r name address ip; do
         printf "  %2d) %s\n      %s -> %s\n\n" "$i" "$name" "$address" "$ip"
         i=$((i + 1))
@@ -429,10 +429,21 @@ step_generate_configs() {
     # Generate xray/config.json from template
     print_info "Generating Xray config..."
 
-    printf '%s' "$SELECTED_SERVER_JSON" \
+    # Generate to a temp file first, then replace atomically. A '>' redirect would
+    # truncate the live config.json before xrayconf_generate runs, so a generator
+    # failure (bad params, jq/template error) would leave the router with an empty
+    # config. Write-then-mv keeps the existing config intact on any failure.
+    _xray_cfg_tmp=$(mktemp "$XRAY_CONFIG_DIR/config.json.XXXXXX")
+    if printf '%s' "$SELECTED_SERVER_JSON" \
         | xrayconf_generate "$XRAY_CONFIG_DIR/config.json.template" \
-        > "$XRAY_CONFIG_DIR/config.json"
-    print_success "Generated $XRAY_CONFIG_DIR/config.json"
+        > "$_xray_cfg_tmp"; then
+        mv -f "$_xray_cfg_tmp" "$XRAY_CONFIG_DIR/config.json"
+        print_success "Generated $XRAY_CONFIG_DIR/config.json"
+    else
+        rm -f "$_xray_cfg_tmp"
+        print_error "Failed to generate Xray config (invalid server params?); kept existing config.json"
+        exit 1
+    fi
 
     # Generate vpn-director.json
     print_info "Generating vpn-director.json..."
