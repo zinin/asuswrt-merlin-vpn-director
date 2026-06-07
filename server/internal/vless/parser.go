@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
 // cleanName removes emoji flags and keeps only allowed characters:
@@ -43,6 +45,26 @@ type Server struct {
 	PublicKey   string   `json:"public_key,omitempty"`
 	ShortID     string   `json:"short_id,omitempty"`
 	ALPN        []string `json:"alpn,omitempty"`
+}
+
+// ToVPNConfig converts a parsed vless.Server into a vpnconfig.Server,
+// carrying all stream parameters. Call ResolveIPs first to populate IPs.
+func (s *Server) ToVPNConfig() vpnconfig.Server {
+	return vpnconfig.Server{
+		Address:     s.Address,
+		Port:        s.Port,
+		UUID:        s.UUID,
+		Name:        s.Name,
+		IPs:         s.IPs,
+		Security:    s.Security,
+		Network:     s.Network,
+		Flow:        s.Flow,
+		SNI:         s.SNI,
+		Fingerprint: s.Fingerprint,
+		PublicKey:   s.PublicKey,
+		ShortID:     s.ShortID,
+		ALPN:        s.ALPN,
+	}
 }
 
 func ParseURI(uri string) (*Server, error) {

@@ -166,13 +166,7 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			if err := s.ResolveIPs(); err != nil {
 				continue
 			}
-			resolved = append(resolved, vpnconfig.Server{
-				Address: s.Address,
-				Port:    s.Port,
-				UUID:    s.UUID,
-				Name:    s.Name,
-				IPs:     s.IPs,
-			})
+			resolved = append(resolved, s.ToVPNConfig())
 		}
 
 		if len(resolved) == 0 {

@@ -208,6 +208,26 @@ func TestParseURI_Reality(t *testing.T) {
 	}
 }
 
+func TestToVPNConfig_CarriesStreamParams(t *testing.T) {
+	s := &Server{
+		Address: "1.2.3.4", Port: 443, UUID: "u", Name: "n", IPs: []string{"1.2.3.4"},
+		Security: "reality", Network: "tcp", Flow: "xtls-rprx-vision",
+		SNI: "cdn.example.com", Fingerprint: "firefox", PublicKey: "PBK", ShortID: "sid",
+		ALPN: []string{"h2"},
+	}
+	c := s.ToVPNConfig()
+	if c.Address != "1.2.3.4" || c.Port != 443 || c.UUID != "u" || c.Name != "n" ||
+		len(c.IPs) != 1 || c.IPs[0] != "1.2.3.4" {
+		t.Errorf("ToVPNConfig dropped base fields: %+v", c)
+	}
+	if c.Security != "reality" || c.Network != "tcp" || c.Flow != "xtls-rprx-vision" ||
+		c.SNI != "cdn.example.com" || c.Fingerprint != "firefox" ||
+		c.PublicKey != "PBK" || c.ShortID != "sid" ||
+		len(c.ALPN) != 1 || c.ALPN[0] != "h2" {
+		t.Errorf("ToVPNConfig dropped stream params: %+v", c)
+	}
+}
+
 func TestParseURI_NoParams(t *testing.T) {
 	s, err := ParseURI("vless://uuid@host:443#X")
 	if err != nil {
