@@ -52,10 +52,14 @@ _cfg_arr_active() {
 ###################################################################################################
 # 4. Tunnel Director variables
 ###################################################################################################
+# Subtract paused_clients only from tunnels whose clients is a real array; pass
+# malformed (e.g. string-valued) clients through untouched so tunnel_apply can
+# validate and warn. Without the array guard, "string - $p" is a jq type error
+# that, under set -e, aborts sourcing this file.
 TUN_DIR_TUNNELS_JSON=$(jq --argjson p "$_PAUSED_CLIENTS_JSON" \
     '(.tunnel_director.tunnels // {})
      | to_entries
-     | map(if (.value | type) == "object"
+     | map(if (.value | type) == "object" and ((.value.clients // []) | type) == "array"
            then .value.clients = ((.value.clients // []) - $p)
            else . end)
      | from_entries' "$VPD_CONFIG_FILE")
