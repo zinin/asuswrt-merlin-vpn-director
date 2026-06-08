@@ -49,14 +49,17 @@ decode_vless_content() {
     else
         log "Detected base64 format, decoding..."
         # Standard alphabet first; fall back to URL-safe base64 (RFC 4648 §5):
-        # map -_ to +/ and pad to a multiple of 4, then decode. The Go importer
-        # accepts url-safe blobs too, so this keeps shell/Go parity.
+        # map url-safe -_ to standard +/ and pad to a multiple of 4, then decode.
+        # The tr sets are written '_-' '/+' (dash LAST in SET1, no leading '-' and
+        # no '--') so busybox tr parses them as operands, not options, while the
+        # _->/ and -->+ mapping is preserved. The Go importer accepts url-safe
+        # blobs too, so this keeps shell/Go parity.
         local decoded b64 pad
         if decoded=$(printf '%s' "$content" | base64 -d 2>/dev/null); then
             printf '%s' "$decoded"
             return 0
         fi
-        b64=$(printf '%s' "$content" | tr -d '\r\n\t ' | tr -- '-_' '+/')
+        b64=$(printf '%s' "$content" | tr -d '\r\n\t ' | tr '_-' '/+')
         [[ -n "$b64" ]] || return 1
         case $(( ${#b64} % 4 )) in
             2) pad='==' ;;

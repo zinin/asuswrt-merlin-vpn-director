@@ -186,6 +186,15 @@ vless://uuid2@server2:443#Name2"
     [ "$result" = "????" ]
 }
 
+@test "decode_vless_content: url-safe base64 maps both - and _ (full alphabet)" {
+    load_import_server_list
+    # ">>>???" standard base64 is "Pj4+Pz8/" (contains BOTH + and /); the URL-safe
+    # form replaces + with - and / with _, so this exercises the full -_ -> +/
+    # mapping. A reversed set (e.g. tr '_-' '+/') decodes to the wrong bytes.
+    result=$(decode_vless_content "Pj4-Pz8_")
+    [ "$result" = ">>>???" ]
+}
+
 # ============================================================================
 # parse_vless_uri: IPv6 literal host
 # ============================================================================
