@@ -184,8 +184,12 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 
 		// Sync xray.servers with all imported server IPs. Surface a persistence
 		// failure instead of returning 200 with a stale xray.servers on disk.
+		// servers.json is already saved here, so the message says so explicitly:
+		// the import partially persisted (servers stored, xray.servers stale) and
+		// the client must not read the 500 as "nothing changed".
 		if err := syncXrayServers(deps.Config, resolved); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to sync xray servers")
+			jsonError(w, http.StatusInternalServerError,
+				fmt.Sprintf("servers saved, but xray.servers sync failed: %s", err))
 			return
 		}
 
