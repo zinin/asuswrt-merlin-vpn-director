@@ -27,8 +27,10 @@ func TestIsPrivateOrReserved(t *testing.T) {
 		{"fc00::1", true},               // IPv6 ULA
 		{"fe80::1", true},               // IPv6 link-local
 		{"ff02::1", true},               // IPv6 multicast
-		{"::ffff:127.0.0.1", true},      // IPv4-mapped loopback
-		{"::ffff:192.168.0.1", true},    // IPv4-mapped private
+		{"::ffff:127.0.0.1", true},       // IPv4-mapped loopback
+		{"::ffff:192.168.0.1", true},     // IPv4-mapped private
+		{"::ffff:100.64.0.1", true},      // IPv4-mapped CGNAT (To4 + extraBlockedCIDRs)
+		{"::ffff:169.254.169.254", true}, // IPv4-mapped link-local metadata
 		// IPv4-embedded IPv6 transition addresses: the embedded IPv4 must be
 		// unwrapped and re-checked, else NAT64/6to4/IPv4-compatible bypass the guard.
 		{"64:ff9b::7f00:1", true},   // NAT64 well-known (64:ff9b::/96) -> 127.0.0.1
@@ -97,6 +99,10 @@ func TestIsPrivateHost_RawIP(t *testing.T) {
 
 func TestNewClient_BlocksLoopbackAtDial(t *testing.T) {
 	// httptest binds to loopback; the guarded client must refuse to dial it.
+	// This is the DNS-rebinding defense in action: the Control hook checks the
+	// resolved connection IP regardless of how DNS produced it, so a host that
+	// looked public at pre-flight but resolves private at dial is still blocked
+	// (the dial-time predicate itself is also covered by TestDialGuard).
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
