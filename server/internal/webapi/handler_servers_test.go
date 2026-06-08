@@ -267,3 +267,76 @@ func TestIsPrivateIP(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectServerIPs(t *testing.T) {
+	servers := []vpnconfig.Server{
+		{IPs: []string{"2.2.2.2", "1.1.1.1"}},
+		{IPs: []string{"1.1.1.1", "3.3.3.3"}}, // 1.1.1.1 is a duplicate
+		{IPs: []string{""}},                   // empty IP skipped
+	}
+
+	got := collectServerIPs(servers)
+
+	if joined := strings.Join(got, ","); joined != "1.1.1.1,2.2.2.2,3.3.3.3" {
+		t.Errorf("collectServerIPs = %q, want sorted deduped 1.1.1.1,2.2.2.2,3.3.3.3", joined)
+	}
+}
+
+func TestSyncXrayServers_SaveError(t *testing.T) {
+	mc := &mockConfig{
+		cfg:           &vpnconfig.VPNDirectorConfig{},
+		saveVPNCfgErr: errors.New("disk full"),
+	}
+
+	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
+
+	if err == nil {
+		t.Fatal("expected error when SaveVPNConfig fails, got nil")
+	}
+}
+
+func TestSyncXrayServers_LoadError(t *testing.T) {
+	mc := &mockConfig{err: errors.New("load failed")}
+
+	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
+
+	if err == nil {
+		t.Fatal("expected error when LoadVPNConfig fails, got nil")
+	}
+}
+
+func TestSyncXrayServers_Success(t *testing.T) {
+	mc := &mockConfig{
+		cfg: &vpnconfig.VPNDirectorConfig{
+			Xray: vpnconfig.XrayConfig{Servers: []string{"stale-ip"}},
+		},
+	}
+
+	err := syncXrayServers(mc, []vpnconfig.Server{
+		{IPs: []string{"2.2.2.2"}},
+		{IPs: []string{"1.1.1.1"}},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mc.savedCfg == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if joined := strings.Join(mc.savedCfg.Xray.Servers, ","); joined != "1.1.1.1,2.2.2.2" {
+		t.Errorf("Xray.Servers = %q, want sorted all IPs 1.1.1.1,2.2.2.2", joined)
+	}
+}
+
+func TestSyncXrayServers_NilConfigSkips(t *testing.T) {
+	mc := &mockConfig{cfg: nil} // LoadVPNConfig returns (nil, nil)
+
+	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
+
+	if err != nil {
+		t.Fatalf("expected nil error when config is absent, got %v", err)
+	}
+	if mc.savedCfg != nil {
+		t.Error("expected no save when config is absent")
+	}
+}

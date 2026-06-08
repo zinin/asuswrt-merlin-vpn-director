@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vless"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -182,21 +183,11 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Sync xray.servers with all imported server IPs.
-		if vpnCfg, err := deps.Config.LoadVPNConfig(); err == nil && vpnCfg != nil {
-			seen := make(map[string]bool)
-			var serverIPs []string
-			for _, s := range resolved {
-				for _, ip := range s.IPs {
-					if ip != "" && !seen[ip] {
-						seen[ip] = true
-						serverIPs = append(serverIPs, ip)
-					}
-				}
-			}
-			sort.Strings(serverIPs)
-			vpnCfg.Xray.Servers = serverIPs
-			_ = deps.Config.SaveVPNConfig(vpnCfg)
+		// Sync xray.servers with all imported server IPs. Surface a persistence
+		// failure instead of returning 200 with a stale xray.servers on disk.
+		if err := syncXrayServers(deps.Config, resolved); err != nil {
+			jsonError(w, http.StatusInternalServerError, "failed to sync xray servers")
+			return
 		}
 
 		jsonOK(w, map[string]interface{}{"ok": true, "count": len(resolved)})
@@ -250,4 +241,41 @@ func isPrivateIP(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// collectServerIPs returns the sorted, de-duplicated list of all non-empty IPs
+// across the given servers. xray.servers feeds the TPROXY bypass set, so every
+// configured server endpoint must be present (otherwise the proxy's own egress
+// could be routed back through itself).
+func collectServerIPs(servers []vpnconfig.Server) []string {
+	seen := make(map[string]bool)
+	var ips []string
+	for _, s := range servers {
+		for _, ip := range s.IPs {
+			if ip != "" && !seen[ip] {
+				seen[ip] = true
+				ips = append(ips, ip)
+			}
+		}
+	}
+	sort.Strings(ips)
+	return ips
+}
+
+// syncXrayServers updates xray.servers with the IPs of all given servers and
+// persists the config. A load or save failure is returned so the caller can
+// surface it instead of silently leaving xray.servers stale.
+func syncXrayServers(config service.ConfigStore, servers []vpnconfig.Server) error {
+	vpnCfg, err := config.LoadVPNConfig()
+	if err != nil {
+		return fmt.Errorf("load vpn config: %w", err)
+	}
+	if vpnCfg == nil {
+		return nil
+	}
+	vpnCfg.Xray.Servers = collectServerIPs(servers)
+	if err := config.SaveVPNConfig(vpnCfg); err != nil {
+		return fmt.Errorf("save vpn config: %w", err)
+	}
+	return nil
 }
