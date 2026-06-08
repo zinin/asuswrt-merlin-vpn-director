@@ -72,15 +72,26 @@ decode_vless_content() {
 # VLESS URI Parser
 ###############################################################################
 
-# Extract a query parameter value (no external tools)
+# URL-decode %XX escapes and "+" (space), for parity with Go url.ParseQuery.
+# busybox-safe: validate each %XX as hex via sed, rewrite to \xHH, then let
+# printf '%b' emit the bytes. Backslashes in the data are escaped first so
+# printf cannot misinterpret them; a lone or incomplete % is left intact. The
+# data is the %b ARGUMENT (never the format string), so a literal % is safe.
+_url_decode() {
+    local s="${1//+/ }"
+    s=$(printf '%s' "$s" | sed -e 's/\\/\\\\/g' -e 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')
+    printf '%b' "$s"
+}
+
+# Extract a query parameter value (no external tools), URL-decoded for parity
+# with Go's url.ParseQuery.
 # _vless_query_get <query_string> <key> -> prints value (empty if absent)
-# Note: does NOT URL-decode %XX (real subscription params are URL-safe).
 _vless_query_get() {
     local q="&$1&" v
     case "$q" in
         *"&$2="*)
             v="${q#*"&$2="}"
-            printf '%s' "${v%%&*}"
+            _url_decode "${v%%&*}"
             ;;
     esac
 }

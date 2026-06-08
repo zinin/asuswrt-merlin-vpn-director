@@ -214,6 +214,35 @@ vless://uuid2@server2:443#Name2"
 }
 
 # ============================================================================
+# _url_decode / _vless_query_get: percent-decoding parity with url.ParseQuery
+# ============================================================================
+
+@test "_url_decode: decodes %XX escapes" {
+    load_import_server_list
+    result=$(_url_decode 'h2%2Chttp/1.1')
+    [ "$result" = "h2,http/1.1" ]
+}
+
+@test "_url_decode: maps + to space, leaves lone/incomplete % intact" {
+    load_import_server_list
+    [ "$(_url_decode 'a+b')" = "a b" ]
+    [ "$(_url_decode '50%')" = "50%" ]
+    [ "$(_url_decode 'x%2y')" = "x%2y" ]
+}
+
+@test "_vless_query_get: URL-decodes the value (parity with url.ParseQuery)" {
+    load_import_server_list
+    result=$(_vless_query_get 'type=tcp&alpn=h2%2Chttp/1.1' alpn)
+    [ "$result" = "h2,http/1.1" ]
+}
+
+@test "parse_vless_uri: URL-decodes percent-encoded alpn into comma list" {
+    load_import_server_list
+    result=$(parse_vless_uri 'vless://uuid@1.2.3.4:443?type=tcp&alpn=h2%2Chttp/1.1#N')
+    [ "$(printf '%s' "$result" | cut -d'|' -f12)" = "h2,http/1.1" ]
+}
+
+# ============================================================================
 # step_parse_and_save_servers: JSON output
 # ============================================================================
 
