@@ -1,16 +1,15 @@
 package webapi
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vless"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -123,20 +122,17 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// SSRF protection: resolve host and check for private IPs.
+		// SSRF protection (pre-flight): reject obvious private/reserved hosts
+		// early with a clear error. The dial-time guard in ssrf.NewClient is the
+		// authoritative protection and also defeats DNS rebinding.
 		host := parsed.Hostname()
-		if isPrivateHost(host) {
+		if ssrf.IsPrivateHost(host) {
 			jsonError(w, http.StatusBadRequest, "URL must not point to private or loopback addresses")
 			return
 		}
 
-		// Fetch the subscription.
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-			},
-		}
+		// Fetch the subscription with the SSRF-hardened client.
+		client := ssrf.NewClient(10 * time.Second)
 
 		resp, err := client.Get(req.URL)
 		if err != nil {
@@ -195,55 +191,6 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 
 		jsonOK(w, map[string]interface{}{"ok": true, "count": len(resolved)})
 	}
-}
-
-// isPrivateHost checks if a hostname resolves to a private or loopback IP.
-func isPrivateHost(host string) bool {
-	// First check if it's a raw IP.
-	if ip := net.ParseIP(host); ip != nil {
-		return isPrivateIP(ip)
-	}
-
-	// Resolve hostname.
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		// If we can't resolve, block it to be safe.
-		return true
-	}
-
-	for _, ip := range ips {
-		if isPrivateIP(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// isPrivateIP returns true if the IP is private, loopback, or link-local.
-func isPrivateIP(ip net.IP) bool {
-	privateRanges := []string{
-		"0.0.0.0/8",
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"169.254.0.0/16",
-		"::1/128",
-		"::/128",
-		"fc00::/7",
-		"fe80::/10",
-	}
-
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if network.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 // collectServerIPs returns the sorted, de-duplicated list of all non-empty IPs
