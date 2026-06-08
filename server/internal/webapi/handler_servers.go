@@ -74,7 +74,10 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg.Xray.Servers = server.IPs
+		// Set xray.servers to ALL servers' IPs, not just the selected one
+		// (parity with the import path). xray.servers feeds the TPROXY bypass
+		// set; dropping the other endpoints on a switch can cause a routing loop.
+		cfg.Xray.Servers = collectServerIPs(servers)
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
 			return

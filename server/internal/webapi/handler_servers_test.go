@@ -97,12 +97,14 @@ func TestHandleSelectServer_OK(t *testing.T) {
 		t.Error("expected ok: true")
 	}
 
-	// Verify saved config has updated IPs.
+	// Verify saved config has ALL servers' IPs (parity with the import path):
+	// xray.servers feeds the TPROXY bypass set, so every server endpoint must
+	// stay present after a switch, not just the selected one.
 	if mc.savedCfg == nil {
 		t.Fatal("expected config to be saved")
 	}
-	if len(mc.savedCfg.Xray.Servers) != 1 || mc.savedCfg.Xray.Servers[0] != "2.2.2.2" {
-		t.Errorf("expected Xray.Servers=[2.2.2.2], got %v", mc.savedCfg.Xray.Servers)
+	if joined := strings.Join(mc.savedCfg.Xray.Servers, ","); joined != "1.1.1.1,2.2.2.2" {
+		t.Errorf("expected Xray.Servers to be all servers' IPs 1.1.1.1,2.2.2.2, got %q", joined)
 	}
 }
 
