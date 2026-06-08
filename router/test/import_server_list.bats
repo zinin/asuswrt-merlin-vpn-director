@@ -177,6 +177,42 @@ vless://uuid2@server2:443#Name2"
     [ "$result" = "$plaintext" ]
 }
 
+@test "decode_vless_content: decodes URL-safe base64 alphabet" {
+    load_import_server_list
+    # "????" standard base64 is "Pz8/Pw=="; the URL-safe form replaces / with _.
+    # The standard decoder rejects _, so this exercises the url-safe fallback.
+    # Use command substitution (not run) so the log line on stderr is excluded.
+    result=$(decode_vless_content "Pz8_Pw==")
+    [ "$result" = "????" ]
+}
+
+# ============================================================================
+# parse_vless_uri: IPv6 literal host
+# ============================================================================
+
+@test "parse_vless_uri: parses bracketed IPv6 host and port" {
+    load_import_server_list
+    run parse_vless_uri 'vless://uuid@[2001:db8::1]:443?type=tcp#v6'
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f1)" = "2001:db8::1" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f2)" = "443" ]
+}
+
+# ============================================================================
+# _redact_uri: mask UUID for DEBUG logging
+# ============================================================================
+
+@test "_redact_uri: masks UUID and strips fragment, keeps host" {
+    load_import_server_list
+    run _redact_uri 'vless://11111111-2222-3333-4444-555555555555@server.example:443?type=tcp#MyName'
+    [ "$status" -eq 0 ]
+    # UUID is a secret and must not leak into logs
+    [[ "$output" != *11111111-2222-3333-4444-555555555555* ]]
+    # host:port and params are kept; the #fragment is stripped
+    [[ "$output" == *server.example:443* ]]
+    [[ "$output" != *MyName* ]]
+}
+
 # ============================================================================
 # step_parse_and_save_servers: JSON output
 # ============================================================================
