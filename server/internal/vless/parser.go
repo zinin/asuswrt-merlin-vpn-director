@@ -106,7 +106,10 @@ func ParseURI(uri string) (*Server, error) {
 	rest = rest[atIdx+1:]
 
 	// Extract server:port
-	// Handle IPv6 addresses in brackets
+	// Handle IPv6 addresses in brackets. NOTE: the stored Address keeps the
+	// brackets ([2001:db8::1]); the shell importer (import_server_list.sh) drops
+	// them (2001:db8::1). Both are equivalent to Xray — its ParseAddress strips
+	// brackets for the standalone address field — so the two paths agree.
 	var address string
 	var portStr string
 
