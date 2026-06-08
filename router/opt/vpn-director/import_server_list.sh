@@ -154,6 +154,9 @@ parse_vless_uri() {
 
     # Extract server:port (before ?). Handle bracketed IPv6 literals
     # ([2001:db8::1]:443) by splitting on the ] delimiter, not the colon.
+    # NOTE: the stored address drops the brackets (2001:db8::1); the Go parser
+    # (vless/parser.go) keeps them ([2001:db8::1]). Both are equivalent to Xray,
+    # whose ParseAddress strips brackets for the standalone address field.
     server_port="${rest%%\?*}"
     case "$server_port" in
         \[*)
