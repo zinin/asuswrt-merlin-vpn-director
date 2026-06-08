@@ -259,6 +259,27 @@ func TestCollectServerIPs(t *testing.T) {
 	}
 }
 
+func TestCollectServerIPs_EmptyMarshalsToJSONArray(t *testing.T) {
+	// With no usable IPs the result must marshal to an empty JSON array, not
+	// null: it is persisted as xray.servers in vpn-director.json, where null
+	// reads differently than [] for consumers that don't apply a `// []` default.
+	cases := map[string][]vpnconfig.Server{
+		"nil-slice": nil,
+		"empty-IPs": {{IPs: []string{""}}},
+	}
+	for name, servers := range cases {
+		t.Run(name, func(t *testing.T) {
+			b, err := json.Marshal(collectServerIPs(servers))
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(b) != "[]" {
+				t.Errorf("collectServerIPs(%s) marshals to %s, want []", name, b)
+			}
+		})
+	}
+}
+
 func TestSyncXrayServers_SaveError(t *testing.T) {
 	mc := &mockConfig{
 		cfg:           &vpnconfig.VPNDirectorConfig{},

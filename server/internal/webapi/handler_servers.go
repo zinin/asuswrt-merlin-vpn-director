@@ -199,7 +199,7 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 // could be routed back through itself).
 func collectServerIPs(servers []vpnconfig.Server) []string {
 	seen := make(map[string]bool)
-	var ips []string
+	ips := make([]string, 0) // non-nil so an empty result marshals to [] not null
 	for _, s := range servers {
 		for _, ip := range s.IPs {
 			if ip != "" && !seen[ip] {
