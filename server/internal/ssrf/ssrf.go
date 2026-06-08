@@ -146,8 +146,16 @@ func dialGuard(_, address string, _ syscall.RawConn) error {
 // resolved IP at dial time and refuses to follow redirects (so a public URL
 // cannot redirect into the internal network). timeout bounds the whole request.
 func NewClient(timeout time.Duration) *http.Client {
+	// Client.Timeout bounds the whole request, so the connect/TLS sub-phase
+	// budgets only need to be capped at it (never larger). ResponseHeaderTimeout
+	// is intentionally omitted: equal to the overall timeout it is redundant, and
+	// any value would just starve the body read once headers arrive at deadline.
+	connectTimeout := timeout
+	if connectTimeout > 10*time.Second {
+		connectTimeout = 10 * time.Second
+	}
 	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
+		Timeout: connectTimeout,
 		Control: dialGuard,
 	}
 	return &http.Client{
@@ -156,10 +164,9 @@ func NewClient(timeout time.Duration) *http.Client {
 			return http.ErrUseLastResponse
 		},
 		Transport: &http.Transport{
-			DialContext:           dialer.DialContext,
-			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: timeout,
+			DialContext:         dialer.DialContext,
+			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+			TLSHandshakeTimeout: connectTimeout,
 		},
 	}
 }

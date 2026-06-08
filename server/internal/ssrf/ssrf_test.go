@@ -119,3 +119,33 @@ func TestNewClient_DisablesRedirects(t *testing.T) {
 		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse", err)
 	}
 }
+
+func TestNewClient_TimeoutBudget(t *testing.T) {
+	// The overall Client.Timeout is the single authoritative bound. There must be
+	// no separate ResponseHeaderTimeout (it would starve the body read once
+	// headers arrive near the deadline), and the connect/TLS sub-phase budget
+	// must never exceed the overall timeout.
+	t.Run("small timeout caps sub-phase and drops header timeout", func(t *testing.T) {
+		c := NewClient(2 * time.Second)
+		tr, ok := c.Transport.(*http.Transport)
+		if !ok {
+			t.Fatalf("Transport is %T, want *http.Transport", c.Transport)
+		}
+		if tr.ResponseHeaderTimeout != 0 {
+			t.Errorf("ResponseHeaderTimeout = %v, want 0 (rely on Client.Timeout)", tr.ResponseHeaderTimeout)
+		}
+		if tr.TLSHandshakeTimeout != 2*time.Second {
+			t.Errorf("TLSHandshakeTimeout = %v, want 2s (min(10s, timeout))", tr.TLSHandshakeTimeout)
+		}
+	})
+	t.Run("large timeout caps sub-phase at 10s", func(t *testing.T) {
+		c := NewClient(30 * time.Second)
+		tr := c.Transport.(*http.Transport)
+		if tr.TLSHandshakeTimeout != 10*time.Second {
+			t.Errorf("TLSHandshakeTimeout = %v, want 10s", tr.TLSHandshakeTimeout)
+		}
+		if c.Timeout != 30*time.Second {
+			t.Errorf("Client.Timeout = %v, want 30s", c.Timeout)
+		}
+	})
+}
