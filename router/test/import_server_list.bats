@@ -223,7 +223,8 @@ vless://uuid2@server2:443#Name2"
 }
 
 # ============================================================================
-# _url_decode / _vless_query_get: percent-decoding parity with url.ParseQuery
+# _url_decode / _vless_query_get: percent-decoding (valid %XX like url.ParseQuery;
+# lenient on malformed % — Go rejects, shell keeps literal; see ticket #41)
 # ============================================================================
 
 @test "_url_decode: decodes %XX escapes" {
@@ -234,12 +235,13 @@ vless://uuid2@server2:443#Name2"
 
 @test "_url_decode: maps + to space, leaves lone/incomplete % intact" {
     load_import_server_list
+    # Lenient on malformed % (Go's url.ParseQuery would reject these); see #41.
     [ "$(_url_decode 'a+b')" = "a b" ]
     [ "$(_url_decode '50%')" = "50%" ]
     [ "$(_url_decode 'x%2y')" = "x%2y" ]
 }
 
-@test "_vless_query_get: URL-decodes the value (parity with url.ParseQuery)" {
+@test "_vless_query_get: URL-decodes the value (valid %XX like url.ParseQuery)" {
     load_import_server_list
     result=$(_vless_query_get 'type=tcp&alpn=h2%2Chttp/1.1' alpn)
     [ "$result" = "h2,http/1.1" ]
