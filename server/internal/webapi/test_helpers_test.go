@@ -39,11 +39,12 @@ func (m *mockLogs) Read(_ string, _ int) (string, error) { return m.output, m.er
 
 // mockConfig implements service.ConfigStore for testing.
 type mockConfig struct {
-	cfg          *vpnconfig.VPNDirectorConfig
-	servers      []vpnconfig.Server
-	err          error
-	savedCfg     *vpnconfig.VPNDirectorConfig // captured by SaveVPNConfig
-	savedServers []vpnconfig.Server           // captured by SaveServers
+	cfg           *vpnconfig.VPNDirectorConfig
+	servers       []vpnconfig.Server
+	err           error
+	saveVPNCfgErr error                        // independent error for SaveVPNConfig only
+	savedCfg      *vpnconfig.VPNDirectorConfig // captured by SaveVPNConfig
+	savedServers  []vpnconfig.Server           // captured by SaveServers
 }
 
 func (m *mockConfig) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
@@ -52,6 +53,9 @@ func (m *mockConfig) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
 func (m *mockConfig) LoadServers() ([]vpnconfig.Server, error) { return m.servers, m.err }
 func (m *mockConfig) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
 	m.savedCfg = cfg
+	if m.saveVPNCfgErr != nil {
+		return m.saveVPNCfgErr
+	}
 	return m.err
 }
 func (m *mockConfig) SaveServers(servers []vpnconfig.Server) error {
