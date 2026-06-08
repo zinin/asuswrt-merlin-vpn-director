@@ -160,6 +160,12 @@ func NewClient(timeout time.Duration) *http.Client {
 	}
 	return &http.Client{
 		Timeout: timeout,
+		// Refuse to follow redirects: a public URL must not be able to 302 into
+		// the internal network. The dial guard already blocks a redirect target
+		// that resolves to a private IP on every hop, so this is defense-in-depth
+		// — and a deliberate trade-off: legitimate redirects (CDN/shortener,
+		// http->https) are NOT followed, so callers must pass the final/direct
+		// subscription URL rather than one that redirects.
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
