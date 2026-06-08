@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -136,7 +137,7 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 
 		resp, err := client.Get(req.URL)
 		if err != nil {
-			jsonError(w, http.StatusBadGateway, fmt.Sprintf("download failed: %s", err))
+			jsonError(w, http.StatusBadGateway, downloadErrMessage(err))
 			return
 		}
 		defer resp.Body.Close()
@@ -195,6 +196,18 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 
 		jsonOK(w, map[string]interface{}{"ok": true, "count": len(resolved)})
 	}
+}
+
+// downloadErrMessage builds the client-facing message for a subscription
+// download failure. It echoes the underlying error for diagnostics EXCEPT when
+// the SSRF dial guard blocked the connection: that error carries the resolved
+// internal IP, which must not leak back to the caller.
+func downloadErrMessage(err error) string {
+	if errors.Is(err, ssrf.ErrBlockedAddress) {
+		// The error carries the resolved internal IP; do not echo it back.
+		return "download failed: URL resolved to a private or reserved address"
+	}
+	return fmt.Sprintf("download failed: %s", err)
 }
 
 // collectServerIPs returns the sorted, de-duplicated list of all non-empty IPs

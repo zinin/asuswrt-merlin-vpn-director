@@ -3,11 +3,13 @@ package webapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -277,6 +279,20 @@ func TestCollectServerIPs_EmptyMarshalsToJSONArray(t *testing.T) {
 				t.Errorf("collectServerIPs(%s) marshals to %s, want []", name, b)
 			}
 		})
+	}
+}
+
+func TestDownloadErrMessage(t *testing.T) {
+	// A blocked-address error must NOT echo the resolved internal IP back to the
+	// client (the dial guard wraps ssrf.ErrBlockedAddress around the IP).
+	blocked := fmt.Errorf(`Get "https://evil.test": %w: 10.0.0.1`, ssrf.ErrBlockedAddress)
+	if got := downloadErrMessage(blocked); strings.Contains(got, "10.0.0.1") {
+		t.Errorf("downloadErrMessage leaked the resolved IP: %q", got)
+	}
+	// Non-SSRF errors keep their detail for diagnostics.
+	other := errors.New("dial tcp: i/o timeout")
+	if got := downloadErrMessage(other); !strings.Contains(got, "i/o timeout") {
+		t.Errorf("downloadErrMessage dropped diagnostic detail: %q", got)
 	}
 }
 
