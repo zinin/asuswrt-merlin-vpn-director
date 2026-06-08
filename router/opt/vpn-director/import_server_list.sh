@@ -48,7 +48,26 @@ decode_vless_content() {
         printf '%s' "$content"
     else
         log "Detected base64 format, decoding..."
-        printf '%s' "$content" | base64 -d || return 1
+        # Standard alphabet first; fall back to URL-safe base64 (RFC 4648 §5):
+        # map url-safe -_ to standard +/ and pad to a multiple of 4, then decode.
+        # The tr sets are written '_-' '/+' (dash LAST in SET1, no leading '-' and
+        # no '--') so busybox tr parses them as operands, not options, while the
+        # _->/ and -->+ mapping is preserved. The Go importer accepts url-safe
+        # blobs too, so this keeps shell/Go parity.
+        local decoded b64 pad
+        if decoded=$(printf '%s' "$content" | base64 -d 2>/dev/null); then
+            printf '%s' "$decoded"
+            return 0
+        fi
+        b64=$(printf '%s' "$content" | tr -d '\r\n\t ' | tr '_-' '/+')
+        [[ -n "$b64" ]] || return 1
+        case $(( ${#b64} % 4 )) in
+            2) pad='==' ;;
+            3) pad='=' ;;
+            1) return 1 ;;
+            *) pad='' ;;
+        esac
+        printf '%s%s' "$b64" "$pad" | base64 -d 2>/dev/null || return 1
     fi
 }
 
@@ -56,17 +75,63 @@ decode_vless_content() {
 # VLESS URI Parser
 ###############################################################################
 
+# URL-decode %XX escapes and "+" (space). Matches Go url.ParseQuery on VALID
+# escapes. NOTE: not exact parity on malformed input — Go rejects the whole
+# query on a bad %-escape, whereas this leaves a lone/incomplete/non-hex %
+# intact (more lenient). Real subscriptions are URL-safe, so the two agree on
+# current data; see ticket #41.
+# busybox-safe: validate each %XX as hex via sed, rewrite to \xHH, then let
+# printf '%b' emit the bytes. Backslashes in the data are escaped first so
+# printf cannot misinterpret them. The data is the %b ARGUMENT (never the
+# format string), so a literal % is safe.
+_url_decode() {
+    local s="${1//+/ }"
+    s=$(printf '%s' "$s" | sed -e 's/\\/\\\\/g' -e 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')
+    printf '%b' "$s"
+}
+
+# Extract a query parameter value (no external tools), URL-decoded via
+# _url_decode (matches Go url.ParseQuery on valid %XX; lenient on malformed %).
+# _vless_query_get <query_string> <key> -> prints value (empty if absent)
+_vless_query_get() {
+    local q="&$1&" v
+    case "$q" in
+        *"&$2="*)
+            v="${q#*"&$2="}"
+            _url_decode "${v%%&*}"
+            ;;
+    esac
+}
+
+# Redact the UUID credential from a VLESS URI for safe DEBUG logging. Strips the
+# #fragment and replaces the "uuid@" credential with "***@".
+_redact_uri() {
+    local u="${1%%#*}"
+    case "$u" in
+        vless://*@*) printf 'vless://***@%s' "${u#vless://*@}" ;;
+        *)           printf '%s' "$u" ;;
+    esac
+}
+
 # Parse a single VLESS URI and extract components
 # Format: vless://uuid@server:port?params#name
 # Output: pipe-separated fields
+#   server|port|uuid|name|security|network|flow|sni|fp|pbk|sid|alpn
 parse_vless_uri() {
-    uri="$1"
+    local uri="$1"
+    local rest raw_name name uuid server_port server port query
+    local security network flow sni fp pbk sid alpn
 
     # Remove vless:// prefix
     rest="${uri#vless://}"
 
-    # Extract name (after #, URL-decoded)
-    raw_name="${rest##*#}"
+    # Extract name (after #, URL-decoded). Guard against URIs without a
+    # #fragment so the query string is not captured as the name.
+    if [[ "$rest" == *#* ]]; then
+        raw_name="${rest##*#}"
+    else
+        raw_name=""
+    fi
     raw_name=$(printf '%s' "$raw_name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
     # Filter: keep only letters (rus/eng), digits, spaces, basic punctuation
     # Removes emoji and other non-standard characters
@@ -87,17 +152,49 @@ parse_vless_uri() {
     uuid="${rest%%@*}"
     rest="${rest#*@}"
 
-    # Extract server:port (before ?)
+    # Extract server:port (before ?). Handle bracketed IPv6 literals
+    # ([2001:db8::1]:443) by splitting on the ] delimiter, not the colon.
+    # NOTE: the stored address drops the brackets (2001:db8::1); the Go parser
+    # (vless/parser.go) keeps them ([2001:db8::1]). Both are equivalent to Xray,
+    # whose ParseAddress strips brackets for the standalone address field.
     server_port="${rest%%\?*}"
-    server="${server_port%%:*}"
-    port="${server_port##*:}"
+    case "$server_port" in
+        \[*)
+            server="${server_port#\[}"
+            server="${server%%\]*}"
+            port="${server_port##*\]:}"
+            [[ "$port" == "$server_port" ]] && port=""
+            ;;
+        *)
+            server="${server_port%%:*}"
+            port="${server_port##*:}"
+            ;;
+    esac
+
+    # Extract query string (after ?), then stream params
+    if [[ "$rest" == *\?* ]]; then
+        query="${rest#*\?}"
+    else
+        query=""
+    fi
+
+    security=$(_vless_query_get "$query" security)
+    network=$(_vless_query_get "$query" type)
+    flow=$(_vless_query_get "$query" flow)
+    sni=$(_vless_query_get "$query" sni)
+    fp=$(_vless_query_get "$query" fp)
+    pbk=$(_vless_query_get "$query" pbk)
+    sid=$(_vless_query_get "$query" sid)
+    alpn=$(_vless_query_get "$query" alpn)
 
     # Fallback: if name is empty after filtering, use server hostname
     if [[ -z "$name" ]]; then
         name="$server"
     fi
 
-    printf '%s|%s|%s|%s\n' "$server" "$port" "$uuid" "$name"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$server" "$port" "$uuid" "$name" \
+        "$security" "$network" "$flow" "$sni" "$fp" "$pbk" "$sid" "$alpn"
 }
 
 ###############################################################################
@@ -142,7 +239,7 @@ step_get_vless_file() {
     case "$VLESS_INPUT" in
         http://*|https://*)
             log "Downloading from URL..."
-            VLESS_CONTENT=$(curl -fsSL "$VLESS_INPUT") || {
+            VLESS_CONTENT=$(curl -fsSL --connect-timeout 10 --max-time 60 "$VLESS_INPUT") || {
                 log -l ERROR "Failed to download from $VLESS_INPUT"
                 exit 1
             }
@@ -187,71 +284,63 @@ step_parse_and_save_servers() {
     # Ensure data directory exists
     mkdir -p "$DATA_DIR"
 
-    # Parse servers and build JSON
+    # Parse servers, resolve IPs, emit one JSON object per server, slurp to array
     printf '%s\n' "$VLESS_SERVERS" | grep '^vless://' | while IFS= read -r uri; do
-        log -l DEBUG "URI: ${uri%%#*}"
+        log -l DEBUG "URI: $(_redact_uri "$uri")"
 
         parsed=$(parse_vless_uri "$uri")
         server=$(printf '%s' "$parsed" | cut -d'|' -f1)
         port=$(printf '%s' "$parsed" | cut -d'|' -f2)
         uuid=$(printf '%s' "$parsed" | cut -d'|' -f3)
         name=$(printf '%s' "$parsed" | cut -d'|' -f4)
+        security=$(printf '%s' "$parsed" | cut -d'|' -f5)
+        network=$(printf '%s' "$parsed" | cut -d'|' -f6)
+        flow=$(printf '%s' "$parsed" | cut -d'|' -f7)
+        sni=$(printf '%s' "$parsed" | cut -d'|' -f8)
+        fp=$(printf '%s' "$parsed" | cut -d'|' -f9)
+        pbk=$(printf '%s' "$parsed" | cut -d'|' -f10)
+        sid=$(printf '%s' "$parsed" | cut -d'|' -f11)
+        alpn=$(printf '%s' "$parsed" | cut -d'|' -f12)
 
-        log -l DEBUG "Parsed: server=$server port=$port uuid=$uuid name=$name"
-
-        # Validate required fields
         if [[ -z "$server" ]] || [[ -z "$port" ]] || [[ -z "$uuid" ]]; then
-            log -l DEBUG "SKIP: missing required field"
             log -l WARN "Skipping invalid URI (missing server/port/uuid)"
             continue
         fi
-
-        # Validate port is numeric
-        if ! printf '%s' "$port" | grep -qE '^[0-9]+$'; then
-            log -l DEBUG "SKIP: invalid port '$port'"
+        # Reject non-numeric and out-of-range ports here so a broken entry never
+        # lands in servers.json. 10# forces base-10 so a zero-padded port (e.g.
+        # 0443) is not misread as octal. Arithmetic in an if-condition is exempt
+        # from set -e, and 10#$port only runs once $port is known all-digit.
+        if ! printf '%s' "$port" | grep -qE '^[0-9]+$' || (( 10#$port < 1 || 10#$port > 65535 )); then
             log -l WARN "Skipping $server: invalid port '$port'"
             continue
         fi
 
-        # Resolve ALL IPv4 addresses for the server hostname
         ips_raw=$(resolve_ip -a -q "$server" 2>/dev/null) || ips_raw=""
-
         if [[ -z "$ips_raw" ]]; then
-            log -l DEBUG "SKIP: cannot resolve $server"
             log -l WARN "Cannot resolve $server, skipping"
             continue
         fi
-
         ips_oneline=$(printf '%s' "$ips_raw" | tr '\n' ',' | sed 's/,$//')
-        log -l DEBUG "Resolved: $server -> $ips_oneline"
         printf "  %s (%s) -> %s\n" "$name" "$server" "$ips_oneline" >&2
 
-        # Pack multi-line IPs into comma-separated for the pipe
-        ips_csv=$(printf '%s' "$ips_raw" | tr '\n' ',' | sed 's/,$//')
-        printf '%s\n%s\n%s\n%s\n%s\n' "$server" "$port" "$uuid" "$name" "$ips_csv"
-    done | {
-        # Build JSON from piped data using jq for proper escaping
-        printf '[\n'
-        first=1
-        while IFS= read -r server && IFS= read -r port && IFS= read -r uuid && IFS= read -r name && IFS= read -r ips_csv; do
-            [[ -z "$server" ]] && continue
-            [[ "$first" -eq 0 ]] && printf ',\n'
-            first=0
+        ips_json=$(printf '%s\n' "$ips_raw" | jq -R 'select(length > 0)' | jq -s .)
+        if [[ -n "$alpn" ]]; then
+            alpn_json=$(printf '%s' "$alpn" | tr ',' '\n' | jq -R 'select(length > 0)' | jq -s .)
+        else
+            alpn_json='[]'
+        fi
 
-            # Build ips JSON array from comma-separated IPs
-            ips_json=$(printf '%s\n' "$ips_csv" | tr ',' '\n' | jq -R 'select(length > 0)' | jq -s .)
-
-            # Use jq to create properly escaped JSON object
-            jq -n \
-                --arg addr "$server" \
-                --arg port "$port" \
-                --arg uuid "$uuid" \
-                --arg name "$name" \
-                --argjson ips "$ips_json" \
-                '{address: $addr, port: ($port | tonumber), uuid: $uuid, name: $name, ips: $ips}' | tr -d '\n'
-        done
-        printf '\n]\n'
-    } > "$SERVERS_FILE"
+        jq -c -n \
+            --arg address "$server" --argjson port "$port" --arg uuid "$uuid" --arg name "$name" \
+            --argjson ips "$ips_json" \
+            --arg security "$security" --arg network "$network" --arg flow "$flow" \
+            --arg sni "$sni" --arg fingerprint "$fp" --arg public_key "$pbk" --arg short_id "$sid" \
+            --argjson alpn "$alpn_json" \
+            '{address:$address, port:$port, uuid:$uuid, name:$name, ips:$ips,
+              security:$security, network:$network, flow:$flow, sni:$sni,
+              fingerprint:$fingerprint, public_key:$public_key, short_id:$short_id, alpn:$alpn}
+             | with_entries(select(.value != null and .value != "" and .value != []))'
+    done | jq -s '.' > "$SERVERS_FILE"
 
     # Validate JSON
     if ! jq empty "$SERVERS_FILE" 2>/dev/null; then

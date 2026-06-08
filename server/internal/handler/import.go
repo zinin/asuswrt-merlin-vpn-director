@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vless"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
@@ -27,7 +28,7 @@ type ImportHandler struct {
 func NewImportHandler(deps *Deps) *ImportHandler {
 	return &ImportHandler{
 		deps:        deps,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		httpClient:  ssrf.NewClient(30 * time.Second), // SSRF-hardened (validates resolved IP at dial time)
 		maxBodySize: 1 << 20, // 1MB
 	}
 }
@@ -95,13 +96,7 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 			resolveErrors++
 			continue
 		}
-		resolved = append(resolved, vpnconfig.Server{
-			Address: s.Address,
-			Port:    s.Port,
-			UUID:    s.UUID,
-			Name:    s.Name,
-			IPs:     s.IPs,
-		})
+		resolved = append(resolved, s.ToVPNConfig())
 	}
 
 	if len(resolved) == 0 {

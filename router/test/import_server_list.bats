@@ -49,6 +49,32 @@ TEST_URI_CYRILLIC='vless://11111111-2222-3333-4444-555555555555@server5.test.exa
     [ "$name" = "Prague, Czechia" ]
 }
 
+@test "parse_vless_uri extracts reality stream params" {
+    load_import_server_list
+    # Real subscription format includes headerType=none before type=tcp — guards the
+    # `_vless_query_get type` lookup against matching `headerType`.
+    uri='vless://uuid@1.2.3.4:443?security=reality&encryption=none&fp=firefox&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6#NL'
+    run parse_vless_uri "$uri"
+    [ "$status" -eq 0 ]
+    # fields: server|port|uuid|name|security|network|flow|sni|fp|pbk|sid|alpn
+    [ "$(printf '%s' "$output" | cut -d'|' -f5)" = "reality" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f6)" = "tcp" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f7)" = "xtls-rprx-vision" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f8)" = "cdn3-87.yahoo.com" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f9)" = "firefox" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f10)" = "PBKEY" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f11)" = "55e6" ]
+}
+
+@test "parse_vless_uri keeps core fields without params" {
+    load_import_server_list
+    run parse_vless_uri 'vless://uuid@1.2.3.4:443#Name'
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f1)" = "1.2.3.4" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f3)" = "uuid" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f5)" = "" ]
+}
+
 # ============================================================================
 # parse_vless_uri: Name handling
 # ============================================================================
@@ -151,6 +177,82 @@ vless://uuid2@server2:443#Name2"
     [ "$result" = "$plaintext" ]
 }
 
+@test "decode_vless_content: decodes URL-safe base64 alphabet" {
+    load_import_server_list
+    # "????" standard base64 is "Pz8/Pw=="; the URL-safe form replaces / with _.
+    # The standard decoder rejects _, so this exercises the url-safe fallback.
+    # Use command substitution (not run) so the log line on stderr is excluded.
+    result=$(decode_vless_content "Pz8_Pw==")
+    [ "$result" = "????" ]
+}
+
+@test "decode_vless_content: url-safe base64 maps both - and _ (full alphabet)" {
+    load_import_server_list
+    # ">>>???" standard base64 is "Pj4+Pz8/" (contains BOTH + and /); the URL-safe
+    # form replaces + with - and / with _, so this exercises the full -_ -> +/
+    # mapping. A reversed set (e.g. tr '_-' '+/') decodes to the wrong bytes.
+    result=$(decode_vless_content "Pj4-Pz8_")
+    [ "$result" = ">>>???" ]
+}
+
+# ============================================================================
+# parse_vless_uri: IPv6 literal host
+# ============================================================================
+
+@test "parse_vless_uri: parses bracketed IPv6 host and port" {
+    load_import_server_list
+    run parse_vless_uri 'vless://uuid@[2001:db8::1]:443?type=tcp#v6'
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f1)" = "2001:db8::1" ]
+    [ "$(printf '%s' "$output" | cut -d'|' -f2)" = "443" ]
+}
+
+# ============================================================================
+# _redact_uri: mask UUID for DEBUG logging
+# ============================================================================
+
+@test "_redact_uri: masks UUID and strips fragment, keeps host" {
+    load_import_server_list
+    run _redact_uri 'vless://11111111-2222-3333-4444-555555555555@server.example:443?type=tcp#MyName'
+    [ "$status" -eq 0 ]
+    # UUID is a secret and must not leak into logs
+    [[ "$output" != *11111111-2222-3333-4444-555555555555* ]]
+    # host:port and params are kept; the #fragment is stripped
+    [[ "$output" == *server.example:443* ]]
+    [[ "$output" != *MyName* ]]
+}
+
+# ============================================================================
+# _url_decode / _vless_query_get: percent-decoding (valid %XX like url.ParseQuery;
+# lenient on malformed % — Go rejects, shell keeps literal; see ticket #41)
+# ============================================================================
+
+@test "_url_decode: decodes %XX escapes" {
+    load_import_server_list
+    result=$(_url_decode 'h2%2Chttp/1.1')
+    [ "$result" = "h2,http/1.1" ]
+}
+
+@test "_url_decode: maps + to space, leaves lone/incomplete % intact" {
+    load_import_server_list
+    # Lenient on malformed % (Go's url.ParseQuery would reject these); see #41.
+    [ "$(_url_decode 'a+b')" = "a b" ]
+    [ "$(_url_decode '50%')" = "50%" ]
+    [ "$(_url_decode 'x%2y')" = "x%2y" ]
+}
+
+@test "_vless_query_get: URL-decodes the value (valid %XX like url.ParseQuery)" {
+    load_import_server_list
+    result=$(_vless_query_get 'type=tcp&alpn=h2%2Chttp/1.1' alpn)
+    [ "$result" = "h2,http/1.1" ]
+}
+
+@test "parse_vless_uri: URL-decodes percent-encoded alpn into comma list" {
+    load_import_server_list
+    result=$(parse_vless_uri 'vless://uuid@1.2.3.4:443?type=tcp&alpn=h2%2Chttp/1.1#N')
+    [ "$(printf '%s' "$result" | cut -d'|' -f12)" = "h2,http/1.1" ]
+}
+
 # ============================================================================
 # step_parse_and_save_servers: JSON output
 # ============================================================================
@@ -183,4 +285,44 @@ vless://uuid2@server2:443#Name2"
     [ "$result" = "93.184.216.34" ]
 
     rm -rf "$DATA_DIR"
+}
+
+@test "step_parse_and_save_servers writes reality params to servers.json" {
+    load_import_server_list
+
+    tmp_data="$BATS_TEST_TMPDIR/data"
+    mkdir -p "$tmp_data"
+    # get_data_dir reads VPD_CONFIG/VPD_TEMPLATE; override to a temp config
+    cfg="$BATS_TEST_TMPDIR/vpn-director.json"
+    printf '{"data_dir":"%s"}' "$tmp_data" > "$cfg"
+    VPD_CONFIG="$cfg"
+    VLESS_SERVERS='vless://uuid@1.2.3.4:443?security=reality&flow=xtls-rprx-vision&sni=cdn.example.com&pbk=PBK&sid=sid1&type=tcp#NL'
+    run step_parse_and_save_servers
+    [ "$status" -eq 0 ]
+    out="$tmp_data/servers.json"
+    [ "$(jq -r '.[0].security' "$out")" = "reality" ]
+    [ "$(jq -r '.[0].flow' "$out")" = "xtls-rprx-vision" ]
+    [ "$(jq -r '.[0].public_key' "$out")" = "PBK" ]
+    [ "$(jq -r '.[0].short_id' "$out")" = "sid1" ]
+    [ "$(jq -r '.[0].sni' "$out")" = "cdn.example.com" ]
+    [ "$(jq -r '.[0] | has("alpn")' "$out")" = "false" ]
+}
+
+@test "step_parse_and_save_servers skips out-of-range port, keeps valid server" {
+    load_import_server_list
+
+    tmp_data="$BATS_TEST_TMPDIR/data"
+    mkdir -p "$tmp_data"
+    cfg="$BATS_TEST_TMPDIR/vpn-director.json"
+    printf '{"data_dir":"%s"}' "$tmp_data" > "$cfg"
+    VPD_CONFIG="$cfg"
+    # First URI has an out-of-range port (must be skipped); the second is valid
+    # and must still be saved (one bad entry does not drop the rest).
+    VLESS_SERVERS=$'vless://uuid@1.2.3.4:99999?type=tcp#Bad\nvless://uuid@5.6.7.8:443?type=tcp#Good'
+    run step_parse_and_save_servers
+    [ "$status" -eq 0 ]
+    out="$tmp_data/servers.json"
+    [ "$(jq length "$out")" -eq 1 ]
+    [ "$(jq -r '.[0].address' "$out")" = "5.6.7.8" ]
+    [ "$(jq -r '.[0].port' "$out")" -eq 443 ]
 }

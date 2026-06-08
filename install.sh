@@ -144,6 +144,7 @@ download_scripts() {
         "router/opt/vpn-director/lib/ipset.sh" \
         "router/opt/vpn-director/lib/tunnel.sh" \
         "router/opt/vpn-director/lib/tproxy.sh" \
+        "router/opt/vpn-director/lib/xrayconf.sh" \
         "router/opt/vpn-director/lib/send-email.sh" \
         "router/opt/vpn-director/setup_telegram_bot.sh" \
         "router/jffs/scripts/firewall-start" \

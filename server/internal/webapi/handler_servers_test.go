@@ -3,11 +3,13 @@ package webapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -97,12 +99,14 @@ func TestHandleSelectServer_OK(t *testing.T) {
 		t.Error("expected ok: true")
 	}
 
-	// Verify saved config has updated IPs.
+	// Verify saved config has ALL servers' IPs (parity with the import path):
+	// xray.servers feeds the TPROXY bypass set, so every server endpoint must
+	// stay present after a switch, not just the selected one.
 	if mc.savedCfg == nil {
 		t.Fatal("expected config to be saved")
 	}
-	if len(mc.savedCfg.Xray.Servers) != 1 || mc.savedCfg.Xray.Servers[0] != "2.2.2.2" {
-		t.Errorf("expected Xray.Servers=[2.2.2.2], got %v", mc.savedCfg.Xray.Servers)
+	if joined := strings.Join(mc.savedCfg.Xray.Servers, ","); joined != "1.1.1.1,2.2.2.2" {
+		t.Errorf("expected Xray.Servers to be all servers' IPs 1.1.1.1,2.2.2.2, got %q", joined)
 	}
 }
 
@@ -243,27 +247,110 @@ func TestHandleImportServers_LoopbackIP(t *testing.T) {
 	}
 }
 
-func TestIsPrivateIP(t *testing.T) {
-	tests := []struct {
-		ip      string
-		private bool
-	}{
-		{"127.0.0.1", true},
-		{"10.0.0.1", true},
-		{"172.16.0.1", true},
-		{"192.168.1.1", true},
-		{"169.254.1.1", true},
-		{"8.8.8.8", false},
-		{"203.0.113.1", false},
-		{"1.1.1.1", false},
+func TestCollectServerIPs(t *testing.T) {
+	servers := []vpnconfig.Server{
+		{IPs: []string{"2.2.2.2", "1.1.1.1"}},
+		{IPs: []string{"1.1.1.1", "3.3.3.3"}}, // 1.1.1.1 is a duplicate
+		{IPs: []string{""}},                   // empty IP skipped
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.ip, func(t *testing.T) {
-			got := isPrivateHost(tt.ip)
-			if got != tt.private {
-				t.Errorf("isPrivateHost(%q) = %v, want %v", tt.ip, got, tt.private)
+	got := collectServerIPs(servers)
+
+	if joined := strings.Join(got, ","); joined != "1.1.1.1,2.2.2.2,3.3.3.3" {
+		t.Errorf("collectServerIPs = %q, want sorted deduped 1.1.1.1,2.2.2.2,3.3.3.3", joined)
+	}
+}
+
+func TestCollectServerIPs_EmptyMarshalsToJSONArray(t *testing.T) {
+	// With no usable IPs the result must marshal to an empty JSON array, not
+	// null: it is persisted as xray.servers in vpn-director.json, where null
+	// reads differently than [] for consumers that don't apply a `// []` default.
+	cases := map[string][]vpnconfig.Server{
+		"nil-slice": nil,
+		"empty-IPs": {{IPs: []string{""}}},
+	}
+	for name, servers := range cases {
+		t.Run(name, func(t *testing.T) {
+			b, err := json.Marshal(collectServerIPs(servers))
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(b) != "[]" {
+				t.Errorf("collectServerIPs(%s) marshals to %s, want []", name, b)
 			}
 		})
+	}
+}
+
+func TestDownloadErrMessage(t *testing.T) {
+	// A blocked-address error must NOT echo the resolved internal IP back to the
+	// client (the dial guard wraps ssrf.ErrBlockedAddress around the IP).
+	blocked := fmt.Errorf(`Get "https://evil.test": %w: 10.0.0.1`, ssrf.ErrBlockedAddress)
+	if got := downloadErrMessage(blocked); strings.Contains(got, "10.0.0.1") {
+		t.Errorf("downloadErrMessage leaked the resolved IP: %q", got)
+	}
+	// Non-SSRF errors keep their detail for diagnostics.
+	other := errors.New("dial tcp: i/o timeout")
+	if got := downloadErrMessage(other); !strings.Contains(got, "i/o timeout") {
+		t.Errorf("downloadErrMessage dropped diagnostic detail: %q", got)
+	}
+}
+
+func TestSyncXrayServers_SaveError(t *testing.T) {
+	mc := &mockConfig{
+		cfg:           &vpnconfig.VPNDirectorConfig{},
+		saveVPNCfgErr: errors.New("disk full"),
+	}
+
+	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
+
+	if err == nil {
+		t.Fatal("expected error when SaveVPNConfig fails, got nil")
+	}
+}
+
+func TestSyncXrayServers_LoadError(t *testing.T) {
+	mc := &mockConfig{err: errors.New("load failed")}
+
+	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
+
+	if err == nil {
+		t.Fatal("expected error when LoadVPNConfig fails, got nil")
+	}
+}
+
+func TestSyncXrayServers_Success(t *testing.T) {
+	mc := &mockConfig{
+		cfg: &vpnconfig.VPNDirectorConfig{
+			Xray: vpnconfig.XrayConfig{Servers: []string{"stale-ip"}},
+		},
+	}
+
+	err := syncXrayServers(mc, []vpnconfig.Server{
+		{IPs: []string{"2.2.2.2"}},
+		{IPs: []string{"1.1.1.1"}},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mc.savedCfg == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if joined := strings.Join(mc.savedCfg.Xray.Servers, ","); joined != "1.1.1.1,2.2.2.2" {
+		t.Errorf("Xray.Servers = %q, want sorted all IPs 1.1.1.1,2.2.2.2", joined)
+	}
+}
+
+func TestSyncXrayServers_NilConfigSkips(t *testing.T) {
+	mc := &mockConfig{cfg: nil} // LoadVPNConfig returns (nil, nil)
+
+	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
+
+	if err != nil {
+		t.Fatalf("expected nil error when config is absent, got %v", err)
+	}
+	if mc.savedCfg != nil {
+		t.Error("expected no save when config is absent")
 	}
 }

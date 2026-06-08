@@ -2,9 +2,10 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -15,32 +16,175 @@ type XrayService struct {
 	outputPath   string
 }
 
-// Compile-time check that XrayService implements XrayGenerator
 var _ XrayGenerator = (*XrayService)(nil)
 
-// NewXrayService creates a new XrayService
 func NewXrayService(templatePath, outputPath string) *XrayService {
-	return &XrayService{
-		templatePath: templatePath,
-		outputPath:   outputPath,
+	return &XrayService{templatePath: templatePath, outputPath: outputPath}
+}
+
+type xrayUser struct {
+	ID         string `json:"id"`
+	Encryption string `json:"encryption"`
+	Flow       string `json:"flow,omitempty"`
+}
+
+type xrayVnext struct {
+	Address string     `json:"address"`
+	Port    int        `json:"port"`
+	Users   []xrayUser `json:"users"`
+}
+
+type xrayReality struct {
+	ServerName  string `json:"serverName,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	PublicKey   string `json:"publicKey,omitempty"`
+	ShortID     string `json:"shortId,omitempty"`
+}
+
+type xrayTLS struct {
+	ServerName  string   `json:"serverName,omitempty"`
+	Fingerprint string   `json:"fingerprint,omitempty"`
+	ALPN        []string `json:"alpn,omitempty"`
+}
+
+type xrayStream struct {
+	Network         string       `json:"network"`
+	Security        string       `json:"security"`
+	RealitySettings *xrayReality `json:"realitySettings,omitempty"`
+	TLSSettings     *xrayTLS     `json:"tlsSettings,omitempty"`
+}
+
+type xrayOutbound struct {
+	Protocol       string                 `json:"protocol"`
+	Settings       map[string]interface{} `json:"settings"`
+	StreamSettings xrayStream             `json:"streamSettings"`
+	Tag            string                 `json:"tag"`
+}
+
+func buildOutbound(s vpnconfig.Server) xrayOutbound {
+	network := s.Network
+	if network == "" {
+		network = "tcp"
+	}
+	stream := xrayStream{Network: network}
+	switch s.Security {
+	case "reality":
+		stream.Security = "reality"
+		stream.RealitySettings = &xrayReality{
+			ServerName:  s.SNI,
+			Fingerprint: s.Fingerprint,
+			PublicKey:   s.PublicKey,
+			ShortID:     s.ShortID,
+		}
+	case "tls":
+		stream.Security = "tls"
+		serverName := s.SNI
+		if serverName == "" {
+			serverName = s.Address
+		}
+		stream.TLSSettings = &xrayTLS{
+			ServerName:  serverName,
+			Fingerprint: s.Fingerprint,
+			ALPN:        s.ALPN,
+		}
+	default: // legacy: empty security -> TLS to address with alpn h2, no flow
+		stream.Security = "tls"
+		stream.TLSSettings = &xrayTLS{ServerName: s.Address, ALPN: []string{"h2"}}
+	}
+	// Per spec, flow belongs only to tls/reality outbounds; a legacy record
+	// (empty security) must not carry it even if the field is populated.
+	userFlow := s.Flow
+	if s.Security == "" {
+		userFlow = ""
+	}
+	return xrayOutbound{
+		Protocol: "vless",
+		Settings: map[string]interface{}{
+			"vnext": []xrayVnext{{
+				Address: s.Address,
+				Port:    s.Port,
+				Users:   []xrayUser{{ID: s.UUID, Encryption: "none", Flow: userFlow}},
+			}},
+		},
+		StreamSettings: stream,
+		Tag:            "proxy-out",
 	}
 }
 
-// GenerateConfig generates Xray config from template
+// validateStreamParams rejects inputs this generator cannot produce a working
+// config for (only tcp transport and tls/reality security), so a future ws/grpc
+// or unknown security fails loudly instead of silently emitting a broken outbound.
+func validateStreamParams(s vpnconfig.Server) error {
+	switch s.Network {
+	case "", "tcp":
+	default:
+		return fmt.Errorf("unsupported network %q (only tcp is supported)", s.Network)
+	}
+	switch s.Security {
+	case "", "tls", "reality":
+	default:
+		return fmt.Errorf("unsupported security %q (only tls/reality are supported)", s.Security)
+	}
+	// REALITY cannot complete a handshake without these; fail at generation time
+	// rather than emit an incomplete realitySettings that only breaks at runtime.
+	// shortId is optional (Xray accepts an empty shortId when the server allows it).
+	if s.Security == "reality" {
+		var missing []string
+		if s.PublicKey == "" {
+			missing = append(missing, "public_key")
+		}
+		if s.SNI == "" {
+			missing = append(missing, "sni")
+		}
+		if s.Fingerprint == "" {
+			missing = append(missing, "fingerprint")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("reality security requires non-empty fields: %v", missing)
+		}
+	}
+	return nil
+}
+
+// GenerateConfig parses the (valid-JSON) template and replaces outbounds
+// with a single proxy-out outbound built from the server's stream params.
 func (s *XrayService) GenerateConfig(server vpnconfig.Server) error {
+	if err := validateStreamParams(server); err != nil {
+		return err
+	}
 	template, err := os.ReadFile(s.templatePath)
 	if err != nil {
 		return fmt.Errorf("read template: %w", err)
 	}
-
-	config := string(template)
-	config = strings.ReplaceAll(config, "{{XRAY_SERVER_ADDRESS}}", server.Address)
-	config = strings.ReplaceAll(config, "{{XRAY_SERVER_PORT}}", fmt.Sprintf("%d", server.Port))
-	config = strings.ReplaceAll(config, "{{XRAY_USER_UUID}}", server.UUID)
-
-	if err := os.WriteFile(s.outputPath, []byte(config), 0644); err != nil {
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(template, &cfg); err != nil {
+		return fmt.Errorf("parse template: %w", err)
+	}
+	cfg["outbounds"] = []xrayOutbound{buildOutbound(server)}
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	// Write atomically: temp file in the same dir, then rename. Prevents an
+	// interrupted/partial write from truncating the live config.json and
+	// bricking Xray (and the bot, which proxies through it). Mirrors the
+	// mktemp+mv in configure.sh. 0600 keeps the UUID-bearing config owner-only.
+	dir := filepath.Dir(s.outputPath)
+	tmp, err := os.CreateTemp(dir, "config.json.*")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if _, err := tmp.Write(append(out, '\n')); err != nil {
+		tmp.Close()
 		return fmt.Errorf("write config: %w", err)
 	}
-
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	if err := os.Rename(tmpName, s.outputPath); err != nil {
+		return fmt.Errorf("rename config: %w", err)
+	}
 	return nil
 }

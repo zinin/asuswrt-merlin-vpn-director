@@ -134,6 +134,30 @@ func TestParseURI_InvalidPort(t *testing.T) {
 	}
 }
 
+func TestParseURI_MalformedQuery(t *testing.T) {
+	// A bad %-escape in the query must fail loudly rather than silently
+	// dropping stream params and emitting a broken (plain-TLS) outbound.
+	uri := "vless://uuid@server.example.com:443?security=reality&pbk=%ZZ#Name"
+
+	_, err := ParseURI(uri)
+	if err == nil {
+		t.Fatal("expected error for malformed query")
+	}
+}
+
+func TestParseURI_PortOutOfRange(t *testing.T) {
+	// Numeric but out-of-range ports must be rejected at the entry point so a
+	// broken (port 0 / >65535) server never lands in servers.json.
+	for _, uri := range []string{
+		"vless://uuid@server.example.com:0#Name",
+		"vless://uuid@server.example.com:99999#Name",
+	} {
+		if _, err := ParseURI(uri); err == nil {
+			t.Fatalf("expected error for out-of-range port in %q", uri)
+		}
+	}
+}
+
 func TestParseURI_EmptyUUID(t *testing.T) {
 	uri := "vless://@server.example.com:443"
 
@@ -159,13 +183,95 @@ func TestParseURI_ComplexQueryParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if server.Address != "server.com" {
 		t.Errorf("expected Address 'server.com', got '%s'", server.Address)
 	}
-
 	if server.Port != 443 {
 		t.Errorf("expected Port 443, got %d", server.Port)
+	}
+	if server.Security != "tls" {
+		t.Errorf("expected Security 'tls', got '%s'", server.Security)
+	}
+	if server.SNI != "server.com" {
+		t.Errorf("expected SNI 'server.com', got '%s'", server.SNI)
+	}
+	if server.Fingerprint != "chrome" {
+		t.Errorf("expected Fingerprint 'chrome', got '%s'", server.Fingerprint)
+	}
+}
+
+func TestParseURI_Reality(t *testing.T) {
+	// Real subscription format: headerType=none present, pbk/sid at the end, type after headerType
+	// (guards against `type` parsing accidentally matching `headerType`).
+	uri := "vless://9ca8@162.249.126.77:443?security=reality&encryption=none&fp=firefox&headerType=none&type=tcp&flow=xtls-rprx-vision&sni=cdn3-87.yahoo.com&pbk=PBKEY&sid=55e6d9bd269aac46#NL"
+
+	s, err := ParseURI(uri)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Security != "reality" {
+		t.Errorf("Security = %q, want reality", s.Security)
+	}
+	if s.Flow != "xtls-rprx-vision" {
+		t.Errorf("Flow = %q, want xtls-rprx-vision", s.Flow)
+	}
+	if s.Network != "tcp" {
+		t.Errorf("Network = %q, want tcp", s.Network)
+	}
+	if s.SNI != "cdn3-87.yahoo.com" {
+		t.Errorf("SNI = %q, want cdn3-87.yahoo.com", s.SNI)
+	}
+	if s.Fingerprint != "firefox" {
+		t.Errorf("Fingerprint = %q, want firefox", s.Fingerprint)
+	}
+	if s.PublicKey != "PBKEY" {
+		t.Errorf("PublicKey = %q, want PBKEY", s.PublicKey)
+	}
+	if s.ShortID != "55e6d9bd269aac46" {
+		t.Errorf("ShortID = %q, want 55e6d9bd269aac46", s.ShortID)
+	}
+}
+
+func TestToVPNConfig_CarriesStreamParams(t *testing.T) {
+	s := &Server{
+		Address: "1.2.3.4", Port: 443, UUID: "u", Name: "n", IPs: []string{"1.2.3.4"},
+		Security: "reality", Network: "tcp", Flow: "xtls-rprx-vision",
+		SNI: "cdn.example.com", Fingerprint: "firefox", PublicKey: "PBK", ShortID: "sid",
+		ALPN: []string{"h2"},
+	}
+	c := s.ToVPNConfig()
+	if c.Address != "1.2.3.4" || c.Port != 443 || c.UUID != "u" || c.Name != "n" ||
+		len(c.IPs) != 1 || c.IPs[0] != "1.2.3.4" {
+		t.Errorf("ToVPNConfig dropped base fields: %+v", c)
+	}
+	if c.Security != "reality" || c.Network != "tcp" || c.Flow != "xtls-rprx-vision" ||
+		c.SNI != "cdn.example.com" || c.Fingerprint != "firefox" ||
+		c.PublicKey != "PBK" || c.ShortID != "sid" ||
+		len(c.ALPN) != 1 || c.ALPN[0] != "h2" {
+		t.Errorf("ToVPNConfig dropped stream params: %+v", c)
+	}
+}
+
+func TestParseURI_DecodesPercentEncodedALPN(t *testing.T) {
+	// Parity guard with the shell importer's _url_decode: a percent-encoded
+	// comma (%2C) in alpn must decode (url.ParseQuery) then split into two
+	// values. The shell parser mirrors this via _url_decode + tr ','.
+	s, err := ParseURI("vless://uuid@1.2.3.4:443?type=tcp&alpn=h2%2Chttp/1.1#N")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.ALPN) != 2 || s.ALPN[0] != "h2" || s.ALPN[1] != "http/1.1" {
+		t.Errorf("ALPN = %v, want [h2 http/1.1]", s.ALPN)
+	}
+}
+
+func TestParseURI_NoParams(t *testing.T) {
+	s, err := ParseURI("vless://uuid@host:443#X")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Security != "" || s.Flow != "" || s.SNI != "" {
+		t.Errorf("expected empty stream params, got security=%q flow=%q sni=%q", s.Security, s.Flow, s.SNI)
 	}
 }
 

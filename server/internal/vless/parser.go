@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
 // cleanName removes emoji flags and keeps only allowed characters:
@@ -30,11 +32,39 @@ func cleanName(s string) string {
 }
 
 type Server struct {
-	Address string   `json:"address"`
-	Port    int      `json:"port"`
-	UUID    string   `json:"uuid"`
-	Name    string   `json:"name"`
-	IPs     []string `json:"ips"`
+	Address     string   `json:"address"`
+	Port        int      `json:"port"`
+	UUID        string   `json:"uuid"`
+	Name        string   `json:"name"`
+	IPs         []string `json:"ips"`
+	Security    string   `json:"security,omitempty"`
+	Network     string   `json:"network,omitempty"`
+	Flow        string   `json:"flow,omitempty"`
+	SNI         string   `json:"sni,omitempty"`
+	Fingerprint string   `json:"fingerprint,omitempty"`
+	PublicKey   string   `json:"public_key,omitempty"`
+	ShortID     string   `json:"short_id,omitempty"`
+	ALPN        []string `json:"alpn,omitempty"`
+}
+
+// ToVPNConfig converts a parsed vless.Server into a vpnconfig.Server,
+// carrying all stream parameters. Call ResolveIPs first to populate IPs.
+func (s *Server) ToVPNConfig() vpnconfig.Server {
+	return vpnconfig.Server{
+		Address:     s.Address,
+		Port:        s.Port,
+		UUID:        s.UUID,
+		Name:        s.Name,
+		IPs:         s.IPs,
+		Security:    s.Security,
+		Network:     s.Network,
+		Flow:        s.Flow,
+		SNI:         s.SNI,
+		Fingerprint: s.Fingerprint,
+		PublicKey:   s.PublicKey,
+		ShortID:     s.ShortID,
+		ALPN:        s.ALPN,
+	}
 }
 
 func ParseURI(uri string) (*Server, error) {
@@ -52,8 +82,18 @@ func ParseURI(uri string) (*Server, error) {
 		rest = rest[:idx]
 	}
 
-	// Remove query params
+	// Extract and parse query params
+	var params url.Values
 	if idx := strings.Index(rest, "?"); idx != -1 {
+		var err error
+		params, err = url.ParseQuery(rest[idx+1:])
+		if err != nil {
+			// A malformed query (e.g. a bad %-escape) would otherwise silently
+			// drop stream params (security/pbk/sid/...) and emit a broken
+			// outbound. Fail loudly; DecodeSubscription skips this URI and keeps
+			// the rest of the subscription.
+			return nil, fmt.Errorf("invalid query: %w", err)
+		}
 		rest = rest[:idx]
 	}
 
@@ -66,7 +106,10 @@ func ParseURI(uri string) (*Server, error) {
 	rest = rest[atIdx+1:]
 
 	// Extract server:port
-	// Handle IPv6 addresses in brackets
+	// Handle IPv6 addresses in brackets. NOTE: the stored Address keeps the
+	// brackets ([2001:db8::1]); the shell importer (import_server_list.sh) drops
+	// them (2001:db8::1). Both are equivalent to Xray — its ParseAddress strips
+	// brackets for the standalone address field — so the two paths agree.
 	var address string
 	var portStr string
 
@@ -96,6 +139,9 @@ func ParseURI(uri string) (*Server, error) {
 	if err != nil {
 		return nil, errors.New("invalid port")
 	}
+	if port < 1 || port > 65535 {
+		return nil, errors.New("port out of range")
+	}
 
 	if address == "" || uuid == "" {
 		return nil, errors.New("missing required fields")
@@ -105,12 +151,25 @@ func ParseURI(uri string) (*Server, error) {
 		name = address
 	}
 
-	return &Server{
+	s := &Server{
 		Address: address,
 		Port:    port,
 		UUID:    uuid,
 		Name:    name,
-	}, nil
+	}
+	if params != nil {
+		s.Security = params.Get("security")
+		s.Network = params.Get("type")
+		s.Flow = params.Get("flow")
+		s.SNI = params.Get("sni")
+		s.Fingerprint = params.Get("fp")
+		s.PublicKey = params.Get("pbk")
+		s.ShortID = params.Get("sid")
+		if alpn := params.Get("alpn"); alpn != "" {
+			s.ALPN = strings.Split(alpn, ",")
+		}
+	}
+	return s, nil
 }
 
 func (s *Server) ResolveIPs() error {

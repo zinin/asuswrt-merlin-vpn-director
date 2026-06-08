@@ -34,6 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 | `router/opt/vpn-director/lib/ipset.sh` | IPSet module: ensure, update, status |
 | `router/opt/vpn-director/lib/tunnel.sh` | Tunnel Director module: apply, stop, status |
 | `router/opt/vpn-director/lib/tproxy.sh` | Xray TPROXY module: apply, stop, status |
+| `router/opt/vpn-director/lib/xrayconf.sh` | Build Xray outbound (REALITY/TLS) + config.json from a server |
 | `router/opt/etc/init.d/S99vpn-director` | Entware init.d script for startup |
 | `router/jffs/scripts/firewall-start` | Asuswrt-Merlin hook for firewall reload |
 | `router/jffs/scripts/wan-event` | Asuswrt-Merlin hook for WAN events |

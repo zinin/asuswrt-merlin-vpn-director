@@ -30,34 +30,7 @@
       "tag": "socks-in"
     }
   ],
-  "outbounds": [
-    {
-      "protocol": "vless",
-      "settings": {
-        "vnext": [
-          {
-            "address": "{{XRAY_SERVER_ADDRESS}}",
-            "port": {{XRAY_SERVER_PORT}},
-            "users": [
-              {
-                "id": "{{XRAY_USER_UUID}}",
-                "encryption": "none"
-              }
-            ]
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": ["h2"],
-          "serverName": "{{XRAY_SERVER_ADDRESS}}"
-        }
-      },
-      "tag": "proxy-out"
-    }
-  ],
+  "outbounds": [],
   "routing": {
     "domainStrategy": "AsIs",
     "rules": [

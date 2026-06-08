@@ -1,15 +1,16 @@
 package webapi
 
 import (
-	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"time"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vless"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -73,7 +74,10 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg.Xray.Servers = server.IPs
+		// Set xray.servers to ALL servers' IPs, not just the selected one
+		// (parity with the import path). xray.servers feeds the TPROXY bypass
+		// set; dropping the other endpoints on a switch can cause a routing loop.
+		cfg.Xray.Servers = collectServerIPs(servers)
 		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
 			return
@@ -119,24 +123,21 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// SSRF protection: resolve host and check for private IPs.
+		// SSRF protection (pre-flight): reject obvious private/reserved hosts
+		// early with a clear error. The dial-time guard in ssrf.NewClient is the
+		// authoritative protection and also defeats DNS rebinding.
 		host := parsed.Hostname()
-		if isPrivateHost(host) {
+		if ssrf.IsPrivateHost(host) {
 			jsonError(w, http.StatusBadRequest, "URL must not point to private or loopback addresses")
 			return
 		}
 
-		// Fetch the subscription.
-		client := &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-			},
-		}
+		// Fetch the subscription with the SSRF-hardened client.
+		client := ssrf.NewClient(10 * time.Second)
 
 		resp, err := client.Get(req.URL)
 		if err != nil {
-			jsonError(w, http.StatusBadGateway, fmt.Sprintf("download failed: %s", err))
+			jsonError(w, http.StatusBadGateway, downloadErrMessage(err))
 			return
 		}
 		defer resp.Body.Close()
@@ -166,13 +167,7 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			if err := s.ResolveIPs(); err != nil {
 				continue
 			}
-			resolved = append(resolved, vpnconfig.Server{
-				Address: s.Address,
-				Port:    s.Port,
-				UUID:    s.UUID,
-				Name:    s.Name,
-				IPs:     s.IPs,
-			})
+			resolved = append(resolved, s.ToVPNConfig())
 		}
 
 		if len(resolved) == 0 {
@@ -188,72 +183,66 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Sync xray.servers with all imported server IPs.
-		if vpnCfg, err := deps.Config.LoadVPNConfig(); err == nil && vpnCfg != nil {
-			seen := make(map[string]bool)
-			var serverIPs []string
-			for _, s := range resolved {
-				for _, ip := range s.IPs {
-					if ip != "" && !seen[ip] {
-						seen[ip] = true
-						serverIPs = append(serverIPs, ip)
-					}
-				}
-			}
-			sort.Strings(serverIPs)
-			vpnCfg.Xray.Servers = serverIPs
-			_ = deps.Config.SaveVPNConfig(vpnCfg)
+		// Sync xray.servers with all imported server IPs. Surface a persistence
+		// failure instead of returning 200 with a stale xray.servers on disk.
+		// servers.json is already saved here, so the message says so explicitly:
+		// the import partially persisted (servers stored, xray.servers stale) and
+		// the client must not read the 500 as "nothing changed".
+		if err := syncXrayServers(deps.Config, resolved); err != nil {
+			jsonError(w, http.StatusInternalServerError,
+				fmt.Sprintf("servers saved, but xray.servers sync failed: %s", err))
+			return
 		}
 
 		jsonOK(w, map[string]interface{}{"ok": true, "count": len(resolved)})
 	}
 }
 
-// isPrivateHost checks if a hostname resolves to a private or loopback IP.
-func isPrivateHost(host string) bool {
-	// First check if it's a raw IP.
-	if ip := net.ParseIP(host); ip != nil {
-		return isPrivateIP(ip)
+// downloadErrMessage builds the client-facing message for a subscription
+// download failure. It echoes the underlying error for diagnostics EXCEPT when
+// the SSRF dial guard blocked the connection: that error carries the resolved
+// internal IP, which must not leak back to the caller.
+func downloadErrMessage(err error) string {
+	if errors.Is(err, ssrf.ErrBlockedAddress) {
+		// The error carries the resolved internal IP; do not echo it back.
+		return "download failed: URL resolved to a private or reserved address"
 	}
-
-	// Resolve hostname.
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		// If we can't resolve, block it to be safe.
-		return true
-	}
-
-	for _, ip := range ips {
-		if isPrivateIP(ip) {
-			return true
-		}
-	}
-	return false
+	return fmt.Sprintf("download failed: %s", err)
 }
 
-// isPrivateIP returns true if the IP is private, loopback, or link-local.
-func isPrivateIP(ip net.IP) bool {
-	privateRanges := []string{
-		"0.0.0.0/8",
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"127.0.0.0/8",
-		"169.254.0.0/16",
-		"::1/128",
-		"::/128",
-		"fc00::/7",
-		"fe80::/10",
+// collectServerIPs returns the sorted, de-duplicated list of all non-empty IPs
+// across the given servers. xray.servers feeds the TPROXY bypass set, so every
+// configured server endpoint must be present (otherwise the proxy's own egress
+// could be routed back through itself).
+func collectServerIPs(servers []vpnconfig.Server) []string {
+	seen := make(map[string]bool)
+	ips := make([]string, 0) // non-nil so an empty result marshals to [] not null
+	for _, s := range servers {
+		for _, ip := range s.IPs {
+			if ip != "" && !seen[ip] {
+				seen[ip] = true
+				ips = append(ips, ip)
+			}
+		}
 	}
+	sort.Strings(ips)
+	return ips
+}
 
-	for _, cidr := range privateRanges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if network.Contains(ip) {
-			return true
-		}
+// syncXrayServers updates xray.servers with the IPs of all given servers and
+// persists the config. A load or save failure is returned so the caller can
+// surface it instead of silently leaving xray.servers stale.
+func syncXrayServers(config service.ConfigStore, servers []vpnconfig.Server) error {
+	vpnCfg, err := config.LoadVPNConfig()
+	if err != nil {
+		return fmt.Errorf("load vpn config: %w", err)
 	}
-	return false
+	if vpnCfg == nil {
+		return nil
+	}
+	vpnCfg.Xray.Servers = collectServerIPs(servers)
+	if err := config.SaveVPNConfig(vpnCfg); err != nil {
+		return fmt.Errorf("save vpn config: %w", err)
+	}
+	return nil
 }
