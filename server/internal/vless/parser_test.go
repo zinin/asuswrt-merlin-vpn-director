@@ -252,6 +252,19 @@ func TestToVPNConfig_CarriesStreamParams(t *testing.T) {
 	}
 }
 
+func TestParseURI_DecodesPercentEncodedALPN(t *testing.T) {
+	// Parity guard with the shell importer's _url_decode: a percent-encoded
+	// comma (%2C) in alpn must decode (url.ParseQuery) then split into two
+	// values. The shell parser mirrors this via _url_decode + tr ','.
+	s, err := ParseURI("vless://uuid@1.2.3.4:443?type=tcp&alpn=h2%2Chttp/1.1#N")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.ALPN) != 2 || s.ALPN[0] != "h2" || s.ALPN[1] != "http/1.1" {
+		t.Errorf("ALPN = %v, want [h2 http/1.1]", s.ALPN)
+	}
+}
+
 func TestParseURI_NoParams(t *testing.T) {
 	s, err := ParseURI("vless://uuid@host:443#X")
 	if err != nil {
