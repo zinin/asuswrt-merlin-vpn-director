@@ -111,6 +111,7 @@ func TestImportHandler_HandleImport_ValidSubscription(t *testing.T) {
 	config := &mockConfigStoreForImport{dataDirVal: t.TempDir()}
 	deps := &Deps{Sender: sender, Config: config}
 	h := NewImportHandler(deps)
+	h.httpClient = &http.Client{} // bypass SSRF guard to reach the loopback test server
 
 	msg := &tgbotapi.Message{
 		Chat: &tgbotapi.Chat{ID: 789},
@@ -141,6 +142,7 @@ func TestImportHandler_HandleImport_HTTPError(t *testing.T) {
 	config := &mockConfigStoreForImport{}
 	deps := &Deps{Sender: sender, Config: config}
 	h := NewImportHandler(deps)
+	h.httpClient = &http.Client{} // bypass SSRF guard to reach the loopback test server
 
 	msg := &tgbotapi.Message{
 		Chat: &tgbotapi.Chat{ID: 111},
@@ -171,6 +173,7 @@ func TestImportHandler_HandleImport_InvalidBase64(t *testing.T) {
 	config := &mockConfigStoreForImport{}
 	deps := &Deps{Sender: sender, Config: config}
 	h := NewImportHandler(deps)
+	h.httpClient = &http.Client{} // bypass SSRF guard to reach the loopback test server
 
 	msg := &tgbotapi.Message{
 		Chat: &tgbotapi.Chat{ID: 222},
@@ -204,6 +207,7 @@ func TestImportHandler_HandleImport_EmptySubscription(t *testing.T) {
 	config := &mockConfigStoreForImport{}
 	deps := &Deps{Sender: sender, Config: config}
 	h := NewImportHandler(deps)
+	h.httpClient = &http.Client{} // bypass SSRF guard to reach the loopback test server
 
 	msg := &tgbotapi.Message{
 		Chat: &tgbotapi.Chat{ID: 333},
@@ -219,5 +223,33 @@ func TestImportHandler_HandleImport_EmptySubscription(t *testing.T) {
 	}
 	if !strings.Contains(sender.lastText, "No") {
 		t.Errorf("expected 'No VLESS servers' message, got %q", sender.lastText)
+	}
+}
+
+func TestImportHandler_HandleImport_BlocksPrivateURL(t *testing.T) {
+	// Uses the real SSRF-guarded client from NewImportHandler (no injection):
+	// the dial-time guard must refuse to connect to a loopback address.
+	sender := &mockSender{}
+	config := &mockConfigStoreForImport{}
+	deps := &Deps{Sender: sender, Config: config}
+	h := NewImportHandler(deps)
+
+	msg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 999},
+		Text: "/import http://127.0.0.1:9/sub",
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "bot_command", Offset: 0, Length: 7},
+		},
+	}
+	h.HandleImport(msg)
+
+	if sender.lastChatID != 999 {
+		t.Errorf("expected chatID 999, got %d", sender.lastChatID)
+	}
+	if !strings.Contains(sender.lastText, "Download error") {
+		t.Errorf("expected download error for blocked private address, got %q", sender.lastText)
+	}
+	if config.savedServers != nil {
+		t.Error("expected no servers saved for a blocked private URL")
 	}
 }
