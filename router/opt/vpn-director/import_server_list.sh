@@ -48,7 +48,23 @@ decode_vless_content() {
         printf '%s' "$content"
     else
         log "Detected base64 format, decoding..."
-        printf '%s' "$content" | base64 -d || return 1
+        # Standard alphabet first; fall back to URL-safe base64 (RFC 4648 §5):
+        # map -_ to +/ and pad to a multiple of 4, then decode. The Go importer
+        # accepts url-safe blobs too, so this keeps shell/Go parity.
+        local decoded b64 pad
+        if decoded=$(printf '%s' "$content" | base64 -d 2>/dev/null); then
+            printf '%s' "$decoded"
+            return 0
+        fi
+        b64=$(printf '%s' "$content" | tr -d '\r\n\t ' | tr -- '-_' '+/')
+        [[ -n "$b64" ]] || return 1
+        case $(( ${#b64} % 4 )) in
+            2) pad='==' ;;
+            3) pad='=' ;;
+            1) return 1 ;;
+            *) pad='' ;;
+        esac
+        printf '%s%s' "$b64" "$pad" | base64 -d 2>/dev/null || return 1
     fi
 }
 
@@ -66,6 +82,16 @@ _vless_query_get() {
             v="${q#*"&$2="}"
             printf '%s' "${v%%&*}"
             ;;
+    esac
+}
+
+# Redact the UUID credential from a VLESS URI for safe DEBUG logging. Strips the
+# #fragment and replaces the "uuid@" credential with "***@".
+_redact_uri() {
+    local u="${1%%#*}"
+    case "$u" in
+        vless://*@*) printf 'vless://***@%s' "${u#vless://*@}" ;;
+        *)           printf '%s' "$u" ;;
     esac
 }
 
@@ -108,10 +134,21 @@ parse_vless_uri() {
     uuid="${rest%%@*}"
     rest="${rest#*@}"
 
-    # Extract server:port (before ?)
+    # Extract server:port (before ?). Handle bracketed IPv6 literals
+    # ([2001:db8::1]:443) by splitting on the ] delimiter, not the colon.
     server_port="${rest%%\?*}"
-    server="${server_port%%:*}"
-    port="${server_port##*:}"
+    case "$server_port" in
+        \[*)
+            server="${server_port#\[}"
+            server="${server%%\]*}"
+            port="${server_port##*\]:}"
+            [[ "$port" == "$server_port" ]] && port=""
+            ;;
+        *)
+            server="${server_port%%:*}"
+            port="${server_port##*:}"
+            ;;
+    esac
 
     # Extract query string (after ?), then stream params
     if [[ "$rest" == *\?* ]]; then
@@ -181,7 +218,7 @@ step_get_vless_file() {
     case "$VLESS_INPUT" in
         http://*|https://*)
             log "Downloading from URL..."
-            VLESS_CONTENT=$(curl -fsSL "$VLESS_INPUT") || {
+            VLESS_CONTENT=$(curl -fsSL --connect-timeout 10 --max-time 60 "$VLESS_INPUT") || {
                 log -l ERROR "Failed to download from $VLESS_INPUT"
                 exit 1
             }
@@ -228,7 +265,7 @@ step_parse_and_save_servers() {
 
     # Parse servers, resolve IPs, emit one JSON object per server, slurp to array
     printf '%s\n' "$VLESS_SERVERS" | grep '^vless://' | while IFS= read -r uri; do
-        log -l DEBUG "URI: ${uri%%#*}"
+        log -l DEBUG "URI: $(_redact_uri "$uri")"
 
         parsed=$(parse_vless_uri "$uri")
         server=$(printf '%s' "$parsed" | cut -d'|' -f1)
