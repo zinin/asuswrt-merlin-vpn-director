@@ -83,10 +83,10 @@ func handleConfig(deps *Deps) http.HandlerFunc {
 	}
 }
 
-// handleUpdate returns a handler for the self-update endpoint.
-// Currently returns a not-supported message.
-func handleUpdate(deps *Deps) http.HandlerFunc {
+// handleUpdate rejects self-update with 501 until the unified updater lands
+// (spec block 3). A plain error status keeps the UI from reporting success.
+func handleUpdate(_ *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		jsonOK(w, map[string]interface{}{"ok": false, "error": "self-update via web UI not yet supported"})
+		jsonError(w, http.StatusNotImplemented, "self-update via Web UI is not supported yet")
 	}
 }

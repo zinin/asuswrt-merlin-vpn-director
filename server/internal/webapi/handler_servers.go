@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
@@ -154,10 +155,11 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Decode VLESS subscription.
-		vlessServers, _ := vless.DecodeSubscription(string(body))
+		// Decode VLESS subscription. Parse errors travel back to the user so a
+		// rejected link explains itself, as the bot's /import does.
+		vlessServers, parseErrs := vless.DecodeSubscription(string(body))
 		if len(vlessServers) == 0 {
-			jsonError(w, http.StatusBadRequest, "no VLESS servers found in subscription")
+			jsonError(w, http.StatusBadRequest, noServersMessage(parseErrs))
 			return
 		}
 
@@ -245,4 +247,21 @@ func syncXrayServers(config service.ConfigStore, servers []vpnconfig.Server) err
 		return fmt.Errorf("save vpn config: %w", err)
 	}
 	return nil
+}
+
+// noServersMessage explains an empty subscription. Up to three parse errors
+// are appended so the user learns why the link was rejected.
+func noServersMessage(errs []error) string {
+	const msg = "no VLESS servers found in subscription"
+	if len(errs) == 0 {
+		return msg
+	}
+	parts := make([]string, 0, 3)
+	for _, e := range errs {
+		if len(parts) == 3 {
+			break
+		}
+		parts = append(parts, e.Error())
+	}
+	return msg + ": " + strings.Join(parts, "; ")
 }

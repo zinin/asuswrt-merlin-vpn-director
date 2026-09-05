@@ -354,3 +354,18 @@ func TestSyncXrayServers_NilConfigSkips(t *testing.T) {
 		t.Error("expected no save when config is absent")
 	}
 }
+
+func TestNoServersMessage(t *testing.T) {
+	if got := noServersMessage(nil); got != "no VLESS servers found in subscription" {
+		t.Errorf("no errors: got %q", got)
+	}
+	two := []error{errors.New("line 1: bad scheme"), errors.New("line 2: missing uuid")}
+	want := "no VLESS servers found in subscription: line 1: bad scheme; line 2: missing uuid"
+	if got := noServersMessage(two); got != want {
+		t.Errorf("two errors: got %q, want %q", got, want)
+	}
+	five := []error{errors.New("e1"), errors.New("e2"), errors.New("e3"), errors.New("e4"), errors.New("e5")}
+	if got := noServersMessage(five); got != "no VLESS servers found in subscription: e1; e2; e3" {
+		t.Errorf("five errors must be capped at three: got %q", got)
+	}
+}
