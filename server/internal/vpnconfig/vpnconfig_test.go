@@ -511,3 +511,76 @@ func TestSaveVPNDirectorConfig_FormattedJSON(t *testing.T) {
 		t.Error("expected properly formatted JSON")
 	}
 }
+
+// assertNoTempFiles fails if writeFileAtomic left a temp file behind.
+func assertNoTempFiles(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestSaveVPNDirectorConfig_AtomicAndPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vpn-director.json")
+	// A pre-existing world-readable file must come back as 0600.
+	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveVPNDirectorConfig(path, &VPNDirectorConfig{DataDir: "/data"}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("mode = %o, want 0600", perm)
+	}
+	loaded, err := LoadVPNDirectorConfig(path)
+	if err != nil || loaded.DataDir != "/data" {
+		t.Fatalf("round trip failed: %v, %+v", err, loaded)
+	}
+	assertNoTempFiles(t, dir)
+}
+
+func TestSaveServers_AtomicAndPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "servers.json")
+
+	if err := SaveServers(path, []Server{{Address: "a", Port: 443, UUID: "u"}}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("mode = %o, want 0600", perm)
+	}
+	assertNoTempFiles(t, dir)
+}
+
+func TestSaveVPNDirectorConfig_FailedRenameLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	// A directory in place of the target makes the final rename fail after
+	// the temp file has already been written and synced.
+	target := filepath.Join(dir, "vpn-director.json")
+	if err := os.MkdirAll(filepath.Join(target, "occupied"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveVPNDirectorConfig(target, &VPNDirectorConfig{}); err == nil {
+		t.Fatal("expected an error when the target is a directory")
+	}
+	assertNoTempFiles(t, dir)
+}

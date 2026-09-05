@@ -3,6 +3,7 @@ package vpnconfig
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sort"
 )
 
@@ -116,7 +117,7 @@ func SaveServers(path string, servers []Server) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	return writeFileAtomic(path, append(data, '\n'))
 }
 
 func LoadVPNDirectorConfig(path string) (*VPNDirectorConfig, error) {
@@ -133,5 +134,37 @@ func SaveVPNDirectorConfig(path string, cfg *VPNDirectorConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	return writeFileAtomic(path, append(data, '\n'))
+}
+
+// writeFileAtomic writes data to path through a temp file in the same
+// directory, fsyncs it, sets 0600 and renames it over path. A reader (the
+// shell scripts, the other daemon) therefore never sees a partial file, a
+// crash leaves either the old or the new content, and jwt_secret and server
+// UUIDs stop being world-readable.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
