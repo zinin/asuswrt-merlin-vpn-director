@@ -209,3 +209,8 @@ func (sw *statusWriter) WriteHeader(code int) {
 	sw.status = code
 	sw.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap exposes the underlying writer so http.ResponseController can reach
+// its SetWriteDeadline. Without it every extendWriteDeadline call would fail
+// with ErrNotSupported and the 30-second WriteTimeout would still apply.
+func (sw *statusWriter) Unwrap() http.ResponseWriter { return sw.ResponseWriter }

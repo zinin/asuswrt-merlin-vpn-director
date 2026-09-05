@@ -54,8 +54,8 @@ func normalizeExcludeSets(sets []string) ([]string, error) {
 // list and applies the configuration.
 func handleUpdateExcludeSets(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		var req updateExcludeSetsRequest
 		if err := decodeJSON(r, &req); err != nil {
@@ -107,8 +107,8 @@ type addExcludeIPRequest struct {
 // list and applies the configuration.
 func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		var req addExcludeIPRequest
 		if err := decodeJSON(r, &req); err != nil {
@@ -144,8 +144,8 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 // exclusion list (any stored spelling) and applies the configuration.
 func handleDeleteExcludeIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {

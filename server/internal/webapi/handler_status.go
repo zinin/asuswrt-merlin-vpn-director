@@ -19,8 +19,8 @@ func handleStatus(deps *Deps) http.HandlerFunc {
 // handleApply returns a handler that applies the VPN Director configuration.
 func handleApply(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		if err := deps.VPN.Apply(); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to apply configuration: "+lastErrorLine(err))
@@ -33,8 +33,8 @@ func handleApply(deps *Deps) http.HandlerFunc {
 // handleRestart returns a handler that restarts the VPN Director.
 func handleRestart(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		if err := deps.VPN.Restart(); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to restart: "+lastErrorLine(err))
@@ -47,8 +47,8 @@ func handleRestart(deps *Deps) http.HandlerFunc {
 // handleStop returns a handler that stops the VPN Director.
 func handleStop(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		if err := deps.VPN.Stop(); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to stop: "+lastErrorLine(err))
@@ -62,8 +62,8 @@ func handleStop(deps *Deps) http.HandlerFunc {
 // reapplies the configuration via `vpn-director.sh update`.
 func handleUpdateIPsets(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, updateDeadline)
+		defer unlock()
 
 		if err := deps.VPN.Update(); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to update ipsets: "+lastErrorLine(err))

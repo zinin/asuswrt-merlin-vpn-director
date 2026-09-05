@@ -48,8 +48,8 @@ type addClientRequest struct {
 // and a newly created tunnel inherits xray.exclude_sets like the bot wizard.
 func handleAddClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		var req addClientRequest
 		if err := decodeJSON(r, &req); err != nil {
@@ -115,8 +115,8 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 // shell subtracts paused_clients from the clients arrays by exact string.
 func handlePauseClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {
@@ -150,8 +150,8 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 // handleResumeClient returns a handler that resumes a paused client.
 func handleResumeClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {
@@ -179,8 +179,8 @@ func handleResumeClient(deps *Deps) http.HandlerFunc {
 // and from the paused list, matching every stored spelling of the address.
 func handleDeleteClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {

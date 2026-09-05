@@ -59,8 +59,8 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		server := servers[*req.Index]
 
@@ -102,6 +102,8 @@ type importServersRequest struct {
 // subscription URL. It enforces HTTPS-only and SSRF protections.
 func handleImportServers(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		extendWriteDeadline(w, importDeadline)
+
 		var req importServersRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -177,8 +179,8 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock := lockLongOp(w, deps, importDeadline)
+		defer unlock()
 
 		if err := deps.Config.SaveServers(resolved); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to save servers")
