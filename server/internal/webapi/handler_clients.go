@@ -135,7 +135,10 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		if !contains(cfg.PausedClients, existing.stored) {
+		// Compare normalized forms so a legacy "1.2.3.4/32" already in
+		// paused_clients is recognized, but append the stored spelling because
+		// lib/config.sh subtracts the array by exact string.
+		if !containsAddr(cfg.PausedClients, ip) {
 			cfg.PausedClients = append(cfg.PausedClients, existing.stored)
 		}
 

@@ -3,7 +3,6 @@ package wizard
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
@@ -100,18 +99,16 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		if c.Route == "xray" {
 			xrayClients = append(xrayClients, c.IP)
 		} else {
-			// Add /32 suffix if not present
-			ip := c.IP
-			if !strings.Contains(ip, "/") {
-				ip = ip + "/32"
-			}
-			// Add client to tunnel
+			// Store the address as entered, with no /32 appended. The Web UI
+			// stores what vpnconfig.NormalizeClientAddr returns, which strips
+			// /32, and lib/config.sh subtracts paused_clients by exact string:
+			// a second spelling here orphans entries paused from the Web UI.
 			if existing, ok := tunnels[c.Route]; ok {
-				existing.Clients = append(existing.Clients, ip)
+				existing.Clients = append(existing.Clients, c.IP)
 				tunnels[c.Route] = existing
 			} else {
 				tunnels[c.Route] = vpnconfig.TunnelConfig{
-					Clients: []string{ip},
+					Clients: []string{c.IP},
 					Exclude: excl,
 				}
 			}
