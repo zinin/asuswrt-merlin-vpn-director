@@ -133,7 +133,7 @@ onMounted(loadData)
           v-for="code in countrySets"
           :key="code"
           class="badge badge-green"
-          style="cursor: pointer; font-size: 0.85rem;"
+          style="cursor: pointer; font-size: 0.85rem; text-transform: lowercase;"
           @click="removeCountry(code)"
         >
           {{ code }} ✕
