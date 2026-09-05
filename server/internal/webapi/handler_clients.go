@@ -75,20 +75,14 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
-			return
-		}
-
-		if existing, found := findClient(cfg, ip); found {
-			jsonError(w, http.StatusConflict, fmt.Sprintf("client already configured for %s", existing.route))
-			return
-		}
-
-		if req.Route == "xray" {
-			cfg.Xray.Clients = append(cfg.Xray.Clients, ip)
-		} else {
+		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			if existing, found := findClient(cfg, ip); found {
+				return &httpError{status: http.StatusConflict, msg: fmt.Sprintf("client already configured for %s", existing.route)}
+			}
+			if req.Route == "xray" {
+				cfg.Xray.Clients = append(cfg.Xray.Clients, ip)
+				return nil
+			}
 			if cfg.TunnelDirector.Tunnels == nil {
 				cfg.TunnelDirector.Tunnels = make(map[string]vpnconfig.TunnelConfig)
 			}
@@ -104,9 +98,8 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			}
 			tunnel.Clients = append(tunnel.Clients, ip)
 			cfg.TunnelDirector.Tunnels[req.Route] = tunnel
-		}
-
-		writeSaveApplyResult(w, saveAndApply(deps, cfg))
+			return nil
+		}))
 	}
 }
 
@@ -123,27 +116,20 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
-			return
-		}
-
-		existing, found := findClient(cfg, ip)
-		if !found {
-			jsonError(w, http.StatusNotFound, "client not found")
-			return
-		}
-
-		// Drop any equivalent spelling and write the stored one in its place.
-		// lib/config.sh subtracts paused_clients from the clients arrays by
-		// exact string, and CollectClients reports Paused by exact lookup, so
-		// an entry spelled differently from the client pauses nothing while
-		// reporting success. Replacing rather than skipping keeps this
-		// idempotent and repairs a mismatched legacy entry on the first pause.
-		cfg.PausedClients = append(removeAddr(cfg.PausedClients, ip), existing.stored)
-
-		writeSaveApplyResult(w, saveAndApply(deps, cfg))
+		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			existing, found := findClient(cfg, ip)
+			if !found {
+				return &httpError{status: http.StatusNotFound, msg: "client not found"}
+			}
+			// Drop any equivalent spelling and write the stored one in its place.
+			// lib/config.sh subtracts paused_clients from the clients arrays by
+			// exact string, and CollectClients reports Paused by exact lookup, so
+			// an entry spelled differently from the client pauses nothing while
+			// reporting success. Replacing rather than skipping keeps this
+			// idempotent and repairs a mismatched legacy entry on the first pause.
+			cfg.PausedClients = append(removeAddr(cfg.PausedClients, ip), existing.stored)
+			return nil
+		}))
 	}
 }
 
@@ -158,20 +144,13 @@ func handleResumeClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
-			return
-		}
-
-		if _, found := findClient(cfg, ip); !found {
-			jsonError(w, http.StatusNotFound, "client not found")
-			return
-		}
-
-		cfg.PausedClients = removeAddr(cfg.PausedClients, ip)
-
-		writeSaveApplyResult(w, saveAndApply(deps, cfg))
+		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			if _, found := findClient(cfg, ip); !found {
+				return &httpError{status: http.StatusNotFound, msg: "client not found"}
+			}
+			cfg.PausedClients = removeAddr(cfg.PausedClients, ip)
+			return nil
+		}))
 	}
 }
 
@@ -187,25 +166,18 @@ func handleDeleteClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
-			return
-		}
-
-		if _, found := findClient(cfg, ip); !found {
-			jsonError(w, http.StatusNotFound, "client not found")
-			return
-		}
-
-		cfg.Xray.Clients = removeAddr(cfg.Xray.Clients, ip)
-		for name, tunnel := range cfg.TunnelDirector.Tunnels {
-			tunnel.Clients = removeAddr(tunnel.Clients, ip)
-			cfg.TunnelDirector.Tunnels[name] = tunnel
-		}
-		cfg.PausedClients = removeAddr(cfg.PausedClients, ip)
-
-		writeSaveApplyResult(w, saveAndApply(deps, cfg))
+		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			if _, found := findClient(cfg, ip); !found {
+				return &httpError{status: http.StatusNotFound, msg: "client not found"}
+			}
+			cfg.Xray.Clients = removeAddr(cfg.Xray.Clients, ip)
+			for name, tunnel := range cfg.TunnelDirector.Tunnels {
+				tunnel.Clients = removeAddr(tunnel.Clients, ip)
+				cfg.TunnelDirector.Tunnels[name] = tunnel
+			}
+			cfg.PausedClients = removeAddr(cfg.PausedClients, ip)
+			return nil
+		}))
 	}
 }
 

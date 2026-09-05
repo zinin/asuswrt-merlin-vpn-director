@@ -74,15 +74,10 @@ func handleUpdateExcludeSets(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
-			return
-		}
-
-		cfg.Xray.ExcludeSets = sets
-
-		writeSaveApplyResult(w, saveAndApply(deps, cfg))
+		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			cfg.Xray.ExcludeSets = sets
+			return nil
+		}))
 	}
 }
 
@@ -126,17 +121,12 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
-			return
-		}
-
-		if !containsAddr(cfg.Xray.ExcludeIPs, ip) {
-			cfg.Xray.ExcludeIPs = append(cfg.Xray.ExcludeIPs, ip)
-		}
-
-		writeSaveApplyResult(w, saveAndApply(deps, cfg))
+		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			if !containsAddr(cfg.Xray.ExcludeIPs, ip) {
+				cfg.Xray.ExcludeIPs = append(cfg.Xray.ExcludeIPs, ip)
+			}
+			return nil
+		}))
 	}
 }
 
@@ -152,14 +142,9 @@ func handleDeleteExcludeIP(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load configuration")
-			return
-		}
-
-		cfg.Xray.ExcludeIPs = removeAddr(cfg.Xray.ExcludeIPs, ip)
-
-		writeSaveApplyResult(w, saveAndApply(deps, cfg))
+		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			cfg.Xray.ExcludeIPs = removeAddr(cfg.Xray.ExcludeIPs, ip)
+			return nil
+		}))
 	}
 }

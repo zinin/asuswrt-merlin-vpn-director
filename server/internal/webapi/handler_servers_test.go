@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -342,13 +343,18 @@ func TestSyncXrayServers_Success(t *testing.T) {
 	}
 }
 
-func TestSyncXrayServers_NilConfigSkips(t *testing.T) {
-	mc := &mockConfig{cfg: nil} // LoadVPNConfig returns (nil, nil)
+func TestSyncXrayServers_MissingConfigIsSurfaced(t *testing.T) {
+	// An absent vpn-director.json used to be skipped silently. UpdateVPNConfig
+	// reports it as service.ErrConfigLoad, and the import handler turns that
+	// into "servers saved, but xray.servers sync failed": a stale xray.servers
+	// leaves the proxy's own endpoints out of the TPROXY bypass set, which the
+	// caller must learn about rather than read as success.
+	mc := &mockConfig{cfg: nil}
 
 	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
 
-	if err != nil {
-		t.Fatalf("expected nil error when config is absent, got %v", err)
+	if !errors.Is(err, service.ErrConfigLoad) {
+		t.Fatalf("expected a service.ErrConfigLoad failure when config is absent, got %v", err)
 	}
 	if mc.savedCfg != nil {
 		t.Error("expected no save when config is absent")

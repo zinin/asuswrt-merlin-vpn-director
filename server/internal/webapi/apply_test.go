@@ -7,10 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
-func TestSaveAndApply_OK(t *testing.T) {
+func TestUpdateAndApply_OK(t *testing.T) {
 	deps := newTestDeps(t)
 	mc := &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}}
 	deps.Config = mc
@@ -18,7 +19,7 @@ func TestSaveAndApply_OK(t *testing.T) {
 	deps.VPN = vpn
 
 	rec := httptest.NewRecorder()
-	writeSaveApplyResult(rec, saveAndApply(deps, mc.cfg))
+	writeSaveApplyResult(rec, updateAndApply(deps, func(*vpnconfig.VPNDirectorConfig) error { return nil }))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -38,14 +39,14 @@ func TestSaveAndApply_OK(t *testing.T) {
 	}
 }
 
-func TestSaveAndApply_SaveError(t *testing.T) {
+func TestUpdateAndApply_SaveError(t *testing.T) {
 	deps := newTestDeps(t)
 	deps.Config = &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}, saveVPNCfgErr: errors.New("disk full")}
 	vpn := &mockVPN{}
 	deps.VPN = vpn
 
 	rec := httptest.NewRecorder()
-	writeSaveApplyResult(rec, saveAndApply(deps, &vpnconfig.VPNDirectorConfig{}))
+	writeSaveApplyResult(rec, updateAndApply(deps, func(*vpnconfig.VPNDirectorConfig) error { return nil }))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
@@ -65,14 +66,14 @@ func TestSaveAndApply_SaveError(t *testing.T) {
 	}
 }
 
-func TestSaveAndApply_ApplyError(t *testing.T) {
+func TestUpdateAndApply_ApplyError(t *testing.T) {
 	deps := newTestDeps(t)
 	mc := &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}}
 	deps.Config = mc
 	deps.VPN = &mockVPN{err: errors.New("apply failed (exit 1): [INFO] ensuring ipsets\n[ERROR] Invalid country code 'xx'\n")}
 
 	rec := httptest.NewRecorder()
-	writeSaveApplyResult(rec, saveAndApply(deps, mc.cfg))
+	writeSaveApplyResult(rec, updateAndApply(deps, func(*vpnconfig.VPNDirectorConfig) error { return nil }))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
@@ -90,5 +91,82 @@ func TestSaveAndApply_ApplyError(t *testing.T) {
 	want := "configuration saved, but apply failed: [ERROR] Invalid country code 'xx'"
 	if resp["error"] != want {
 		t.Errorf("error = %v, want %q", resp["error"], want)
+	}
+}
+
+func TestUpdateAndApply_HTTPErrorFromMutateIsAnsweredAsIs(t *testing.T) {
+	deps := newTestDeps(t)
+	mc := &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}}
+	deps.Config = mc
+	vpn := &mockVPN{}
+	deps.VPN = vpn
+
+	rec := httptest.NewRecorder()
+	writeSaveApplyResult(rec, updateAndApply(deps, func(*vpnconfig.VPNDirectorConfig) error {
+		return &httpError{status: http.StatusConflict, msg: "client already configured for xray"}
+	}))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if mc.savedCfg != nil {
+		t.Error("a rejected mutation must not be saved")
+	}
+	if vpn.applyCalls != 0 {
+		t.Errorf("Apply() must not run after a rejected mutation, got %d calls", vpn.applyCalls)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "client already configured for xray" {
+		t.Errorf("unexpected error text: %q", resp["error"])
+	}
+}
+
+func TestUpdateAndApply_LoadError(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{err: errors.New("read failed")}
+	vpn := &mockVPN{}
+	deps.VPN = vpn
+
+	rec := httptest.NewRecorder()
+	writeSaveApplyResult(rec, updateAndApply(deps, func(*vpnconfig.VPNDirectorConfig) error { return nil }))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	var resp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["error"] != "failed to load configuration" {
+		t.Errorf("unexpected error text: %v", resp["error"])
+	}
+	if vpn.applyCalls != 0 {
+		t.Errorf("Apply() must not run when the config could not be loaded, got %d calls", vpn.applyCalls)
+	}
+}
+
+func TestUpdateAndApply_LockTimeoutIsASaveFailure(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}, updateErr: service.ErrConfigLockTimeout}
+	vpn := &mockVPN{}
+	deps.VPN = vpn
+
+	rec := httptest.NewRecorder()
+	writeSaveApplyResult(rec, updateAndApply(deps, func(*vpnconfig.VPNDirectorConfig) error { return nil }))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	var resp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["error"] != "failed to save configuration" {
+		t.Errorf("unexpected error text: %v", resp["error"])
+	}
+	if _, has := resp["saved"]; has {
+		t.Error("saved must be absent when nothing was written")
+	}
+	if vpn.applyCalls != 0 {
+		t.Errorf("Apply() must not run after a lock timeout, got %d calls", vpn.applyCalls)
 	}
 }

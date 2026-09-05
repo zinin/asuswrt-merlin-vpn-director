@@ -69,18 +69,19 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
-			return
-		}
-
 		// Set xray.servers to ALL servers' IPs, not just the selected one
 		// (parity with the import path). xray.servers feeds the TPROXY bypass
 		// set; dropping the other endpoints on a switch can cause a routing loop.
-		cfg.Xray.Servers = collectServerIPs(servers)
-		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
+		err = deps.Config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+			cfg.Xray.Servers = collectServerIPs(servers)
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, service.ErrConfigLoad) {
+				jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
+			} else {
+				jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
+			}
 			return
 		}
 
@@ -233,20 +234,16 @@ func collectServerIPs(servers []vpnconfig.Server) []string {
 	return ips
 }
 
-// syncXrayServers updates xray.servers with the IPs of all given servers and
-// persists the config. A load or save failure is returned so the caller can
+// syncXrayServers updates xray.servers with the IPs of all given servers under
+// the config lock. A load or save failure is returned so the caller can
 // surface it instead of silently leaving xray.servers stale.
 func syncXrayServers(config service.ConfigStore, servers []vpnconfig.Server) error {
-	vpnCfg, err := config.LoadVPNConfig()
-	if err != nil {
-		return fmt.Errorf("load vpn config: %w", err)
-	}
-	if vpnCfg == nil {
+	err := config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+		cfg.Xray.Servers = collectServerIPs(servers)
 		return nil
-	}
-	vpnCfg.Xray.Servers = collectServerIPs(servers)
-	if err := config.SaveVPNConfig(vpnCfg); err != nil {
-		return fmt.Errorf("save vpn config: %w", err)
+	})
+	if err != nil {
+		return fmt.Errorf("sync xray.servers: %w", err)
 	}
 	return nil
 }
