@@ -16,6 +16,8 @@ func TestNormalizeClientAddr(t *testing.T) {
 		{"192.168.50.10/32", "192.168.50.10", true},
 		{"192.168.50.0/24", "192.168.50.0/24", true},
 		{"10.0.0.0/8", "10.0.0.0/8", true},
+		{"192.168.50.10/24", "192.168.50.0/24", true},
+		{"1.2.3.4/032", "1.2.3.4", true},
 		{"", "", false},
 		{"not-an-ip", "", false},
 		{"256.1.1.1", "", false},
@@ -45,5 +47,12 @@ func TestNormalizeClientAddr(t *testing.T) {
 				t.Errorf("NormalizeClientAddr(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestErrInvalidClientAddrText(t *testing.T) {
+	// Six later tasks return this verbatim as the HTTP 400 body.
+	if got := ErrInvalidClientAddr.Error(); got != "invalid IPv4 address or CIDR" {
+		t.Errorf("ErrInvalidClientAddr.Error() = %q, want %q", got, "invalid IPv4 address or CIDR")
 	}
 }
