@@ -272,13 +272,3 @@ func removeAddr(slice []string, addr string) []string {
 	}
 	return result
 }
-
-// contains returns true if the slice contains the item.
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}

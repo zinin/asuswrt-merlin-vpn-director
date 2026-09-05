@@ -471,18 +471,6 @@ func TestHandleDeleteClient_MissingIP(t *testing.T) {
 	}
 }
 
-func TestContains(t *testing.T) {
-	if !contains([]string{"a", "b", "c"}, "b") {
-		t.Error("expected true for present item")
-	}
-	if contains([]string{"a", "b"}, "c") {
-		t.Error("expected false for absent item")
-	}
-	if contains(nil, "a") {
-		t.Error("expected false for nil slice")
-	}
-}
-
 func TestHandleAddClient_ConflictOtherRoute(t *testing.T) {
 	mc := &mockConfig{
 		cfg: &vpnconfig.VPNDirectorConfig{

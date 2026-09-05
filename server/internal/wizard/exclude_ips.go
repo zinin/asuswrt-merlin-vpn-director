@@ -124,11 +124,3 @@ func (s *ExcludeIPsStep) buildUI(state *State) (string, tgbotapi.InlineKeyboardM
 
 	return sb.String(), kb.Build()
 }
-
-// IsValidIPOrCIDR reports whether s is an IPv4 address or IPv4 CIDR.
-// Validation lives in vpnconfig.NormalizeClientAddr so the bot and the
-// Web UI agree on what they accept.
-func IsValidIPOrCIDR(s string) bool {
-	_, err := vpnconfig.NormalizeClientAddr(s)
-	return err == nil
-}
