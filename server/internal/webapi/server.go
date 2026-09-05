@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+// writeTimeout bounds how long a single response may take to be written. It is
+// minutes rather than seconds because every mutating handler runs
+// vpn-director.sh synchronously: `vpn-director.sh update` re-downloads every
+// configured country set, and one country can fall through three download
+// sources at up to 270 seconds. A seconds-scale deadline tears the connection
+// down after the save and the apply have both completed, losing the
+// {"saved": true} body the front end needs in order to refresh. The value stays
+// finite so a slow-reading client cannot pin a connection forever, and it is
+// deliberately generous so a per-command timeout can later cap the shell run
+// below this deadline.
+const writeTimeout = 10 * time.Minute
+
 // ServerConfig holds HTTP/HTTPS server configuration.
 type ServerConfig struct {
 	Port     int
@@ -30,7 +42,7 @@ func ListenAndServe(ctx context.Context, cfg ServerConfig, deps *Deps, staticFS 
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
