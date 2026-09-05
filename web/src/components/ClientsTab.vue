@@ -20,10 +20,12 @@ const routeOptions = [
 
 // Shows the server error; when the change was saved but apply failed
 // (response carries saved: true) the list is refreshed so the saved
-// change is visible and the Status tab's Apply can retry.
+// change is visible and the Status tab's Apply can retry. A 404 is
+// refreshed too: the server says the row does not exist, so the displayed
+// list is stale and is exactly what must be reloaded.
 async function reportError(e: any) {
   alert('Error: ' + (e.response?.data?.error || e.message))
-  if (e.response?.data?.saved) {
+  if (e.response?.data?.saved || e.response?.status === 404) {
     await loadClients()
   }
 }
