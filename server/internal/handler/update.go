@@ -123,7 +123,12 @@ func (h *UpdateHandler) downloadAndUpdate(chatID int64, release *updater.Release
 	h.send(chatID, "Files downloaded, starting update...")
 
 	// Run update script (detached, will restart the bot)
-	if err := h.updater.RunUpdateScript(chatID, h.version, release.TagName); err != nil {
+	if err := h.updater.RunUpdateScript(updater.RunOptions{
+		OldVersion: h.version,
+		NewVersion: release.TagName,
+		ChatID:     chatID,
+		Initiator:  "bot",
+	}); err != nil {
 		h.updater.CleanFiles()
 		h.updater.RemoveLock()
 		h.send(chatID, fmt.Sprintf("Failed to run update script: %v", err))

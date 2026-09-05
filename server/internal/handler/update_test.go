@@ -25,15 +25,13 @@ type mockUpdater struct {
 	runScriptErr     error
 
 	// Track calls
-	cleanFilesCalled  bool
-	removeLockCalled  bool
-	runScriptCalled   bool
-	runScriptChatID   int64
-	runScriptOldVer   string
-	runScriptNewVer   string
-	downloadCalled    bool
-	downloadCtx       context.Context
-	downloadRelease   *updater.Release
+	cleanFilesCalled bool
+	removeLockCalled bool
+	runScriptCalled  bool
+	runScriptOpts    updater.RunOptions
+	downloadCalled   bool
+	downloadCtx      context.Context
+	downloadRelease  *updater.Release
 }
 
 func (m *mockUpdater) GetLatestRelease(ctx context.Context) (*updater.Release, error) {
@@ -79,13 +77,11 @@ func (m *mockUpdater) DownloadRelease(ctx context.Context, release *updater.Rele
 	return m.downloadErr
 }
 
-func (m *mockUpdater) RunUpdateScript(chatID int64, oldVersion, newVersion string) error {
+func (m *mockUpdater) RunUpdateScript(opts updater.RunOptions) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.runScriptCalled = true
-	m.runScriptChatID = chatID
-	m.runScriptOldVer = oldVersion
-	m.runScriptNewVer = newVersion
+	m.runScriptOpts = opts
 	return m.runScriptErr
 }
 
@@ -108,10 +104,10 @@ func (m *mockUpdater) wasRunScriptCalled() bool {
 	return m.runScriptCalled
 }
 
-func (m *mockUpdater) getRunScriptArgs() (int64, string, string) {
+func (m *mockUpdater) getRunScriptOpts() updater.RunOptions {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.runScriptChatID, m.runScriptOldVer, m.runScriptNewVer
+	return m.runScriptOpts
 }
 
 // mockUpdateSender implements telegram.MessageSender for testing
@@ -471,15 +467,18 @@ func TestUpdateHandler_Success(t *testing.T) {
 	if !upd.wasRunScriptCalled() {
 		t.Error("RunUpdateScript should be called")
 	}
-	chatID, oldVer, newVer := upd.getRunScriptArgs()
-	if chatID != 42 {
-		t.Errorf("RunUpdateScript chatID = %d, want 42", chatID)
+	opts := upd.getRunScriptOpts()
+	if opts.ChatID != 42 {
+		t.Errorf("RunUpdateScript chatID = %d, want 42", opts.ChatID)
 	}
-	if oldVer != "v1.0.0" {
-		t.Errorf("RunUpdateScript oldVersion = %q, want v1.0.0", oldVer)
+	if opts.OldVersion != "v1.0.0" {
+		t.Errorf("RunUpdateScript oldVersion = %q, want v1.0.0", opts.OldVersion)
 	}
-	if newVer != "v1.1.0" {
-		t.Errorf("RunUpdateScript newVersion = %q, want v1.1.0", newVer)
+	if opts.NewVersion != "v1.1.0" {
+		t.Errorf("RunUpdateScript newVersion = %q, want v1.1.0", opts.NewVersion)
+	}
+	if opts.Initiator != "bot" {
+		t.Errorf("RunUpdateScript initiator = %q, want bot", opts.Initiator)
 	}
 
 	// Cleanup should NOT be called on success

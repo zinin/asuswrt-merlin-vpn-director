@@ -36,7 +36,7 @@ type Asset struct {
 
 // Daemon describes an updatable daemon. Name is both the release asset prefix
 // (<Name>-<arch>) and the file name under files/; Binary is where the update
-// script installs it and what pgrep matches on; InitScript is the Entware
+// script installs it and what `pgrep -f` matches on; InitScript is the Entware
 // script that starts and stops it.
 type Daemon struct {
 	Name       string
@@ -78,7 +78,7 @@ type Updater interface {
 	DownloadRelease(ctx context.Context, release *Release) error
 
 	// RunUpdateScript generates and runs the update shell script.
-	RunUpdateScript(chatID int64, oldVersion, newVersion string) error
+	RunUpdateScript(opts RunOptions) error
 }
 
 // Service implements the Updater interface.

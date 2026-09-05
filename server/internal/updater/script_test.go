@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+// validOpts returns options that pass every validation, so a test can flip a
+// single field and assert that this one field is what got rejected.
+func validOpts() RunOptions {
+	return RunOptions{OldVersion: "v1.0.0", NewVersion: "v1.1.0", ChatID: 123, Initiator: "bot"}
+}
+
 func TestGenerateScript(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -14,7 +20,7 @@ func TestGenerateScript(t *testing.T) {
 		updateDir: tmpDir,
 	}
 
-	script, err := s.generateScript(123456789, "v1.0.0", "v1.1.0")
+	script, err := s.generateScript(RunOptions{ChatID: 123456789, OldVersion: "v1.0.0", NewVersion: "v1.1.0", Initiator: "bot"})
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
 	}
@@ -63,7 +69,7 @@ func TestGenerateScript_PathsCorrect(t *testing.T) {
 		updateDir: tmpDir,
 	}
 
-	script, err := s.generateScript(999, "v1.0.0", "v2.0.0")
+	script, err := s.generateScript(RunOptions{ChatID: 999, OldVersion: "v1.0.0", NewVersion: "v2.0.0", Initiator: "bot"})
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
 	}
@@ -83,6 +89,24 @@ func TestGenerateScript_PathsCorrect(t *testing.T) {
 	}
 }
 
+func TestGenerateScript_EmbedsInitiator(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := &Service{updateDir: tmpDir}
+
+	script, err := s.generateScript(RunOptions{
+		OldVersion: "v1.0.0", NewVersion: "v1.1.0", ChatID: 0, Initiator: "webui",
+	})
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+	if !strings.Contains(script, `INITIATOR="webui"`) {
+		t.Error("script must carry the initiator so notify.json can name it")
+	}
+	if !strings.Contains(script, "CHAT_ID=0") {
+		t.Error("a Web UI update has chat_id 0")
+	}
+}
+
 func TestRunUpdateScript_InvalidVersion(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -92,58 +116,72 @@ func TestRunUpdateScript_InvalidVersion(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		oldVersion string
-		newVersion string
-		wantErr    string
+		name    string
+		mutate  func(*RunOptions)
+		wantErr string
 	}{
 		{
-			name:       "shell injection in old version",
-			oldVersion: "v1.0.0;rm -rf /",
-			newVersion: "v1.1.0",
-			wantErr:    "invalid old version",
+			name:    "shell injection in old version",
+			mutate:  func(o *RunOptions) { o.OldVersion = "v1.0.0;rm -rf /" },
+			wantErr: "invalid old version",
 		},
 		{
-			name:       "shell injection in new version",
-			oldVersion: "v1.0.0",
-			newVersion: "v1.1.0$(whoami)",
-			wantErr:    "invalid new version",
+			name:    "shell injection in new version",
+			mutate:  func(o *RunOptions) { o.NewVersion = "v1.1.0$(whoami)" },
+			wantErr: "invalid new version",
 		},
 		{
-			name:       "backticks in old version",
-			oldVersion: "`id`",
-			newVersion: "v1.1.0",
-			wantErr:    "invalid old version",
+			name:    "backticks in old version",
+			mutate:  func(o *RunOptions) { o.OldVersion = "`id`" },
+			wantErr: "invalid old version",
 		},
 		{
-			name:       "quotes in new version",
-			oldVersion: "v1.0.0",
-			newVersion: `v1.1.0"test`,
-			wantErr:    "invalid new version",
+			name:    "quotes in new version",
+			mutate:  func(o *RunOptions) { o.NewVersion = `v1.1.0"test` },
+			wantErr: "invalid new version",
 		},
 		{
-			name:       "empty old version",
-			oldVersion: "",
-			newVersion: "v1.1.0",
-			wantErr:    "invalid old version",
+			name:    "empty old version",
+			mutate:  func(o *RunOptions) { o.OldVersion = "" },
+			wantErr: "invalid old version",
 		},
 		{
-			name:       "too long version",
-			oldVersion: "v1.0.0",
-			newVersion: strings.Repeat("v", 100),
-			wantErr:    "invalid new version",
+			name:    "too long version",
+			mutate:  func(o *RunOptions) { o.NewVersion = strings.Repeat("v", 100) },
+			wantErr: "invalid new version",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := s.RunUpdateScript(123, tt.oldVersion, tt.newVersion)
+			opts := validOpts()
+			tt.mutate(&opts)
+
+			err := s.RunUpdateScript(opts)
 			if err == nil {
 				t.Error("Expected error for invalid version")
 				return
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("Error %q should contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRunUpdateScript_InvalidInitiator(t *testing.T) {
+	// Initiator is interpolated into the shell script the same way versions
+	// are, so it gets the same allow-list treatment.
+	tmpDir := t.TempDir()
+	s := &Service{updateDir: tmpDir, scriptFile: filepath.Join(tmpDir, "update.sh")}
+
+	for _, initiator := range []string{"", "cron", `bot";rm -rf /;"`} {
+		t.Run(initiator, func(t *testing.T) {
+			opts := validOpts()
+			opts.Initiator = initiator
+			err := s.RunUpdateScript(opts)
+			if err == nil || !strings.Contains(err.Error(), "invalid initiator") {
+				t.Fatalf("RunUpdateScript(initiator=%q) error = %v, want invalid initiator", initiator, err)
 			}
 		})
 	}
@@ -159,7 +197,7 @@ func TestRunUpdateScript_ValidVersion(t *testing.T) {
 
 	// This will fail at cmd.Start() because nohup/sh may not exist in test env
 	// but the important part is that it passes validation
-	err := s.RunUpdateScript(123, "v1.0.0", "v1.1.0")
+	err := s.RunUpdateScript(validOpts())
 
 	// If we get "start script" error, validation passed
 	// If we get "invalid version", validation failed
@@ -183,7 +221,7 @@ func TestRunUpdateScript_ScriptContent(t *testing.T) {
 	}
 
 	// Run will likely fail, but script should be written
-	_ = s.RunUpdateScript(42, "v1.2.3", "v2.0.0")
+	_ = s.RunUpdateScript(RunOptions{ChatID: 42, OldVersion: "v1.2.3", NewVersion: "v2.0.0", Initiator: "bot"})
 
 	// Read the generated script
 	scriptPath := filepath.Join(tmpDir, "update.sh")
