@@ -18,6 +18,16 @@ const routeOptions = [
   'ovpnc1', 'ovpnc2', 'ovpnc3', 'ovpnc4', 'ovpnc5',
 ]
 
+// Shows the server error; when the change was saved but apply failed
+// (response carries saved: true) the list is refreshed so the saved
+// change is visible and the Status tab's Apply can retry.
+async function reportError(e: any) {
+  alert('Error: ' + (e.response?.data?.error || e.message))
+  if (e.response?.data?.saved) {
+    await loadClients()
+  }
+}
+
 async function loadClients() {
   loading.value = true
   error.value = ''
@@ -40,7 +50,7 @@ async function addClient() {
     newRoute.value = 'xray'
     await loadClients()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     addLoading.value = false
   }
@@ -52,7 +62,7 @@ async function pauseClient(ip: string) {
     await api.pauseClient(ip)
     await loadClients()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     actionLoading.value = ''
   }
@@ -64,7 +74,7 @@ async function resumeClient(ip: string) {
     await api.resumeClient(ip)
     await loadClients()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     actionLoading.value = ''
   }
@@ -77,7 +87,7 @@ async function removeClient(ip: string) {
     await api.deleteClient(ip)
     await loadClients()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     actionLoading.value = ''
   }
