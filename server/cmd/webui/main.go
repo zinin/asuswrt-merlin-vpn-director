@@ -139,9 +139,10 @@ func main() {
 		Network: networkSvc,
 		Logs:    logSvc,
 		LogPaths: map[string]string{
-			"bot":  p.BotLogPath,
-			"vpn":  p.VPNLogPath,
-			"xray": p.XrayLogPath,
+			"bot":   p.BotLogPath,
+			"vpn":   p.VPNLogPath,
+			"xray":  p.XrayLogPath,
+			"webui": p.WebUILogPath,
 		},
 		Shadow:  shadowAuth,
 		JWT:     jwtSvc,

@@ -114,7 +114,7 @@ A self-signed TLS certificate is generated automatically during installation. Yo
 | **Servers** | Xray server management, switch active server |
 | **Clients** | LAN client routing assignment (pause/resume/delete) |
 | **Exclusions** | Country and IP/CIDR exclusion lists |
-| **Logs** | Log viewer (bot, vpn, xray) |
+| **Logs** | Log viewer (bot, vpn, xray, webui) |
 | **Settings** | Configuration and system settings |
 
 ### Configuration
@@ -169,7 +169,7 @@ Remote management via Telegram with username-based authorization.
 | `/configure` | Configuration wizard |
 | `/restart` | Restart VPN Director |
 | `/stop` | Stop VPN Director |
-| `/logs [bot\|vpn\|xray\|all] [N]` | Recent logs (default: all, 20 lines) |
+| `/logs [bot\|vpn\|xray\|webui\|all] [N]` | Recent logs (default: all, 20 lines) |
 | `/ip` | External IP |
 | `/update` | Update to latest release |
 | `/version` | Bot version |

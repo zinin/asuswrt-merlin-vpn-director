@@ -132,9 +132,10 @@ func newTestDeps(t *testing.T) *Deps {
 		Network: &mockNetwork{ip: "203.0.113.42"},
 		Logs:    &mockLogs{output: "log line 1\nlog line 2"},
 		LogPaths: map[string]string{
-			"bot":  "/tmp/test-telegram-bot.log",
-			"vpn":  "/tmp/test-vpn-director.log",
-			"xray": "/tmp/test-xray-error.log",
+			"bot":   "/tmp/test-telegram-bot.log",
+			"vpn":   "/tmp/test-vpn-director.log",
+			"xray":  "/tmp/test-xray-error.log",
+			"webui": "/tmp/test-webui.log",
 		},
 		Shadow:       shadow,
 		JWT:          jwt,

@@ -22,8 +22,8 @@ func (m *mockSender) Send(chatID int64, text string) error {
 	m.lastText = text
 	return nil
 }
-func (m *mockSender) SendPlain(chatID int64, text string) error { return nil }
-func (m *mockSender) SendLongPlain(chatID int64, text string) error  { return nil }
+func (m *mockSender) SendPlain(chatID int64, text string) error     { return nil }
+func (m *mockSender) SendLongPlain(chatID int64, text string) error { return nil }
 func (m *mockSender) SendWithKeyboard(chatID int64, text string, kb tgbotapi.InlineKeyboardMarkup) error {
 	return nil
 }
@@ -142,9 +142,10 @@ func TestMiscHandler_HandleLogs_DefaultArgs(t *testing.T) {
 	sender := &mockSender{}
 	logReader := &mockLogReader{output: "log line 1\nlog line 2"}
 	testPaths := paths.Paths{
-		BotLogPath:  "/tmp/bot.log",
-		VPNLogPath:  "/tmp/vpn.log",
-		XrayLogPath: "/tmp/xray-error.log",
+		BotLogPath:   "/tmp/bot.log",
+		VPNLogPath:   "/tmp/vpn.log",
+		XrayLogPath:  "/tmp/xray-error.log",
+		WebUILogPath: "/tmp/webui.log",
 	}
 	deps := &Deps{Sender: sender, Logs: logReader, Paths: testPaths}
 	h := NewMiscHandler(deps)
@@ -158,9 +159,9 @@ func TestMiscHandler_HandleLogs_DefaultArgs(t *testing.T) {
 	}
 	h.HandleLogs(msg)
 
-	// Default is "all" which reads bot, vpn and xray logs
-	if len(logReader.calls) != 3 {
-		t.Fatalf("expected 3 log read calls, got %d", len(logReader.calls))
+	// Default is "all" which reads bot, vpn, xray and webui logs
+	if len(logReader.calls) != 4 {
+		t.Fatalf("expected 4 log read calls, got %d", len(logReader.calls))
 	}
 	// Check first call (bot logs)
 	if logReader.calls[0].path != "/tmp/bot.log" {
@@ -176,6 +177,10 @@ func TestMiscHandler_HandleLogs_DefaultArgs(t *testing.T) {
 	// Check third call (xray error log)
 	if logReader.calls[2].path != "/tmp/xray-error.log" {
 		t.Errorf("expected xray log path, got %q", logReader.calls[2].path)
+	}
+	// Check fourth call (webui log)
+	if logReader.calls[3].path != "/tmp/webui.log" {
+		t.Errorf("expected webui log path, got %q", logReader.calls[3].path)
 	}
 }
 
@@ -261,6 +266,35 @@ func TestMiscHandler_HandleLogs_SourceXray(t *testing.T) {
 	}
 }
 
+func TestMiscHandler_HandleLogs_SourceWebUI(t *testing.T) {
+	sender := &mockSender{}
+	logReader := &mockLogReader{output: "log"}
+	testPaths := paths.Paths{
+		BotLogPath:   "/tmp/bot.log",
+		VPNLogPath:   "/tmp/vpn.log",
+		XrayLogPath:  "/tmp/xray-error.log",
+		WebUILogPath: "/tmp/webui.log",
+	}
+	deps := &Deps{Sender: sender, Logs: logReader, Paths: testPaths}
+	h := NewMiscHandler(deps)
+
+	msg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 100},
+		Text: "/logs webui",
+		Entities: []tgbotapi.MessageEntity{
+			{Type: "bot_command", Offset: 0, Length: 5},
+		},
+	}
+	h.HandleLogs(msg)
+
+	if len(logReader.calls) != 1 {
+		t.Fatalf("expected 1 log read call, got %d", len(logReader.calls))
+	}
+	if logReader.calls[0].path != "/tmp/webui.log" {
+		t.Errorf("expected webui log path, got %q", logReader.calls[0].path)
+	}
+}
+
 func TestMiscHandler_HandleLogs_WithLines(t *testing.T) {
 	sender := &mockSender{}
 	logReader := &mockLogReader{output: "log"}
@@ -292,9 +326,10 @@ func TestMiscHandler_HandleLogs_LinesOnly(t *testing.T) {
 	sender := &mockSender{}
 	logReader := &mockLogReader{output: "log"}
 	testPaths := paths.Paths{
-		BotLogPath:  "/tmp/bot.log",
-		VPNLogPath:  "/tmp/vpn.log",
-		XrayLogPath: "/tmp/xray-error.log",
+		BotLogPath:   "/tmp/bot.log",
+		VPNLogPath:   "/tmp/vpn.log",
+		XrayLogPath:  "/tmp/xray-error.log",
+		WebUILogPath: "/tmp/webui.log",
 	}
 	deps := &Deps{Sender: sender, Logs: logReader, Paths: testPaths}
 	h := NewMiscHandler(deps)
@@ -309,8 +344,8 @@ func TestMiscHandler_HandleLogs_LinesOnly(t *testing.T) {
 	h.HandleLogs(msg)
 
 	// When only a number is given, source defaults to "all"
-	if len(logReader.calls) != 3 {
-		t.Fatalf("expected 3 log read calls, got %d", len(logReader.calls))
+	if len(logReader.calls) != 4 {
+		t.Fatalf("expected 4 log read calls, got %d", len(logReader.calls))
 	}
 	if logReader.calls[0].lines != 30 {
 		t.Errorf("expected 30 lines, got %d", logReader.calls[0].lines)

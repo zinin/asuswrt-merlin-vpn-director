@@ -70,14 +70,14 @@ func (h *MiscHandler) HandleLogs(msg *tgbotapi.Message) {
 	// Parse arguments: /logs [source] [lines]
 	if len(args) >= 1 {
 		switch args[0] {
-		case "bot", "vpn", "xray", "all":
+		case "bot", "vpn", "xray", "webui", "all":
 			source = args[0]
 		default:
 			// Maybe it's a number
 			if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
 				lines = n
 			} else {
-				h.deps.Sender.Send(msg.Chat.ID, "Usage: `/logs [bot|vpn|xray|all] [lines]`")
+				h.deps.Sender.Send(msg.Chat.ID, "Usage: `/logs [bot|vpn|xray|webui|all] [lines]`")
 				return
 			}
 		}
@@ -104,6 +104,10 @@ func (h *MiscHandler) HandleLogs(msg *tgbotapi.Message) {
 
 	if source == "xray" || source == "all" {
 		h.sendLogFile(msg.Chat.ID, h.deps.Paths.XrayLogPath, "Xray", lines)
+	}
+
+	if source == "webui" || source == "all" {
+		h.sendLogFile(msg.Chat.ID, h.deps.Paths.WebUILogPath, "Web UI", lines)
 	}
 }
 

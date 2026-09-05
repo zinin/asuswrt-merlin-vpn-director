@@ -73,7 +73,7 @@ server/
 | `/configure` | `WizardHandler.HandleConfigure` | Configuration wizard |
 | `/restart` | `StatusHandler.HandleRestart` | Restart VPN Director |
 | `/stop` | `StatusHandler.HandleStop` | Stop VPN Director |
-| `/logs [bot\|vpn\|xray\|all] [N]` | `MiscHandler.HandleLogs` | Recent logs (default: all, 20 lines) |
+| `/logs [bot\|vpn\|xray\|webui\|all] [N]` | `MiscHandler.HandleLogs` | Recent logs (default: all, 20 lines) |
 | `/ip` | `MiscHandler.HandleIP` | External IP |
 | `/update` | `UpdateHandler.HandleUpdate` | Self-update to latest GitHub release |
 | `/version` | `MiscHandler.HandleVersion` | Bot version |
