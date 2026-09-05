@@ -8,7 +8,6 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 )
 
 // Deps holds dependencies for all handlers
@@ -20,12 +19,11 @@ type Deps struct {
 	Network     service.NetworkInfo   // interface from service/
 	Logs        service.LogReader     // interface from service/
 	Paths       paths.Paths
-	Version     string          // Clean version for semver parsing (v1.2.0)
-	VersionFull string          // Full git describe output (v1.2.0-5-gabc1234)
-	Commit      string          // Git commit hash
-	BuildDate   string          // Build date
-	DevMode     bool            // Development mode flag
-	Updater     updater.Updater // Update service for /update command
+	Version     string // Clean version for semver parsing (v1.2.0)
+	VersionFull string // Full git describe output (v1.2.0-5-gabc1234)
+	Commit      string // Git commit hash
+	BuildDate   string // Build date
+	DevMode     bool   // Development mode flag
 }
 
 // configUpdateError phrases an UpdateVPNConfig failure the way the bot has

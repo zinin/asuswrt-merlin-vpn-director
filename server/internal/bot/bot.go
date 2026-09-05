@@ -15,6 +15,7 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/startup"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/wizard"
 )
@@ -111,7 +112,6 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 		Commit:      commit,
 		BuildDate:   buildDate,
 		DevMode:     b.devMode,
-		Updater:     b.updater,
 	}
 
 	// Create handlers
@@ -119,7 +119,9 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 	serversHandler := handler.NewServersHandler(deps)
 	importHandler := handler.NewImportHandler(deps)
 	miscHandler := handler.NewMiscHandler(deps)
-	updateHandler := handler.NewUpdateHandler(sender, b.updater, b.devMode, version)
+	// updateflow owns every decision behind /update; the handler is an adapter.
+	updateFlow := updateflow.New(b.updater, version, b.devMode)
+	updateHandler := handler.NewUpdateHandler(sender, updateFlow, version)
 	wizardHandler := wizard.NewHandler(sender, configSvc, vpnSvc, xraySvc)
 	xrayHandler := handler.NewXrayHandler(deps)
 	excludeHandler := handler.NewExcludeHandler(deps)
