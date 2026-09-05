@@ -451,12 +451,16 @@ acquire_lock() {
             exit 0
         fi
     else
+        # A leading zero makes (( )) read the value as octal, so 08/09 are not valid
+        # numbers and the timeout check would never fire, leaving an unbounded wait.
+        # Force base 10 once, then use that bound everywhere.
+        local limit=$((10#${VPD_LOCK_WAIT}))
         until flock -n 200; do
-            if (( waited >= VPD_LOCK_WAIT )); then
+            if (( waited >= limit )); then
                 log -l ERROR "Timed out waiting for lock (lock: $file, waited ${waited}s)"
                 exit 1
             fi
-            (( waited == 0 )) && log "Another instance is running (lock: $file) - waiting up to ${VPD_LOCK_WAIT}s"
+            (( waited == 0 )) && log "Another instance is running (lock: $file) - waiting up to ${limit}s"
             sleep 1
             waited=$((waited + 1))
         done

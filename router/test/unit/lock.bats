@@ -63,3 +63,17 @@ hold_lock() {
     assert_output --partial "waiting up to 10s"
     wait
 }
+
+@test "acquire_lock: VPD_LOCK_WAIT with a leading zero is a decimal bound, not octal" {
+    load_common
+    hold_lock
+    local start=$SECONDS
+    # 08 is the smallest two-digit value that is not a valid octal number: read as
+    # base 8 the timeout check never fires and the wait becomes unbounded.
+    VPD_LOCK_WAIT=08 run acquire_lock "$LOCK_NAME"
+    assert_failure 1
+    assert_output --partial "Timed out waiting for lock"
+    local elapsed=$((SECONDS - start))
+    [ "$elapsed" -ge 8 ]
+    [ "$elapsed" -lt 12 ]
+}
