@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 
@@ -8,6 +9,10 @@ import (
 )
 
 // isValidIPOrCIDR checks if the string is a valid IP address or CIDR notation.
+//
+// Client addresses no longer use it — they go through
+// vpnconfig.NormalizeClientAddr — but the exclude handlers in
+// handler_excludes.go still do, so it stays until they are rewritten.
 func isValidIPOrCIDR(s string) bool {
 	if net.ParseIP(s) != nil {
 		return true
@@ -51,7 +56,10 @@ type addClientRequest struct {
 	Route string `json:"route"`
 }
 
-// handleAddClient returns a handler that adds a client IP to the specified route.
+// handleAddClient returns a handler that adds a client address to the
+// specified route and applies the configuration. The address is normalized
+// (IPv4 only, /32 stripped), must not already be configured in any route,
+// and a newly created tunnel inherits xray.exclude_sets like the bot wizard.
 func handleAddClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		deps.OpMutex.Lock()
@@ -67,8 +75,9 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "ip is required")
 			return
 		}
-		if !isValidIPOrCIDR(req.IP) {
-			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+		ip, err := vpnconfig.NormalizeClientAddr(req.IP)
+		if err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if req.Route == "" {
@@ -86,50 +95,45 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		if existing, found := findClient(cfg, ip); found {
+			jsonError(w, http.StatusConflict, fmt.Sprintf("client already configured for %s", existing.route))
+			return
+		}
+
 		if req.Route == "xray" {
-			if !contains(cfg.Xray.Clients, req.IP) {
-				cfg.Xray.Clients = append(cfg.Xray.Clients, req.IP)
-			}
+			cfg.Xray.Clients = append(cfg.Xray.Clients, ip)
 		} else {
-			// Tunnel route (wgc1, ovpnc1, etc.)
 			if cfg.TunnelDirector.Tunnels == nil {
 				cfg.TunnelDirector.Tunnels = make(map[string]vpnconfig.TunnelConfig)
 			}
 			tunnel, ok := cfg.TunnelDirector.Tunnels[req.Route]
 			if !ok {
+				// A new tunnel inherits the Xray country exclusions, like the
+				// bot's configure wizard. An empty exclude would route the
+				// client's local-country traffic through the tunnel as well.
 				tunnel = vpnconfig.TunnelConfig{
 					Clients: []string{},
-					Exclude: []string{},
+					Exclude: append([]string{}, cfg.Xray.ExcludeSets...),
 				}
 			}
-			if !contains(tunnel.Clients, req.IP) {
-				tunnel.Clients = append(tunnel.Clients, req.IP)
-			}
+			tunnel.Clients = append(tunnel.Clients, ip)
 			cfg.TunnelDirector.Tunnels[req.Route] = tunnel
 		}
 
-		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
-			return
-		}
-
-		jsonOK(w, map[string]bool{"ok": true})
+		writeSaveApplyResult(w, saveAndApply(deps, cfg))
 	}
 }
 
-// handlePauseClient returns a handler that pauses a client by IP.
+// handlePauseClient returns a handler that pauses a configured client.
+// The paused entry keeps the stored spelling of the address because the
+// shell subtracts paused_clients from the clients arrays by exact string.
 func handlePauseClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		deps.OpMutex.Lock()
 		defer deps.OpMutex.Unlock()
 
-		ip := r.URL.Query().Get("ip")
-		if ip == "" {
-			jsonError(w, http.StatusBadRequest, "ip query parameter is required")
-			return
-		}
-		if !isValidIPOrCIDR(ip) {
-			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+		ip, ok := clientAddrFromQuery(w, r)
+		if !ok {
 			return
 		}
 
@@ -139,32 +143,28 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		if !contains(cfg.PausedClients, ip) {
-			cfg.PausedClients = append(cfg.PausedClients, ip)
-		}
-
-		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
+		existing, found := findClient(cfg, ip)
+		if !found {
+			jsonError(w, http.StatusNotFound, "client not found")
 			return
 		}
 
-		jsonOK(w, map[string]bool{"ok": true})
+		if !contains(cfg.PausedClients, existing.stored) {
+			cfg.PausedClients = append(cfg.PausedClients, existing.stored)
+		}
+
+		writeSaveApplyResult(w, saveAndApply(deps, cfg))
 	}
 }
 
-// handleResumeClient returns a handler that resumes a paused client by IP.
+// handleResumeClient returns a handler that resumes a paused client.
 func handleResumeClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		deps.OpMutex.Lock()
 		defer deps.OpMutex.Unlock()
 
-		ip := r.URL.Query().Get("ip")
-		if ip == "" {
-			jsonError(w, http.StatusBadRequest, "ip query parameter is required")
-			return
-		}
-		if !isValidIPOrCIDR(ip) {
-			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+		ip, ok := clientAddrFromQuery(w, r)
+		if !ok {
 			return
 		}
 
@@ -174,30 +174,26 @@ func handleResumeClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		cfg.PausedClients = removeString(cfg.PausedClients, ip)
-
-		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
+		if _, found := findClient(cfg, ip); !found {
+			jsonError(w, http.StatusNotFound, "client not found")
 			return
 		}
 
-		jsonOK(w, map[string]bool{"ok": true})
+		cfg.PausedClients = removeAddr(cfg.PausedClients, ip)
+
+		writeSaveApplyResult(w, saveAndApply(deps, cfg))
 	}
 }
 
-// handleDeleteClient returns a handler that removes a client from all routes.
+// handleDeleteClient returns a handler that removes a client from all routes
+// and from the paused list, matching every stored spelling of the address.
 func handleDeleteClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		deps.OpMutex.Lock()
 		defer deps.OpMutex.Unlock()
 
-		ip := r.URL.Query().Get("ip")
-		if ip == "" {
-			jsonError(w, http.StatusBadRequest, "ip query parameter is required")
-			return
-		}
-		if !isValidIPOrCIDR(ip) {
-			jsonError(w, http.StatusBadRequest, "invalid ip address or CIDR")
+		ip, ok := clientAddrFromQuery(w, r)
+		if !ok {
 			return
 		}
 
@@ -207,25 +203,85 @@ func handleDeleteClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Remove from Xray clients.
-		cfg.Xray.Clients = removeString(cfg.Xray.Clients, ip)
-
-		// Remove from all tunnel clients (keep tunnel config even if empty).
-		for name, tunnel := range cfg.TunnelDirector.Tunnels {
-			tunnel.Clients = removeString(tunnel.Clients, ip)
-			cfg.TunnelDirector.Tunnels[name] = tunnel
-		}
-
-		// Also remove from paused clients list.
-		cfg.PausedClients = removeString(cfg.PausedClients, ip)
-
-		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to save configuration")
+		if _, found := findClient(cfg, ip); !found {
+			jsonError(w, http.StatusNotFound, "client not found")
 			return
 		}
 
-		jsonOK(w, map[string]bool{"ok": true})
+		cfg.Xray.Clients = removeAddr(cfg.Xray.Clients, ip)
+		for name, tunnel := range cfg.TunnelDirector.Tunnels {
+			tunnel.Clients = removeAddr(tunnel.Clients, ip)
+			cfg.TunnelDirector.Tunnels[name] = tunnel
+		}
+		cfg.PausedClients = removeAddr(cfg.PausedClients, ip)
+
+		writeSaveApplyResult(w, saveAndApply(deps, cfg))
 	}
+}
+
+// clientMatch describes a configured client found by normalized address.
+type clientMatch struct {
+	route  string // "xray" or the tunnel name
+	stored string // the address exactly as stored in vpn-director.json
+}
+
+// findClient looks addr up across xray.clients and every tunnel, comparing
+// normalized forms because older configs store both 1.2.3.4 and 1.2.3.4/32.
+func findClient(cfg *vpnconfig.VPNDirectorConfig, addr string) (clientMatch, bool) {
+	for _, c := range vpnconfig.CollectClients(cfg) {
+		if sameAddr(c.IP, addr) {
+			return clientMatch{route: c.Route, stored: c.IP}, true
+		}
+	}
+	return clientMatch{}, false
+}
+
+// clientAddrFromQuery reads and normalizes the ip query parameter. It writes
+// the error response itself and returns ok=false when the handler must stop.
+func clientAddrFromQuery(w http.ResponseWriter, r *http.Request) (string, bool) {
+	raw := r.URL.Query().Get("ip")
+	if raw == "" {
+		jsonError(w, http.StatusBadRequest, "ip query parameter is required")
+		return "", false
+	}
+	ip, err := vpnconfig.NormalizeClientAddr(raw)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return "", false
+	}
+	return ip, true
+}
+
+// sameAddr reports whether stored denotes the same address as the normalized
+// addr. Entries that fail normalization are compared verbatim.
+func sameAddr(stored, addr string) bool {
+	normalized, err := vpnconfig.NormalizeClientAddr(stored)
+	if err != nil {
+		normalized = stored
+	}
+	return normalized == addr
+}
+
+// containsAddr reports whether slice holds addr in any stored spelling.
+func containsAddr(slice []string, addr string) bool {
+	for _, s := range slice {
+		if sameAddr(s, addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// removeAddr returns a new slice without every entry that denotes addr,
+// whatever its stored spelling.
+func removeAddr(slice []string, addr string) []string {
+	result := make([]string, 0, len(slice))
+	for _, s := range slice {
+		if !sameAddr(s, addr) {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // contains returns true if the slice contains the item.
