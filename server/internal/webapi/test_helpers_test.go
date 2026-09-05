@@ -52,8 +52,8 @@ type mockConfig struct {
 	cfg           *vpnconfig.VPNDirectorConfig
 	servers       []vpnconfig.Server
 	err           error
-	saveVPNCfgErr error                        // independent error for SaveVPNConfig only
-	savedCfg      *vpnconfig.VPNDirectorConfig // captured by SaveVPNConfig
+	saveVPNCfgErr error                        // independent error for the save step of UpdateVPNConfig
+	savedCfg      *vpnconfig.VPNDirectorConfig // captured by UpdateVPNConfig
 	savedServers  []vpnconfig.Server           // captured by SaveServers
 	updateErr     error                        // returned by UpdateVPNConfig before fn runs, e.g. service.ErrConfigLockTimeout
 }
@@ -62,13 +62,6 @@ func (m *mockConfig) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
 	return m.cfg, m.err
 }
 func (m *mockConfig) LoadServers() ([]vpnconfig.Server, error) { return m.servers, m.err }
-func (m *mockConfig) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
-	m.savedCfg = cfg
-	if m.saveVPNCfgErr != nil {
-		return m.saveVPNCfgErr
-	}
-	return m.err
-}
 func (m *mockConfig) SaveServers(servers []vpnconfig.Server) error {
 	m.savedServers = servers
 	return m.err

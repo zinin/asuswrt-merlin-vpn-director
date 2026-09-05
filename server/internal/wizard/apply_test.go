@@ -63,12 +63,6 @@ func (m *trackingConfigStore) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, err
 	return m.vpnConfig, m.loadErr
 }
 
-func (m *trackingConfigStore) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
-	m.saveConfigCalled = true
-	m.savedConfig = cfg
-	return m.saveErr
-}
-
 func (m *trackingConfigStore) SaveServers([]vpnconfig.Server) error {
 	return m.saveErr
 }
@@ -195,7 +189,7 @@ func TestApplier_Apply_Success(t *testing.T) {
 
 		// Verify config was saved
 		if !configStore.saveConfigCalled {
-			t.Error("expected SaveVPNConfig to be called")
+			t.Error("expected UpdateVPNConfig to save the config")
 		}
 
 		// Verify xray clients

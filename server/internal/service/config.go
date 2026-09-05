@@ -82,8 +82,8 @@ func (s *ConfigService) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
 	return vpnconfig.LoadVPNDirectorConfig(s.ConfigPath())
 }
 
-// SaveVPNConfig saves the VPN Director configuration
-func (s *ConfigService) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
+// saveVPNConfig writes the VPN Director configuration; callers hold the config lock.
+func (s *ConfigService) saveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
 	return vpnconfig.SaveVPNDirectorConfig(s.ConfigPath(), cfg)
 }
 
@@ -102,7 +102,7 @@ func (s *ConfigService) UpdateVPNConfig(fn func(cfg *vpnconfig.VPNDirectorConfig
 	if err := fn(cfg); err != nil {
 		return err
 	}
-	if err := s.SaveVPNConfig(cfg); err != nil {
+	if err := s.saveVPNConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil

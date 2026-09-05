@@ -58,8 +58,14 @@ func main() {
 
 	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag)
 
+	// Derive scripts directory from --config path so runtime reads/writes
+	// honour the flag instead of hardcoding /opt/vpn-director.
+	scriptsDir := filepath.Dir(*configPath)
+	defaultDataDir := filepath.Join(scriptsDir, "data")
+	configSvc := service.NewConfigService(scriptsDir, defaultDataDir)
+
 	// Load config
-	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(*configPath)
+	vpnCfg, err := configSvc.LoadVPNConfig()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -75,7 +81,9 @@ func main() {
 		vpnCfg.WebUI.KeyFile = "/opt/vpn-director/certs/server.key"
 	}
 
-	// Auto-generate JWT secret if empty
+	// Auto-generate JWT secret if empty. The write goes through the config
+	// lock like every other writer; if another process filled the secret in
+	// the meantime, that one wins and is used here as well.
 	if vpnCfg.WebUI.JWTSecret == "" {
 		slog.Warn("jwt_secret not set, generating random secret")
 		secret := make([]byte, 32)
@@ -84,7 +92,14 @@ func main() {
 			os.Exit(1)
 		}
 		vpnCfg.WebUI.JWTSecret = base64.StdEncoding.EncodeToString(secret)
-		if err := vpnconfig.SaveVPNDirectorConfig(*configPath, vpnCfg); err != nil {
+		err := configSvc.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+			if cfg.WebUI.JWTSecret == "" {
+				cfg.WebUI.JWTSecret = vpnCfg.WebUI.JWTSecret
+			}
+			vpnCfg.WebUI.JWTSecret = cfg.WebUI.JWTSecret
+			return nil
+		})
+		if err != nil {
 			slog.Warn("failed to save auto-generated jwt_secret", "error", err)
 			// Continue anyway — secret is in memory for this session
 		}
@@ -96,12 +111,6 @@ func main() {
 		executor = devmode.NewExecutor()
 	}
 
-	// Derive scripts directory from --config path so runtime reads/writes
-	// honour the flag instead of hardcoding /opt/vpn-director.
-	scriptsDir := filepath.Dir(*configPath)
-	defaultDataDir := filepath.Join(scriptsDir, "data")
-
-	configSvc := service.NewConfigService(scriptsDir, defaultDataDir)
 	vpnSvc := service.NewVPNDirectorService(scriptsDir, executor)
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
 	networkSvc := service.NewNetworkService(executor)

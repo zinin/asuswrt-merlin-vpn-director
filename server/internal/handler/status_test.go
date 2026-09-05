@@ -35,7 +35,6 @@ type mockConfigStore struct {
 
 func (m *mockConfigStore) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) { return nil, m.err }
 func (m *mockConfigStore) LoadServers() ([]vpnconfig.Server, error)             { return m.servers, m.err }
-func (m *mockConfigStore) SaveVPNConfig(*vpnconfig.VPNDirectorConfig) error     { return m.err }
 func (m *mockConfigStore) SaveServers([]vpnconfig.Server) error                 { return m.err }
 
 // UpdateVPNConfig: this mock holds no vpn-director.json, like a router before

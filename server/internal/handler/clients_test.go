@@ -59,10 +59,6 @@ type mockConfigClients struct {
 func (m *mockConfigClients) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
 	return m.vpnConfig, m.loadErr
 }
-func (m *mockConfigClients) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
-	m.savedConfig = cfg
-	return m.saveErr
-}
 
 func (m *mockConfigClients) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
 	if m.loadErr != nil {
