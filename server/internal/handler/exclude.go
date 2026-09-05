@@ -170,16 +170,12 @@ func (h *ExcludeHandler) buildUI(state *wizard.State) (string, tgbotapi.InlineKe
 func (h *ExcludeHandler) saveAndApply(chatID int64, state *wizard.State) {
 	defer h.manager.Clear(chatID)
 
-	cfg, err := h.deps.Config.LoadVPNConfig()
+	err := h.deps.Config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+		cfg.Xray.ExcludeIPs = state.GetExcludeIPs()
+		return nil
+	})
 	if err != nil {
-		h.sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
-		return
-	}
-
-	cfg.Xray.ExcludeIPs = state.GetExcludeIPs()
-
-	if err := h.deps.Config.SaveVPNConfig(cfg); err != nil {
-		h.sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+		h.sender.SendPlain(chatID, configUpdateError(err))
 		return
 	}
 	h.sender.SendPlain(chatID, "vpn-director.json updated")

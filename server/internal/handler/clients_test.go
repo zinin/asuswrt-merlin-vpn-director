@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -458,5 +459,24 @@ func TestClientsHandler_HandleTextInput_NotInAddState(t *testing.T) {
 
 	if sender.lastChatID != 0 {
 		t.Error("expected no message sent when not in add state")
+	}
+}
+
+func TestClientsHandler_Pause_SaveErrorIsReported(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{
+		vpnConfig: &vpnconfig.VPNDirectorConfig{Xray: vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}}},
+		saveErr:   errors.New("disk full"),
+	}
+	vpn := &mockVPNClients{}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: config, VPN: vpn})
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		Data:    "clients:pause:192.168.50.10",
+		Message: &tgbotapi.Message{MessageID: 7, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	if n := len(sender.plainTexts); n == 0 || !strings.Contains(sender.plainTexts[n-1], "Save error: disk full") {
+		t.Errorf("expected the save error to reach the user, got %v", sender.plainTexts)
 	}
 }

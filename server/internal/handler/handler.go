@@ -2,6 +2,9 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
@@ -23,4 +26,13 @@ type Deps struct {
 	BuildDate   string          // Build date
 	DevMode     bool            // Development mode flag
 	Updater     updater.Updater // Update service for /update command
+}
+
+// configUpdateError phrases an UpdateVPNConfig failure the way the bot has
+// always reported the two halves of a save: read problems and write problems.
+func configUpdateError(err error) string {
+	if errors.Is(err, service.ErrConfigLoad) {
+		return fmt.Sprintf("Config load error: %v", err)
+	}
+	return fmt.Sprintf("Save error: %v", err)
 }

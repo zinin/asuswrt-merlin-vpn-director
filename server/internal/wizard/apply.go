@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
@@ -49,13 +50,6 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	defer a.manager.Clear(chatID)
 
 	a.sender.SendPlain(chatID, "Applying configuration...")
-
-	// Load current config
-	vpnCfg, err := a.config.LoadVPNConfig()
-	if err != nil {
-		a.sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
-		return err
-	}
 
 	// Load servers
 	servers, err := a.config.LoadServers()
@@ -131,16 +125,21 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	// Exclude IPs from wizard state
 	excludeIPs := state.GetExcludeIPs()
 
-	// Update config
-	vpnCfg.Xray.Clients = xrayClients
-	vpnCfg.Xray.ExcludeSets = excl
-	vpnCfg.Xray.ExcludeIPs = excludeIPs
-	vpnCfg.Xray.Servers = serverIPs
-	vpnCfg.TunnelDirector.Tunnels = tunnels
-
-	// Save config
-	if err := a.config.SaveVPNConfig(vpnCfg); err != nil {
-		a.sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+	// Update config under the cross-process lock
+	err = a.config.UpdateVPNConfig(func(vpnCfg *vpnconfig.VPNDirectorConfig) error {
+		vpnCfg.Xray.Clients = xrayClients
+		vpnCfg.Xray.ExcludeSets = excl
+		vpnCfg.Xray.ExcludeIPs = excludeIPs
+		vpnCfg.Xray.Servers = serverIPs
+		vpnCfg.TunnelDirector.Tunnels = tunnels
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, service.ErrConfigLoad) {
+			a.sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
+		} else {
+			a.sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+		}
 		return err
 	}
 	a.sender.SendPlain(chatID, "vpn-director.json updated")

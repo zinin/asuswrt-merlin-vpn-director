@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vless"
@@ -110,24 +112,28 @@ func (h *ImportHandler) HandleImport(msg *tgbotapi.Message) {
 		return
 	}
 
-	// Auto-sync xray.servers with IPs from all imported servers
-	if vpnCfg, err := h.deps.Config.LoadVPNConfig(); err == nil && vpnCfg != nil {
-		seen := make(map[string]bool)
-		var serverIPs []string
-		for _, s := range resolved {
-			for _, ip := range s.IPs {
-				if ip != "" && !seen[ip] {
-					seen[ip] = true
-					serverIPs = append(serverIPs, ip)
-				}
+	seen := make(map[string]bool)
+	var serverIPs []string
+	for _, s := range resolved {
+		for _, ip := range s.IPs {
+			if ip != "" && !seen[ip] {
+				seen[ip] = true
+				serverIPs = append(serverIPs, ip)
 			}
 		}
-		sort.Strings(serverIPs)
+	}
+	sort.Strings(serverIPs)
+
+	// Auto-sync xray.servers with IPs from all imported servers. A missing
+	// vpn-director.json is not an error here: /import works before the first
+	// configure, and the wizard writes xray.servers itself.
+	err = h.deps.Config.UpdateVPNConfig(func(vpnCfg *vpnconfig.VPNDirectorConfig) error {
 		vpnCfg.Xray.Servers = serverIPs
-		if err := h.deps.Config.SaveVPNConfig(vpnCfg); err != nil {
-			h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(
-				fmt.Sprintf("Warning: servers imported but xray.servers sync failed: %v", err)))
-		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, service.ErrConfigLoad) {
+		h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(
+			fmt.Sprintf("Warning: servers imported but xray.servers sync failed: %v", err)))
 	}
 
 	// Build response with grouped stats

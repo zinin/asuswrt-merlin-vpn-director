@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -82,5 +83,25 @@ func TestExcludeHandler_HandleTextInput_RejectsInvalidInput(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(sender.plainTexts, "\n"), "Invalid format") {
 		t.Errorf("expected an invalid-format message, got %v", sender.plainTexts)
+	}
+}
+
+func TestExcludeHandler_Done_SaveErrorIsReported(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{
+		vpnConfig: &vpnconfig.VPNDirectorConfig{Xray: vpnconfig.XrayConfig{ExcludeIPs: []string{"1.2.3.4"}}},
+		saveErr:   errors.New("disk full"),
+	}
+	deps := &Deps{Sender: sender, Config: config, VPN: &mockVPNClients{}}
+	h := NewExcludeHandler(deps)
+
+	h.HandleExclude(&tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}})
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		Data:    "exclip:done",
+		Message: &tgbotapi.Message{MessageID: 7, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	if n := len(sender.plainTexts); n == 0 || !strings.Contains(sender.plainTexts[n-1], "Save error: disk full") {
+		t.Errorf("expected the save error to reach the user, got %v", sender.plainTexts)
 	}
 }

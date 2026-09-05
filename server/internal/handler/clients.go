@@ -135,29 +135,26 @@ func (h *ClientsHandler) handlePauseResume(chatID int64, msgID int, ip string, p
 		return
 	}
 
-	if pause {
-		found := false
-		for _, p := range cfg.PausedClients {
-			if p == ip {
-				found = true
-				break
+	err = h.deps.Config.UpdateVPNConfig(func(c *vpnconfig.VPNDirectorConfig) error {
+		if pause {
+			found := false
+			for _, p := range c.PausedClients {
+				if p == ip {
+					found = true
+					break
+				}
 			}
-		}
-		if !found {
-			cfg.PausedClients = append(cfg.PausedClients, ip)
-		}
-	} else {
-		filtered := make([]string, 0, len(cfg.PausedClients))
-		for _, p := range cfg.PausedClients {
-			if p != ip {
-				filtered = append(filtered, p)
+			if !found {
+				c.PausedClients = append(c.PausedClients, ip)
 			}
+		} else {
+			c.PausedClients = removeString(c.PausedClients, ip)
 		}
-		cfg.PausedClients = filtered
-	}
-
-	if err := h.deps.Config.SaveVPNConfig(cfg); err != nil {
-		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+		cfg = c // render the list from what was actually saved
+		return nil
+	})
+	if err != nil {
+		h.deps.Sender.SendPlain(chatID, configUpdateError(err))
 		return
 	}
 
@@ -238,19 +235,19 @@ func (h *ClientsHandler) handleRemove(chatID int64, msgID int, ip string) {
 		return
 	}
 
-	if route == "xray" {
-		cfg.Xray.Clients = removeString(cfg.Xray.Clients, ip)
-	} else {
-		if tunnel, ok := cfg.TunnelDirector.Tunnels[route]; ok {
+	err = h.deps.Config.UpdateVPNConfig(func(c *vpnconfig.VPNDirectorConfig) error {
+		if route == "xray" {
+			c.Xray.Clients = removeString(c.Xray.Clients, ip)
+		} else if tunnel, ok := c.TunnelDirector.Tunnels[route]; ok {
 			tunnel.Clients = removeString(tunnel.Clients, ip)
-			cfg.TunnelDirector.Tunnels[route] = tunnel
+			c.TunnelDirector.Tunnels[route] = tunnel
 		}
-	}
-
-	cfg.PausedClients = removeString(cfg.PausedClients, ip)
-
-	if err := h.deps.Config.SaveVPNConfig(cfg); err != nil {
-		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+		c.PausedClients = removeString(c.PausedClients, ip)
+		cfg = c
+		return nil
+	})
+	if err != nil {
+		h.deps.Sender.SendPlain(chatID, configUpdateError(err))
 		return
 	}
 
@@ -379,22 +376,32 @@ func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
 		ip = n
 	}
 
-	if route == "xray" {
-		cfg.Xray.Clients = append(cfg.Xray.Clients, ip)
-	} else {
+	if route != "xray" {
 		if _, ok := cfg.TunnelDirector.Tunnels[route]; !ok {
 			// Stale keyboard — tunnel no longer exists
 			text, kb := h.buildClientList(cfg)
 			h.deps.Sender.EditMessage(chatID, msgID, text, kb)
 			return
 		}
-		tunnel := cfg.TunnelDirector.Tunnels[route]
-		tunnel.Clients = append(tunnel.Clients, ip)
-		cfg.TunnelDirector.Tunnels[route] = tunnel
 	}
 
-	if err := h.deps.Config.SaveVPNConfig(cfg); err != nil {
-		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Save error: %v", err))
+	err = h.deps.Config.UpdateVPNConfig(func(c *vpnconfig.VPNDirectorConfig) error {
+		if route == "xray" {
+			c.Xray.Clients = append(c.Xray.Clients, ip)
+			cfg = c
+			return nil
+		}
+		tunnel, ok := c.TunnelDirector.Tunnels[route]
+		if !ok {
+			return fmt.Errorf("tunnel %s no longer exists", route)
+		}
+		tunnel.Clients = append(tunnel.Clients, ip)
+		c.TunnelDirector.Tunnels[route] = tunnel
+		cfg = c
+		return nil
+	})
+	if err != nil {
+		h.deps.Sender.SendPlain(chatID, configUpdateError(err))
 		return
 	}
 
