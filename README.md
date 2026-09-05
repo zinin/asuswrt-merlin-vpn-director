@@ -113,7 +113,7 @@ A self-signed TLS certificate is generated automatically during installation. Yo
 | **Servers** | Xray server management, switch active server |
 | **Clients** | LAN client routing assignment (pause/resume/delete) |
 | **Exclusions** | Country and IP/CIDR exclusion lists |
-| **Logs** | Real-time log viewer (bot, vpn, all) |
+| **Logs** | Log viewer (bot, vpn, xray) |
 | **Settings** | Configuration and system settings |
 
 ### Configuration

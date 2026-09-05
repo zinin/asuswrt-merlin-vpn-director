@@ -103,7 +103,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger.StartRotation(ctx, []string{p.BotLogPath, p.VPNLogPath}, maxLogSize, time.Minute)
+	logger.StartRotation(ctx, []string{p.BotLogPath, p.VPNLogPath, p.XrayLogPath}, maxLogSize, time.Minute)
 
 	// Create chat store for update notifications (not in dev mode)
 	var store *chatstore.Store
