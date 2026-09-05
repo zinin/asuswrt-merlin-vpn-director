@@ -122,10 +122,13 @@ func TestGenerateScript_CoversEveryDaemon(t *testing.T) {
 		}
 	}
 
-	// The daemon table drives every loop; a stray hardcoded init call would
-	// silently skip the other daemon.
-	if strings.Contains(script, "/opt/etc/init.d/S98telegram-bot stop") {
-		t.Error("script must stop daemons through the table, not by name")
+	// The daemon table drives every loop, so it is the only place an init
+	// script may be named. A second mention is a hardcoded call, and a
+	// hardcoded call silently skips the other daemon.
+	for _, d := range Daemons {
+		if n := strings.Count(script, d.InitScript); n != 1 {
+			t.Errorf("init script %s named %d times, want exactly 1 (only in the DAEMONS table)", d.InitScript, n)
+		}
 	}
 }
 
@@ -136,8 +139,15 @@ func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
 		t.Fatalf("generateScript() error = %v", err)
 	}
 
+	if !strings.Contains(script, "trap on_exit EXIT") {
+		t.Error("script must install the EXIT trap: ash has no ERR trap")
+	}
+
+	// Every other needle has to sit inside the handler. Searching the whole
+	// script would pass on the happy-path copy of the same line, so removing
+	// the step from the recovery path would go unnoticed.
+	body := onExitBody(t, script)
 	checks := map[string]string{
-		"trap on_exit EXIT":   "recovery must hang off EXIT: ash has no ERR trap",
 		"code=$?":             "the EXIT trap must inspect the exit code",
 		"set +e":              "recovery must survive its own failing steps",
 		"write_notify failed": "a failed update must leave status failed in notify.json",
@@ -145,10 +155,29 @@ func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
 		`rm -f "$LOCK_FILE"`:  "a failed update must release the lock",
 	}
 	for needle, why := range checks {
-		if !strings.Contains(script, needle) {
-			t.Errorf("script missing %q: %s", needle, why)
+		if !strings.Contains(body, needle) {
+			t.Errorf("on_exit missing %q: %s", needle, why)
 		}
 	}
+}
+
+// onExitBody returns the body of the on_exit handler, so a recovery
+// assertion is about the recovery path and not about the script mentioning
+// the words somewhere.
+func onExitBody(t *testing.T, script string) string {
+	t.Helper()
+
+	const open = "on_exit() {\n"
+	i := strings.Index(script, open)
+	if i < 0 {
+		t.Fatal("script has no on_exit handler")
+	}
+	body := script[i+len(open):]
+	j := strings.Index(body, "\n}\n")
+	if j < 0 {
+		t.Fatal("on_exit handler is never closed")
+	}
+	return body[:j]
 }
 
 func TestGenerateScript_NotifyFormat(t *testing.T) {
