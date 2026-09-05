@@ -113,6 +113,7 @@ ip rule add pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XR
 
 Script exits without changes if:
 - Required exclusion ipsets not found
+- Unknown country codes in `xray.exclude_sets` are not "required": `_tproxy_exclude_sets` drops them with a WARN before the check, so a typo cannot abort apply
 - xt_TPROXY module unavailable
 
 ## Extended Exclusion Sets
@@ -132,7 +133,7 @@ resolve_exclude_set "<country_code>"  # Returns: <country_code>_ext if exists, e
 | `tproxy_apply()` | Apply TPROXY rules (idempotent), soft-fail if unavailable |
 | `tproxy_stop()` | Remove chain and routing |
 | `tproxy_restart_process()` | Restart Xray process via Entware init script |
-| `tproxy_get_required_ipsets()` | Return list of exclude ipsets |
+| `tproxy_get_required_ipsets()` | Return list of valid exclude ipsets (unknown codes dropped with a WARN) |
 
 **Internal functions** (for testing):
 
@@ -141,6 +142,7 @@ resolve_exclude_set "<country_code>"  # Returns: <country_code>_ext if exists, e
 | `_tproxy_init()` | Initialize module state |
 | `_tproxy_check_module()` | Verify/load xt_TPROXY kernel module |
 | `_tproxy_check_required_ipsets()` | Fail-safe: exit if exclusion ipsets missing |
+| `_tproxy_exclude_sets([-q])` | Validated, lower-cased `XRAY_EXCLUDE_SETS` on one line; `-q` suppresses the WARN per dropped code |
 | `_tproxy_resolve_exclude_set(key)` | Try `{set}_ext` first, fall back to `{set}` |
 | `_tproxy_setup_routing()` | Create route table + ip rule |
 | `_tproxy_teardown_routing()` | Remove route table + ip rule |

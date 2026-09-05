@@ -84,6 +84,51 @@ load '../test_helper'
     [ -z "$result" ]
 }
 
+@test "tproxy_get_required_ipsets: drops an unknown country code with a WARN" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director.json"
+    source "$LIB_DIR/ipset.sh" --source-only
+    export XRAY_EXCLUDE_SETS="ru xx US"
+    source "$LIB_DIR/tproxy.sh" --source-only
+
+    result=$(tproxy_get_required_ipsets 2>/dev/null)
+    [ "$result" = $'ru\nus' ]
+    grep -q "WARN.*Ignoring invalid country code 'xx' in xray.exclude_sets" "$LOG_FILE"
+}
+
+@test "_tproxy_check_required_ipsets: ignores an unknown country code" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director.json"
+    source "$LIB_DIR/ipset.sh" --source-only
+    export XRAY_EXCLUDE_SETS="ru xx"
+    source "$LIB_DIR/tproxy.sh" --source-only
+
+    # The ipset mock knows ru but not xx; before the filter this returned 1.
+    run _tproxy_check_required_ipsets
+    assert_success
+}
+
+@test "tproxy_apply: applies rules when xray.exclude_sets holds an unknown code" {
+    # config.sh marks XRAY_EXCLUDE_SETS readonly, so feed the bad code through a
+    # copy of the fixture instead of overriding the variable afterwards.
+    load_common
+    jq '.xray.exclude_sets = ["ru", "xx"]' "$TEST_ROOT/fixtures/vpn-director.json" \
+        > "$BATS_TEST_TMPDIR/vpn-director.json"
+    export VPD_CONFIG_FILE="$BATS_TEST_TMPDIR/vpn-director.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/firewall.sh"
+    source "$LIB_DIR/tproxy.sh" --source-only
+
+    run tproxy_apply
+    assert_success
+    assert_output --partial "Added exclusion for ipset: ru"
+    assert_output --partial "Xray TPROXY routing applied successfully"
+    refute_output --partial "aborting"
+}
+
 # ============================================================================
 # tproxy_status - display status information
 # ============================================================================

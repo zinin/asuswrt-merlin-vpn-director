@@ -17,11 +17,12 @@
 #   tproxy_apply()               - apply TPROXY rules (idempotent), soft-fail if unavailable
 #   tproxy_stop()                - remove chain and routing
 #   tproxy_restart_process()     - restart Xray process via Entware init script
-#   tproxy_get_required_ipsets() - return list of exclude ipsets
+#   tproxy_get_required_ipsets() - return list of valid exclude ipsets (unknown codes dropped with a WARN)
 #
 # Internal functions (for testing):
 #   _tproxy_check_module()          - check if xt_TPROXY kernel module is available
 #   _tproxy_resolve_exclude_set()   - resolve exclusion ipset name (prefer _ext variant)
+#   _tproxy_exclude_sets [-q]       - validated, lower-cased XRAY_EXCLUDE_SETS on one line
 #   _tproxy_check_required_ipsets() - fail-safe check for required ipsets
 #   _tproxy_setup_routing()         - setup routing table and ip rule
 #   _tproxy_teardown_routing()      - remove routing table and ip rule
@@ -120,6 +121,39 @@ _tproxy_resolve_exclude_set() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _tproxy_exclude_sets [-q] - print the configured exclusion country codes on one line
+# -------------------------------------------------------------------------------------------------
+# Lower-cases each entry of XRAY_EXCLUDE_SETS and drops codes that are not in
+# ALL_COUNTRY_CODES, mirroring parse_exclude_sets_from_json for tunnels. Each
+# dropped code is logged at WARN unless -q is given, so the three callers of one
+# apply produce a single warning. Before this filter a single bad code (e.g. "xx"
+# typed in the Web UI) made ipset_ensure fail and cmd_apply abort before any rule
+# was written; on boot that also skipped the nightly update cron.
+# -------------------------------------------------------------------------------------------------
+_tproxy_exclude_sets() {
+    local quiet=0 set_key
+    local -a exclude_sets_array valid=()
+
+    [[ ${1:-} == "-q" ]] && quiet=1
+
+    [[ -z ${XRAY_EXCLUDE_SETS:-} ]] && return 0
+    read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
+
+    for set_key in "${exclude_sets_array[@]}"; do
+        [[ -n $set_key ]] || continue
+        set_key=$(printf '%s' "$set_key" | tr 'A-Z' 'a-z')
+        if ! _is_valid_country_code "$set_key"; then
+            (( quiet )) || log -l WARN "Ignoring invalid country code '$set_key' in xray.exclude_sets"
+            continue
+        fi
+        valid+=("$set_key")
+    done
+
+    (( ${#valid[@]} )) && printf '%s\n' "${valid[*]}"
+    return 0
+}
+
+# -------------------------------------------------------------------------------------------------
 # _tproxy_check_required_ipsets - fail-safe check for required exclusion ipsets
 # -------------------------------------------------------------------------------------------------
 # Returns 0 if all required ipsets exist, 1 otherwise.
@@ -128,10 +162,7 @@ _tproxy_check_required_ipsets() {
     local set_key
     local -a exclude_sets_array
 
-    # Handle empty XRAY_EXCLUDE_SETS
-    [[ -z ${XRAY_EXCLUDE_SETS:-} ]] && return 0
-
-    read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
+    read -ra exclude_sets_array <<< "$(_tproxy_exclude_sets -q)"
 
     for set_key in "${exclude_sets_array[@]}"; do
         [[ -n $set_key ]] || continue
@@ -316,12 +347,7 @@ _tproxy_setup_iptables() {
     local exclude_set resolved_set
     local -a exclude_sets_array
 
-    # Handle empty XRAY_EXCLUDE_SETS
-    if [[ -n ${XRAY_EXCLUDE_SETS:-} ]]; then
-        read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
-    else
-        exclude_sets_array=()
-    fi
+    read -ra exclude_sets_array <<< "$(_tproxy_exclude_sets -q)"
 
     # Create chain
     create_fw_chain -f mangle "$XRAY_CHAIN"
@@ -487,16 +513,14 @@ tproxy_status() {
 # -------------------------------------------------------------------------------------------------
 # tproxy_get_required_ipsets - return list of exclude ipsets
 # -------------------------------------------------------------------------------------------------
-# Parses XRAY_EXCLUDE_SETS and returns them, one per line.
+# Parses XRAY_EXCLUDE_SETS and returns the valid country codes, one per line.
+# Unknown codes are dropped by _tproxy_exclude_sets with a WARN.
 # -------------------------------------------------------------------------------------------------
 tproxy_get_required_ipsets() {
     local set_key
     local -a exclude_sets_array
 
-    # Handle empty XRAY_EXCLUDE_SETS
-    [[ -z ${XRAY_EXCLUDE_SETS:-} ]] && return 0
-
-    read -ra exclude_sets_array <<< "$XRAY_EXCLUDE_SETS"
+    read -ra exclude_sets_array <<< "$(_tproxy_exclude_sets)"
 
     for set_key in "${exclude_sets_array[@]}"; do
         [[ -n $set_key ]] || continue

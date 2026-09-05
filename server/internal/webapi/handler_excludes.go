@@ -31,8 +31,8 @@ type updateExcludeSetsRequest struct {
 }
 
 // normalizeExcludeSets trims, lowercases, validates and de-duplicates country
-// codes, keeping first-occurrence order. Unknown codes (e.g. "xx") pass here
-// and fail at apply time in lib/ipset.sh, which the auto-apply surfaces.
+// codes, keeping first-occurrence order. Unknown codes (e.g. "xx") pass here;
+// lib/tproxy.sh drops them at apply time with a WARN in the VPN Director log.
 func normalizeExcludeSets(sets []string) ([]string, error) {
 	out := make([]string, 0, len(sets))
 	seen := make(map[string]bool, len(sets))
