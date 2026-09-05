@@ -13,13 +13,13 @@ import (
 
 // Deps holds dependencies for all handlers
 type Deps struct {
-	Sender  telegram.MessageSender
-	Config  service.ConfigStore   // interface from service/
-	VPN     service.VPNDirector   // interface from service/
-	Xray    service.XrayGenerator // interface from service/
-	Network service.NetworkInfo   // interface from service/
-	Logs    service.LogReader     // interface from service/
-	Paths   paths.Paths
+	Sender      telegram.MessageSender
+	Config      service.ConfigStore   // interface from service/
+	VPN         service.VPNDirector   // interface from service/
+	Xray        service.XrayGenerator // interface from service/
+	Network     service.NetworkInfo   // interface from service/
+	Logs        service.LogReader     // interface from service/
+	Paths       paths.Paths
 	Version     string          // Clean version for semver parsing (v1.2.0)
 	VersionFull string          // Full git describe output (v1.2.0-5-gabc1234)
 	Commit      string          // Git commit hash

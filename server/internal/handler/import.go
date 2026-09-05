@@ -31,7 +31,7 @@ func NewImportHandler(deps *Deps) *ImportHandler {
 	return &ImportHandler{
 		deps:        deps,
 		httpClient:  ssrf.NewClient(30 * time.Second), // SSRF-hardened (validates resolved IP at dial time)
-		maxBodySize: 1 << 20, // 1MB
+		maxBodySize: 1 << 20,                          // 1MB
 	}
 }
 
