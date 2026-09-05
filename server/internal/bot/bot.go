@@ -164,8 +164,15 @@ func (b *Bot) RegisterCommands() error {
 
 // Run starts the bot and processes updates until context is cancelled
 func (b *Bot) Run(ctx context.Context) {
+	// b.chatStore is a typed nil in dev mode; assigning it straight into the
+	// interface would hand CheckAndSendNotify a non-nil interface over a nil
+	// pointer and panic on the first call.
+	var store startup.ChatStore
+	if b.chatStore != nil {
+		store = b.chatStore
+	}
 	// Check for pending update notification before starting polling
-	if err := startup.CheckAndSendNotify(b.sender, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
+	if err := startup.CheckAndSendNotify(b.sender, store, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
 		slog.Warn("Failed to send update notification", "error", err)
 	}
 
