@@ -3,6 +3,7 @@ package webapi
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,33 +96,41 @@ func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
 
 	// Self-update
 	mux.HandleFunc("POST /api/update", handleUpdate(deps))
+
+	// Fallback for unknown API paths: JSON 404 instead of the mux's text/plain.
+	// Auth still runs first because this mux sits behind authMiddleware.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		jsonError(w, http.StatusNotFound, "not found")
+	})
 }
 
 // spaHandler serves static files from the embedded filesystem. If a file is
 // not found and the request path does not start with "/api/", it falls back to
-// index.html so the Vue SPA router can handle the path.
+// index.html so the Vue SPA router can handle the path. Hashed bundles under
+// assets/ are immutable; index.html must be revalidated so a new binary's
+// bundle names are picked up after an update.
 func spaHandler(staticFS fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(staticFS))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Try to open the requested file.
-		path := r.URL.Path
-		if path == "/" {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
 			path = "index.html"
-		} else {
-			// Strip leading slash for fs.Open.
-			path = path[1:]
 		}
 
-		f, err := staticFS.Open(path)
-		if err == nil {
+		if f, err := staticFS.Open(path); err == nil {
 			f.Close()
-			fileServer.ServeHTTP(w, r)
-			return
+		} else {
+			// File not found — serve index.html for SPA routing.
+			path = "index.html"
+			r.URL.Path = "/"
 		}
 
-		// File not found — serve index.html for SPA routing.
-		r.URL.Path = "/"
+		if strings.HasPrefix(path, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 }
