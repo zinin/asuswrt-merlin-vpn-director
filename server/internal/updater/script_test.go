@@ -2,6 +2,7 @@ package updater
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,10 +32,9 @@ func TestGenerateScript(t *testing.T) {
 		`OLD_VERSION="v1.0.0"`,
 		`NEW_VERSION="v1.1.0"`,
 		"set -e",
-		"S98telegram-bot stop",
-		"S98telegram-bot start",
-		`pgrep -f "$BOT_PATH"`, // full path variable used
-		"BOT_PATH=\"/opt/vpn-director/telegram-bot\"",
+		`pgrep -f "$bin"`, // full binary path, from the daemon table
+		"telegram-bot|/opt/vpn-director/telegram-bot|S98telegram-bot",
+		"webui|/opt/vpn-director/webui|S98vpn-director-webui",
 	}
 
 	for _, check := range checks {
@@ -43,11 +43,11 @@ func TestGenerateScript(t *testing.T) {
 		}
 	}
 
-	// Check that monit commands have || true (optional commands)
-	if !strings.Contains(script, "monit unmonitor telegram-bot 2>/dev/null || true") {
+	// monit commands stay optional
+	if !strings.Contains(script, `monit unmonitor "${entry%%|*}" 2>/dev/null || true`) {
 		t.Error("Script missing || true for monit unmonitor")
 	}
-	if !strings.Contains(script, "monit monitor telegram-bot 2>/dev/null || true") {
+	if !strings.Contains(script, `monit monitor "${entry%%|*}" 2>/dev/null || true`) {
 		t.Error("Script missing || true for monit monitor")
 	}
 
@@ -104,6 +104,121 @@ func TestGenerateScript_EmbedsInitiator(t *testing.T) {
 	}
 	if !strings.Contains(script, "CHAT_ID=0") {
 		t.Error("a Web UI update has chat_id 0")
+	}
+}
+
+func TestGenerateScript_CoversEveryDaemon(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	for _, d := range Daemons {
+		for _, want := range []string{d.Name, d.Binary, d.InitScript} {
+			if !strings.Contains(script, want) {
+				t.Errorf("script missing %q for daemon %s", want, d.Name)
+			}
+		}
+	}
+
+	// The daemon table drives every loop; a stray hardcoded init call would
+	// silently skip the other daemon.
+	if strings.Contains(script, "/opt/etc/init.d/S98telegram-bot stop") {
+		t.Error("script must stop daemons through the table, not by name")
+	}
+}
+
+func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	checks := map[string]string{
+		"trap on_exit EXIT":   "recovery must hang off EXIT: ash has no ERR trap",
+		"code=$?":             "the EXIT trap must inspect the exit code",
+		"set +e":              "recovery must survive its own failing steps",
+		"write_notify failed": "a failed update must leave status failed in notify.json",
+		"start_running":       "recovery must restart the daemons that were running",
+		`rm -f "$LOCK_FILE"`:  "a failed update must release the lock",
+	}
+	for needle, why := range checks {
+		if !strings.Contains(script, needle) {
+			t.Errorf("script missing %q: %s", needle, why)
+		}
+	}
+}
+
+func TestGenerateScript_NotifyFormat(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(RunOptions{
+		OldVersion: "v1.2.0", NewVersion: "v1.3.0", ChatID: 0, Initiator: "webui",
+	})
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	const want = `{"chat_id":$CHAT_ID,"old_version":"$OLD_VERSION","new_version":"$NEW_VERSION","status":"$1","initiator":"$INITIATOR"}`
+	if !strings.Contains(script, want) {
+		t.Errorf("notify.json template line missing or changed, want %s", want)
+	}
+}
+
+func TestGenerateScript_IsValidShell(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "update.sh")
+	if err := os.WriteFile(path, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := exec.Command(sh, "-n", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated script has a syntax error: %v\n%s", err, out)
+	}
+}
+
+func TestGenerateScript_Golden(t *testing.T) {
+	// Default paths keep the render deterministic, so the golden file shows
+	// the exact script that ships to routers. Regenerate with:
+	//   UPDATE_GOLDEN=1 go test ./internal/updater -run TestGenerateScript_Golden -count=1
+	s := &Service{}
+	script, err := s.generateScript(RunOptions{
+		OldVersion: "v1.2.0", NewVersion: "v1.3.0", ChatID: 42, Initiator: "bot",
+	})
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	golden := filepath.Join("testdata", "update_script.golden.sh")
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.MkdirAll("testdata", 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(golden, []byte(script), 0644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("rewrote %s", golden)
+		return
+	}
+
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read golden: %v (regenerate with UPDATE_GOLDEN=1)", err)
+	}
+	if string(want) != script {
+		t.Errorf("generated script differs from %s; review the diff and regenerate with UPDATE_GOLDEN=1 if the change is intended", golden)
 	}
 }
 

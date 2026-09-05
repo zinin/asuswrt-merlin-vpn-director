@@ -4,20 +4,20 @@
 
 set -e
 
-CHAT_ID={{.ChatID}}
-INITIATOR="{{.Initiator}}"
-OLD_VERSION="{{.OldVersion}}"
-NEW_VERSION="{{.NewVersion}}"
-UPDATE_DIR="{{.UpdateDir}}"
-FILES_DIR="{{.FilesDir}}"
-NOTIFY_FILE="{{.NotifyFile}}"
-LOCK_FILE="{{.LockFile}}"
+CHAT_ID=42
+INITIATOR="bot"
+OLD_VERSION="v1.2.0"
+NEW_VERSION="v1.3.0"
+UPDATE_DIR="/tmp/vpn-director-update"
+FILES_DIR="/tmp/vpn-director-update/files"
+NOTIFY_FILE="/tmp/vpn-director-update/notify.json"
+LOCK_FILE="/tmp/vpn-director-update/lock"
 LOG_FILE="$UPDATE_DIR/update.log"
 INIT_DIR="/opt/etc/init.d"
 
 # Daemon table: "name|binary|init script" entries separated by spaces. The
 # loops below rely on word splitting, so no field may contain a space.
-DAEMONS="{{range $i, $d := .Daemons}}{{if $i}} {{end}}{{$d.Name}}|{{$d.Binary}}|{{$d.InitScript}}{{end}}"
+DAEMONS="telegram-bot|/opt/vpn-director/telegram-bot|S98telegram-bot webui|/opt/vpn-director/webui|S98vpn-director-webui"
 
 # Init scripts of the daemons that were running when the update started. The
 # EXIT trap reads it, so it must exist before anything can fail.
