@@ -410,7 +410,9 @@ func TestClientsHandler_HandleAddRoute_Tunnel(t *testing.T) {
 	h := NewClientsHandler(deps)
 
 	h.mu.Lock()
-	h.addState[100] = "192.168.50.30"
+	// Seeded with the /32 spelling so the assertion below actually exercises
+	// the normalization handleAddRoute performs.
+	h.addState[100] = "192.168.50.30/32"
 	h.mu.Unlock()
 
 	cb := &tgbotapi.CallbackQuery{

@@ -70,8 +70,8 @@ func (m *mockConfig) SaveServers(servers []vpnconfig.Server) error {
 	return m.err
 }
 func (m *mockConfig) DataDir() (string, error) { return "/tmp/test-data", m.err }
-func (m *mockConfig) DataDirOrDefault() string  { return "/tmp/test-data" }
-func (m *mockConfig) ScriptsDir() string        { return "/tmp/test-scripts" }
+func (m *mockConfig) DataDirOrDefault() string { return "/tmp/test-data" }
+func (m *mockConfig) ScriptsDir() string       { return "/tmp/test-scripts" }
 
 // mockXray implements service.XrayGenerator for testing.
 type mockXray struct {

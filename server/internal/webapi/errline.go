@@ -7,7 +7,8 @@ const maxErrorLineRunes = 200
 
 // lastErrorLine returns the last non-empty line of err's message, trimmed
 // and capped at maxErrorLineRunes. Shell failures carry the whole script
-// output; the last line is the ERROR line the user needs to see.
+// output; the last line is the ERROR line the user needs to see. A line that
+// had to be cut ends in an ellipsis so the reader can tell it is not complete.
 func lastErrorLine(err error) string {
 	if err == nil {
 		return ""
@@ -19,7 +20,7 @@ func lastErrorLine(err error) string {
 			continue
 		}
 		if r := []rune(line); len(r) > maxErrorLineRunes {
-			line = string(r[:maxErrorLineRunes])
+			line = string(r[:maxErrorLineRunes]) + "…"
 		}
 		return line
 	}

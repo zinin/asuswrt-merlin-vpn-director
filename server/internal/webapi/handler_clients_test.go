@@ -189,8 +189,9 @@ func TestHandleAddClient_TunnelRoute(t *testing.T) {
 		t.Errorf("expected tunnel client [192.168.50.30], got %v", tunnel.Clients)
 	}
 	// A new tunnel inherits the Xray country exclusions, like the bot wizard.
+	// t.Fatalf, not t.Errorf: the aliasing check below indexes Exclude[0].
 	if strings.Join(tunnel.Exclude, ",") != "ru,us" {
-		t.Errorf("expected tunnel exclude [ru us], got %v", tunnel.Exclude)
+		t.Fatalf("expected tunnel exclude [ru us], got %v", tunnel.Exclude)
 	}
 	// The copy must not alias xray.exclude_sets.
 	tunnel.Exclude[0] = "changed"
@@ -383,7 +384,7 @@ func TestHandleResumeClient_OK(t *testing.T) {
 		t.Fatal("expected config to be saved")
 	}
 	if len(mc.savedCfg.PausedClients) != 1 {
-		t.Errorf("expected 1 paused client after resume, got %d", len(mc.savedCfg.PausedClients))
+		t.Fatalf("expected 1 paused client after resume, got %d", len(mc.savedCfg.PausedClients))
 	}
 	if mc.savedCfg.PausedClients[0] != "192.168.50.20" {
 		t.Errorf("expected remaining paused client '192.168.50.20', got %q", mc.savedCfg.PausedClients[0])
@@ -494,6 +495,8 @@ func TestHandleAddClient_ConflictOtherRoute(t *testing.T) {
 	}
 	deps := newTestDeps(t)
 	deps.Config = mc
+	vpn := &mockVPN{}
+	deps.VPN = vpn
 
 	handler := handleAddClient(deps)
 
@@ -512,6 +515,12 @@ func TestHandleAddClient_ConflictOtherRoute(t *testing.T) {
 	}
 	if resp["error"] != "client already configured for wgc1" {
 		t.Errorf("unexpected error text: %q", resp["error"])
+	}
+	if mc.savedCfg != nil {
+		t.Error("config must not be saved on conflict")
+	}
+	if vpn.applyCalls != 0 {
+		t.Errorf("Apply() must not run on conflict, got %d calls", vpn.applyCalls)
 	}
 }
 

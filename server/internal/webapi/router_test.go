@@ -59,6 +59,35 @@ func TestRouter_UnknownAPIPathStillRequiresAuth(t *testing.T) {
 	}
 }
 
+// TestRouter_KnownAPIPathSurvivesFallback proves the catch-all "/api/" pattern
+// does not shadow the real routes: a registered path must still reach its
+// handler rather than the JSON 404.
+func TestRouter_KnownAPIPathSurvivesFallback(t *testing.T) {
+	deps := newTestDeps(t)
+	router := NewRouter(deps, testStaticFS())
+
+	token, err := deps.JWT.Create("admin")
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	req := httptest.NewRequest("GET", "/api/version", nil)
+	req.AddCookie(&http.Cookie{Name: "token", Value: token})
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["version"] != "1.0.0-test" || resp["commit"] != "abc1234" {
+		t.Errorf("expected the real handler's response, got %v", resp)
+	}
+}
+
 func TestSPAHandler_CacheHeaders(t *testing.T) {
 	handler := spaHandler(testStaticFS())
 
@@ -70,6 +99,9 @@ func TestSPAHandler_CacheHeaders(t *testing.T) {
 		{"/", "no-cache", "<html>spa</html>"},
 		{"/clients", "no-cache", "<html>spa</html>"},
 		{"/assets/app.js", "public, max-age=31536000, immutable", "console.log('app')"},
+		// A missing asset is rewritten to index.html before the assets/ prefix
+		// is tested, so it must be revalidated rather than cached for a year.
+		{"/assets/missing.js", "no-cache", "<html>spa</html>"},
 	}
 	for _, c := range cases {
 		t.Run(c.path, func(t *testing.T) {

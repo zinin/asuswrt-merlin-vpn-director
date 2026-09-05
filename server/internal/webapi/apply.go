@@ -35,6 +35,11 @@ func saveAndApply(deps *Deps, cfg *vpnconfig.VPNDirectorConfig) error {
 // 200 {"ok":true}; 500 "failed to save configuration"; or 500 with
 // "saved": true and the last line of the apply output when only the apply
 // failed, so the UI can refresh the list and offer a retry.
+//
+// Every error that is not an *errSavedNotApplied is reported as
+// "failed to save configuration", whatever it actually is. Only pass it the
+// result of saveAndApply: a validation or load error routed through here would
+// reach the user as a save failure. Answer those with jsonError directly.
 func writeSaveApplyResult(w http.ResponseWriter, err error) {
 	if err == nil {
 		jsonOK(w, map[string]bool{"ok": true})

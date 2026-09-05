@@ -210,3 +210,32 @@ func TestGenerateConfig_KeepsTemplateLogSection(t *testing.T) {
 		t.Errorf("log section altered: %v", logSection)
 	}
 }
+
+// TestDevTemplateLogSection pins the log section of the real dev-mode template
+// shipped at server/testdata/dev/xray.template.json. Without this, deleting the
+// section would leave every suite green while dev-mode Xray silently stopped
+// writing the error log the Logs tab reads.
+func TestDevTemplateLogSection(t *testing.T) {
+	// Go runs a test with the package directory as its working directory.
+	path := filepath.Join("..", "..", "testdata", "dev", "xray.template.json")
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var tmpl map[string]interface{}
+	if err := json.Unmarshal(content, &tmpl); err != nil {
+		t.Fatalf("%s is not valid JSON: %v", path, err)
+	}
+
+	logSection, ok := tmpl["log"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected a log section in %s, got %v", path, tmpl["log"])
+	}
+	if got := logSection["error"]; got != "testdata/dev/xray-error.log" {
+		t.Errorf("log.error = %v, want %q", got, "testdata/dev/xray-error.log")
+	}
+	if got := logSection["access"]; got != "none" {
+		t.Errorf("log.access = %v, want %q", got, "none")
+	}
+}

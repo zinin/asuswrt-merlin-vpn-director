@@ -211,7 +211,11 @@ func TestHandleAddExcludeIP_OK(t *testing.T) {
 		t.Fatal("expected config to be saved")
 	}
 	if len(mc.savedCfg.Xray.ExcludeIPs) != 2 {
-		t.Errorf("expected 2 exclude IPs, got %d", len(mc.savedCfg.Xray.ExcludeIPs))
+		t.Fatalf("expected 2 exclude IPs, got %d", len(mc.savedCfg.Xray.ExcludeIPs))
+	}
+	// The host bits are masked off before the address is stored.
+	if mc.savedCfg.Xray.ExcludeIPs[1] != "5.6.7.0/24" {
+		t.Errorf("expected the stored address to be %q, got %q", "5.6.7.0/24", mc.savedCfg.Xray.ExcludeIPs[1])
 	}
 }
 

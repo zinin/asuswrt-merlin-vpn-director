@@ -199,7 +199,7 @@ func TestMiscHandler_HandleLogs_SourceBot(t *testing.T) {
 	h.HandleLogs(msg)
 
 	if len(logReader.calls) != 1 {
-		t.Errorf("expected 1 log read call, got %d", len(logReader.calls))
+		t.Fatalf("expected 1 log read call, got %d", len(logReader.calls))
 	}
 	if logReader.calls[0].path != "/tmp/bot.log" {
 		t.Errorf("expected bot log path, got %q", logReader.calls[0].path)
@@ -226,7 +226,7 @@ func TestMiscHandler_HandleLogs_SourceVPN(t *testing.T) {
 	h.HandleLogs(msg)
 
 	if len(logReader.calls) != 1 {
-		t.Errorf("expected 1 log read call, got %d", len(logReader.calls))
+		t.Fatalf("expected 1 log read call, got %d", len(logReader.calls))
 	}
 	if logReader.calls[0].path != "/tmp/vpn.log" {
 		t.Errorf("expected vpn log path, got %q", logReader.calls[0].path)
@@ -281,7 +281,7 @@ func TestMiscHandler_HandleLogs_WithLines(t *testing.T) {
 	h.HandleLogs(msg)
 
 	if len(logReader.calls) != 1 {
-		t.Errorf("expected 1 log read call, got %d", len(logReader.calls))
+		t.Fatalf("expected 1 log read call, got %d", len(logReader.calls))
 	}
 	if logReader.calls[0].lines != 50 {
 		t.Errorf("expected 50 lines, got %d", logReader.calls[0].lines)
@@ -310,7 +310,7 @@ func TestMiscHandler_HandleLogs_LinesOnly(t *testing.T) {
 
 	// When only a number is given, source defaults to "all"
 	if len(logReader.calls) != 3 {
-		t.Errorf("expected 3 log read calls, got %d", len(logReader.calls))
+		t.Fatalf("expected 3 log read calls, got %d", len(logReader.calls))
 	}
 	if logReader.calls[0].lines != 30 {
 		t.Errorf("expected 30 lines, got %d", logReader.calls[0].lines)
