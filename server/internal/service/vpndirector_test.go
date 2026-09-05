@@ -3,6 +3,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
@@ -120,6 +121,36 @@ func TestVPNDirectorService_Stop(t *testing.T) {
 	}
 	if mock.calls[0][1] != "stop" {
 		t.Errorf("wrong args: %v", mock.calls[0])
+	}
+}
+
+func TestVPNDirectorService_Update(t *testing.T) {
+	mock := &mockExecutor{result: &shell.Result{Output: "updated", ExitCode: 0}}
+	svc := NewVPNDirectorService("/opt/vpn-director", mock)
+
+	err := svc.Update()
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.calls))
+	}
+	// Should call: vpn-director.sh update (force-refreshes ipsets, unlike apply)
+	if mock.calls[0][1] != "update" {
+		t.Errorf("wrong args: %v", mock.calls[0])
+	}
+}
+
+func TestVPNDirectorService_UpdateNonZeroExit(t *testing.T) {
+	mock := &mockExecutor{result: &shell.Result{Output: "download failed", ExitCode: 1}}
+	svc := NewVPNDirectorService("/opt/vpn-director", mock)
+
+	err := svc.Update()
+	if err == nil {
+		t.Fatal("expected error for non-zero exit, got nil")
+	}
+	if !strings.Contains(err.Error(), "download failed") {
+		t.Errorf("error should carry script output, got %q", err.Error())
 	}
 }
 

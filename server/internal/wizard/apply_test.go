@@ -27,6 +27,7 @@ func (m *mockVPNDirector) RestartXray() error {
 	return m.restartXrayErr
 }
 func (m *mockVPNDirector) Stop() error { return nil }
+func (m *mockVPNDirector) Update() error { return nil }
 
 // mockXrayGenerator for testing
 type mockXrayGenerator struct {

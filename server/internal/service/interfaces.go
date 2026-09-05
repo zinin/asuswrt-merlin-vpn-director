@@ -36,6 +36,9 @@ type VPNDirector interface {
 	Restart() error
 	RestartXray() error
 	Stop() error
+	// Update downloads fresh ipsets and reapplies the configuration
+	// (vpn-director.sh update). Apply reuses cached ipsets instead.
+	Update() error
 }
 
 // XrayGenerator is the interface for Xray config generation

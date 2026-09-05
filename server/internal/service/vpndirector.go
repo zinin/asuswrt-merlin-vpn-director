@@ -86,3 +86,15 @@ func (s *VPNDirectorService) Stop() error {
 	}
 	return nil
 }
+
+// Update downloads fresh ipsets and reapplies VPN Director configuration
+func (s *VPNDirectorService) Update() error {
+	result, err := s.executor.Exec(s.scriptPath(), "update")
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("update failed (exit %d): %s", result.ExitCode, result.Output)
+	}
+	return nil
+}

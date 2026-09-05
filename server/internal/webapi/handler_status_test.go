@@ -233,8 +233,10 @@ func TestHandleVersion(t *testing.T) {
 	}
 }
 
-func TestHandleUpdateIPsets_OK(t *testing.T) {
+func TestHandleUpdateIPsets_CallsUpdate(t *testing.T) {
 	deps := newTestDeps(t)
+	vpn := &mockVPN{}
+	deps.VPN = vpn
 
 	handler := handleUpdateIPsets(deps)
 
@@ -246,6 +248,12 @@ func TestHandleUpdateIPsets_OK(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	if vpn.updateCalls != 1 {
+		t.Errorf("expected 1 Update() call, got %d", vpn.updateCalls)
+	}
+	if vpn.applyCalls != 0 {
+		t.Errorf("expected no Apply() call, got %d", vpn.applyCalls)
+	}
 
 	var resp map[string]bool
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
@@ -253,5 +261,28 @@ func TestHandleUpdateIPsets_OK(t *testing.T) {
 	}
 	if !resp["ok"] {
 		t.Error("expected ok: true")
+	}
+}
+
+func TestHandleUpdateIPsets_Error(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.VPN = &mockVPN{err: errors.New("update failed (exit 1): [INFO] downloading\n[ERROR] no network\n")}
+
+	handler := handleUpdateIPsets(deps)
+
+	req := httptest.NewRequest("POST", "/api/ipsets/update", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "failed to update ipsets: [ERROR] no network" {
+		t.Errorf("unexpected error text: %q", resp["error"])
 	}
 }

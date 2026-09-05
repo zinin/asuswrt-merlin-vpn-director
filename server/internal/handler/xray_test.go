@@ -308,3 +308,4 @@ func (m *mockVPNDirectorWithXray) Apply() error            { return nil }
 func (m *mockVPNDirectorWithXray) Restart() error          { return m.restartErr }
 func (m *mockVPNDirectorWithXray) RestartXray() error      { return m.restartXrayErr }
 func (m *mockVPNDirectorWithXray) Stop() error             { return m.stopErr }
+func (m *mockVPNDirectorWithXray) Update() error           { return nil }

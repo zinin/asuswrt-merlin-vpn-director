@@ -13,13 +13,16 @@ import (
 type mockVPN struct {
 	statusOutput string
 	err          error
+	applyCalls   int // number of Apply() calls, to assert auto-apply
+	updateCalls  int // number of Update() calls
 }
 
-func (m *mockVPN) Status() (string, error)  { return m.statusOutput, m.err }
-func (m *mockVPN) Apply() error             { return m.err }
-func (m *mockVPN) Restart() error           { return m.err }
-func (m *mockVPN) RestartXray() error       { return m.err }
-func (m *mockVPN) Stop() error              { return m.err }
+func (m *mockVPN) Status() (string, error) { return m.statusOutput, m.err }
+func (m *mockVPN) Apply() error            { m.applyCalls++; return m.err }
+func (m *mockVPN) Restart() error          { return m.err }
+func (m *mockVPN) RestartXray() error      { return m.err }
+func (m *mockVPN) Stop() error             { return m.err }
+func (m *mockVPN) Update() error           { m.updateCalls++; return m.err }
 
 // mockNetwork implements service.NetworkInfo for testing.
 type mockNetwork struct {

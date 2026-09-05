@@ -75,6 +75,7 @@ func (m *mockVPNClients) Apply() error            { return m.applyErr }
 func (m *mockVPNClients) Restart() error          { return nil }
 func (m *mockVPNClients) RestartXray() error      { return nil }
 func (m *mockVPNClients) Stop() error             { return nil }
+func (m *mockVPNClients) Update() error           { return nil }
 
 func TestClientsHandler_HandleClients_WithClients(t *testing.T) {
 	sender := &mockSenderClients{}
