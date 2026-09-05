@@ -2,6 +2,8 @@
 package service
 
 import (
+	"context"
+
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -13,9 +15,12 @@ import (
 // TODO: If the number of consumers grows or interfaces become complex,
 // consider extracting to internal/contract/ for cleaner separation.
 
-// ShellExecutor is the interface for executing shell commands
+// ShellExecutor is the interface for executing shell commands. ctx bounds the
+// command: services build it from context.Background() with their own
+// per-command timeout, never from an HTTP request, so a closed browser tab
+// cannot kill an apply half-way through its iptables changes.
 type ShellExecutor interface {
-	Exec(name string, args ...string) (*shell.Result, error)
+	Exec(ctx context.Context, name string, args ...string) (*shell.Result, error)
 }
 
 // ConfigStore is the interface for config operations
@@ -56,11 +61,11 @@ type LogReader interface {
 	Read(path string, lines int) (string, error)
 }
 
-// defaultExecutor wraps shell.Exec
+// defaultExecutor wraps shell.ExecContext
 type defaultExecutor struct{}
 
-func (e *defaultExecutor) Exec(name string, args ...string) (*shell.Result, error) {
-	return shell.Exec(name, args...)
+func (e *defaultExecutor) Exec(ctx context.Context, name string, args ...string) (*shell.Result, error) {
+	return shell.ExecContext(ctx, name, args...)
 }
 
 // DefaultExecutor returns the default shell executor

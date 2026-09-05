@@ -2,22 +2,45 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
 )
 
 type mockExecutor struct {
-	result *shell.Result
-	err    error
-	calls  [][]string
+	result   *shell.Result
+	err      error
+	calls    [][]string
+	timeouts []time.Duration // time left to each call's context deadline
 }
 
-func (m *mockExecutor) Exec(name string, args ...string) (*shell.Result, error) {
+func (m *mockExecutor) Exec(ctx context.Context, name string, args ...string) (*shell.Result, error) {
 	m.calls = append(m.calls, append([]string{name}, args...))
+	if deadline, ok := ctx.Deadline(); ok {
+		m.timeouts = append(m.timeouts, time.Until(deadline))
+	}
 	return m.result, m.err
+}
+
+// assertCall checks the recorded call's arguments after the script path.
+func assertCall(t *testing.T, call []string, want ...string) {
+	t.Helper()
+	if !reflect.DeepEqual(call[1:], want) {
+		t.Errorf("args = %v, want %v", call[1:], want)
+	}
+}
+
+// assertTimeout checks that the executor saw a context deadline about want away.
+func assertTimeout(t *testing.T, got, want time.Duration) {
+	t.Helper()
+	if got > want || got < want-time.Second {
+		t.Errorf("context timeout = %s, want about %s", got, want)
+	}
 }
 
 func TestVPNDirectorService_Status(t *testing.T) {
@@ -37,6 +60,7 @@ func TestVPNDirectorService_Status(t *testing.T) {
 	if mock.calls[0][0] != "/opt/vpn-director/vpn-director.sh" {
 		t.Errorf("wrong script path: %v", mock.calls[0])
 	}
+	assertCall(t, mock.calls[0], "status")
 }
 
 func TestVPNDirectorService_StatusError(t *testing.T) {
@@ -60,10 +84,8 @@ func TestVPNDirectorService_RestartXray(t *testing.T) {
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(mock.calls))
 	}
-	// Should call: vpn-director.sh restart xray
-	if mock.calls[0][1] != "restart" || mock.calls[0][2] != "xray" {
-		t.Errorf("wrong args: %v", mock.calls[0])
-	}
+	// Should call: vpn-director.sh --wait restart xray
+	assertCall(t, mock.calls[0], "--wait", "restart", "xray")
 }
 
 func TestVPNDirectorService_Apply(t *testing.T) {
@@ -77,9 +99,7 @@ func TestVPNDirectorService_Apply(t *testing.T) {
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(mock.calls))
 	}
-	if mock.calls[0][1] != "apply" {
-		t.Errorf("wrong args: %v", mock.calls[0])
-	}
+	assertCall(t, mock.calls[0], "--wait", "apply")
 }
 
 func TestVPNDirectorService_ApplyNonZeroExit(t *testing.T) {
@@ -103,9 +123,7 @@ func TestVPNDirectorService_Restart(t *testing.T) {
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(mock.calls))
 	}
-	if mock.calls[0][1] != "restart" {
-		t.Errorf("wrong args: %v", mock.calls[0])
-	}
+	assertCall(t, mock.calls[0], "--wait", "restart")
 }
 
 func TestVPNDirectorService_Stop(t *testing.T) {
@@ -119,9 +137,7 @@ func TestVPNDirectorService_Stop(t *testing.T) {
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(mock.calls))
 	}
-	if mock.calls[0][1] != "stop" {
-		t.Errorf("wrong args: %v", mock.calls[0])
-	}
+	assertCall(t, mock.calls[0], "--wait", "stop")
 }
 
 func TestVPNDirectorService_Update(t *testing.T) {
@@ -135,10 +151,8 @@ func TestVPNDirectorService_Update(t *testing.T) {
 	if len(mock.calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(mock.calls))
 	}
-	// Should call: vpn-director.sh update (force-refreshes ipsets, unlike apply)
-	if mock.calls[0][1] != "update" {
-		t.Errorf("wrong args: %v", mock.calls[0])
-	}
+	// Should call: vpn-director.sh --wait update (force-refreshes ipsets, unlike apply)
+	assertCall(t, mock.calls[0], "--wait", "update")
 }
 
 func TestVPNDirectorService_UpdateNonZeroExit(t *testing.T) {
@@ -151,6 +165,34 @@ func TestVPNDirectorService_UpdateNonZeroExit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "download failed") {
 		t.Errorf("error should carry script output, got %q", err.Error())
+	}
+}
+
+func TestVPNDirectorService_Timeouts(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*VPNDirectorService) error
+		want time.Duration
+	}{
+		{"status", func(s *VPNDirectorService) error { _, err := s.Status(); return err }, StatusTimeout},
+		{"apply", (*VPNDirectorService).Apply, ApplyTimeout},
+		{"restart", (*VPNDirectorService).Restart, ApplyTimeout},
+		{"restart xray", (*VPNDirectorService).RestartXray, ApplyTimeout},
+		{"stop", (*VPNDirectorService).Stop, ApplyTimeout},
+		{"update", (*VPNDirectorService).Update, UpdateTimeout},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockExecutor{result: &shell.Result{Output: "ok"}}
+			svc := NewVPNDirectorService("/opt/vpn-director", mock)
+			if err := tt.call(svc); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(mock.timeouts) != 1 {
+				t.Fatalf("expected the executor to see one context deadline, got %d", len(mock.timeouts))
+			}
+			assertTimeout(t, mock.timeouts[0], tt.want)
+		})
 	}
 }
 

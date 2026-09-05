@@ -21,12 +21,6 @@ type Result struct {
 	ExitCode int
 }
 
-// Exec runs the command with no deadline. Kept for the callers that still
-// take no context; they move to ExecContext in the next task.
-func Exec(command string, args ...string) (*Result, error) {
-	return ExecContext(context.Background(), command, args...)
-}
-
 // ExecContext runs the command and captures its combined stdout and stderr.
 // A non-zero exit is reported through Result.ExitCode, not as an error.
 // When ctx expires the process receives SIGTERM, so vpn-director.sh's EXIT

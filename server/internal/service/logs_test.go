@@ -44,3 +44,15 @@ func TestLogService_NilExecutorUsesDefault(t *testing.T) {
 		t.Error("executor should not be nil after NewLogService with nil")
 	}
 }
+
+func TestLogService_Read_UsesTailTimeout(t *testing.T) {
+	mock := &mockExecutor{result: &shell.Result{Output: "line"}}
+	svc := NewLogService(mock)
+	if _, err := svc.Read("/tmp/test.log", 5); err != nil {
+		t.Fatalf("Read error: %v", err)
+	}
+	if len(mock.timeouts) != 1 {
+		t.Fatalf("expected one context deadline, got %d", len(mock.timeouts))
+	}
+	assertTimeout(t, mock.timeouts[0], TailTimeout)
+}
