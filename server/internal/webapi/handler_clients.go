@@ -135,12 +135,13 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Compare normalized forms so a legacy "1.2.3.4/32" already in
-		// paused_clients is recognized, but append the stored spelling because
-		// lib/config.sh subtracts the array by exact string.
-		if !containsAddr(cfg.PausedClients, ip) {
-			cfg.PausedClients = append(cfg.PausedClients, existing.stored)
-		}
+		// Drop any equivalent spelling and write the stored one in its place.
+		// lib/config.sh subtracts paused_clients from the clients arrays by
+		// exact string, and CollectClients reports Paused by exact lookup, so
+		// an entry spelled differently from the client pauses nothing while
+		// reporting success. Replacing rather than skipping keeps this
+		// idempotent and repairs a mismatched legacy entry on the first pause.
+		cfg.PausedClients = append(removeAddr(cfg.PausedClients, ip), existing.stored)
 
 		writeSaveApplyResult(w, saveAndApply(deps, cfg))
 	}

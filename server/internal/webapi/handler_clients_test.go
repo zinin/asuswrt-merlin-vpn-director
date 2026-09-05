@@ -340,7 +340,10 @@ func TestHandlePauseClient_AlreadyPaused(t *testing.T) {
 		t.Fatal("expected config to be saved")
 	}
 	if len(mc.savedCfg.PausedClients) != 1 {
-		t.Errorf("expected 1 paused client (no duplicate), got %d", len(mc.savedCfg.PausedClients))
+		t.Fatalf("expected 1 paused client (no duplicate), got %d", len(mc.savedCfg.PausedClients))
+	}
+	if mc.savedCfg.PausedClients[0] != "192.168.50.10" {
+		t.Errorf("expected the entry to keep the stored form, got %q", mc.savedCfg.PausedClients[0])
 	}
 }
 
@@ -676,6 +679,42 @@ func TestHandlePauseClient_KeepsStoredForm(t *testing.T) {
 	}
 	if got := strings.Join(mc.savedCfg.PausedClients, ","); got != "192.168.50.20/32" {
 		t.Errorf("expected paused entry in stored form 192.168.50.20/32, got %q", got)
+	}
+}
+
+func TestHandlePauseClient_RepairsMismatchedSpelling(t *testing.T) {
+	// paused_clients disagrees with the clients array about the spelling, the
+	// state a bot /configure run used to leave behind. The shell subtracts by
+	// exact string and CollectClients reports Paused by exact lookup, so the
+	// stale entry pauses nothing. Pausing must replace it with the stored
+	// spelling, not see it as equivalent and skip the write.
+	mc := &mockConfig{
+		cfg: &vpnconfig.VPNDirectorConfig{
+			Xray:          vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}},
+			PausedClients: []string{"192.168.50.10/32"},
+		},
+	}
+	deps := newTestDeps(t)
+	deps.Config = mc
+
+	handler := handlePauseClient(deps)
+
+	req := httptest.NewRequest("POST", "/api/clients/pause?ip=192.168.50.10", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if mc.savedCfg == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(mc.savedCfg.PausedClients) != 1 {
+		t.Fatalf("expected exactly 1 paused entry, got %v", mc.savedCfg.PausedClients)
+	}
+	if mc.savedCfg.PausedClients[0] != "192.168.50.10" {
+		t.Errorf("expected the stale /32 entry replaced by the stored form 192.168.50.10, got %q", mc.savedCfg.PausedClients[0])
 	}
 }
 
