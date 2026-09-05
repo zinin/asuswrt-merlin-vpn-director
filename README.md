@@ -167,7 +167,7 @@ Remote management via Telegram with username-based authorization.
 | `/configure` | Configuration wizard |
 | `/restart` | Restart VPN Director |
 | `/stop` | Stop VPN Director |
-| `/logs [bot\|vpn\|all] [N]` | Recent logs (default: all, 20 lines) |
+| `/logs [bot\|vpn\|xray\|all] [N]` | Recent logs (default: all, 20 lines) |
 | `/ip` | External IP |
 | `/update` | Update to latest release |
 | `/version` | Bot version |
