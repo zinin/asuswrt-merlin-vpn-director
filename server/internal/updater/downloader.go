@@ -39,6 +39,7 @@ var scriptFiles = []string{
 	"router/opt/etc/xray/config.json.template",
 	"router/opt/etc/init.d/S99vpn-director",
 	"router/opt/etc/init.d/S98telegram-bot",
+	"router/opt/etc/init.d/S98vpn-director-webui",
 	"router/jffs/scripts/firewall-start",
 	"router/jffs/scripts/wan-event",
 }
@@ -63,9 +64,9 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 		}
 	}
 
-	// Download bot binary
-	if err := s.downloadBotBinary(ctx, release); err != nil {
-		return fmt.Errorf("download bot binary: %w", err)
+	// Download daemon binaries
+	if err := s.downloadBinaries(ctx, release); err != nil {
+		return fmt.Errorf("download binaries: %w", err)
 	}
 
 	return nil
@@ -80,33 +81,58 @@ func (s *Service) downloadScriptFile(ctx context.Context, tag, file string) erro
 	return s.downloadFile(ctx, url, target)
 }
 
-func (s *Service) downloadBotBinary(ctx context.Context, release *Release) error {
-	arch := runtime.GOARCH
-	var assetName string
-
-	switch arch {
+// archAssetSuffix maps a Go architecture to the release asset suffix.
+func archAssetSuffix(goarch string) (string, error) {
+	switch goarch {
 	case "arm64":
-		assetName = "telegram-bot-arm64"
+		return "arm64", nil
 	case "arm":
-		assetName = "telegram-bot-arm"
+		return "arm", nil
 	default:
-		return fmt.Errorf("unsupported architecture: %s", arch)
+		return "", fmt.Errorf("unsupported architecture: %s", goarch)
+	}
+}
+
+// getArchSuffix returns the release asset suffix for this build.
+func (s *Service) getArchSuffix() (string, error) {
+	if s.archSuffix != "" {
+		return s.archSuffix, nil
+	}
+	return archAssetSuffix(runtime.GOARCH)
+}
+
+// downloadBinaries downloads one binary per daemon into files/<name>.
+// A release missing any of them is a download error: installing a new bot
+// next to an old Web UI leaves two halves of different versions on the router.
+func (s *Service) downloadBinaries(ctx context.Context, release *Release) error {
+	suffix, err := s.getArchSuffix()
+	if err != nil {
+		return err
 	}
 
-	// Find asset URL
-	var downloadURL string
-	for _, asset := range release.Assets {
-		if asset.Name == assetName {
-			downloadURL = asset.DownloadURL
-			break
+	for _, d := range Daemons {
+		assetName := d.Name + "-" + suffix
+		url := assetURL(release, assetName)
+		if url == "" {
+			return fmt.Errorf("asset %s not found in release", assetName)
+		}
+		target := filepath.Join(s.getFilesDir(), d.Name)
+		if err := s.downloadFile(ctx, url, target); err != nil {
+			return fmt.Errorf("download %s: %w", assetName, err)
 		}
 	}
-	if downloadURL == "" {
-		return fmt.Errorf("binary for architecture %s not found in release", arch)
-	}
+	return nil
+}
 
-	target := filepath.Join(s.getFilesDir(), "telegram-bot")
-	return s.downloadFile(ctx, downloadURL, target)
+// assetURL returns the download URL of the named asset, or "" when the
+// release does not carry it.
+func assetURL(release *Release, name string) string {
+	for _, a := range release.Assets {
+		if a.Name == name {
+			return a.DownloadURL
+		}
+	}
+	return ""
 }
 
 func (s *Service) downloadFile(ctx context.Context, url, target string) error {

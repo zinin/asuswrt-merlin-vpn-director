@@ -34,6 +34,25 @@ type Asset struct {
 	DownloadURL string
 }
 
+// Daemon describes an updatable daemon. Name is both the release asset prefix
+// (<Name>-<arch>) and the file name under files/; Binary is where the update
+// script installs it and what pgrep matches on; InitScript is the Entware
+// script that starts and stops it.
+type Daemon struct {
+	Name       string
+	Binary     string
+	InitScript string
+}
+
+// Daemons lists every daemon a release ships. DownloadRelease fetches one
+// binary per entry and the update script restarts the entries that were
+// running before the update. This table is the single source of truth: the
+// downloader, the script template and install.sh must not drift apart.
+var Daemons = []Daemon{
+	{Name: "telegram-bot", Binary: "/opt/vpn-director/telegram-bot", InitScript: "S98telegram-bot"},
+	{Name: "webui", Binary: "/opt/vpn-director/webui", InitScript: "S98vpn-director-webui"},
+}
+
 // Updater defines the interface for update operations.
 type Updater interface {
 	// GetLatestRelease fetches the latest release info from GitHub.
@@ -69,6 +88,7 @@ type Service struct {
 	lockFile   string // Configurable for testing
 	updateDir  string // Configurable for testing
 	scriptFile string // Configurable for testing
+	archSuffix string // Injectable for testing, empty = derived from runtime.GOARCH
 }
 
 // Verify Service implements Updater interface.
