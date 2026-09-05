@@ -117,6 +117,11 @@ func main() {
 		Xray:    xraySvc,
 		Network: networkSvc,
 		Logs:    logSvc,
+		LogPaths: map[string]string{
+			"bot":  p.BotLogPath,
+			"vpn":  p.VPNLogPath,
+			"xray": p.XrayLogPath,
+		},
 		Shadow:  shadowAuth,
 		JWT:     jwtSvc,
 		Version: Version,

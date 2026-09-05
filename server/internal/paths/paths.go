@@ -10,6 +10,7 @@ type Paths struct {
 	XrayConfig     string // /opt/etc/xray/config.json
 	BotLogPath     string // /tmp/telegram-bot.log
 	VPNLogPath     string // /tmp/vpn-director.log
+	XrayLogPath    string // /tmp/xray-error.log (set by the log section of the Xray template)
 }
 
 // Default returns the default paths for production use
@@ -22,6 +23,7 @@ func Default() Paths {
 		XrayConfig:     "/opt/etc/xray/config.json",
 		BotLogPath:     "/tmp/telegram-bot.log",
 		VPNLogPath:     "/tmp/vpn-director.log",
+		XrayLogPath:    "/tmp/xray-error.log",
 	}
 }
 
@@ -35,5 +37,6 @@ func DevPaths() Paths {
 		XrayConfig:     "testdata/dev/xray.json",
 		BotLogPath:     "testdata/dev/bot.log",
 		VPNLogPath:     "testdata/dev/vpn.log",
+		XrayLogPath:    "testdata/dev/xray-error.log",
 	}
 }

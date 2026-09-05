@@ -18,6 +18,7 @@ type Deps struct {
 	Xray         service.XrayGenerator
 	Network      service.NetworkInfo
 	Logs         service.LogReader
+	LogPaths     map[string]string // log source name -> file path, built by main from paths.Paths
 	Shadow       *auth.ShadowAuth
 	JWT          *auth.JWTService
 	Version      string

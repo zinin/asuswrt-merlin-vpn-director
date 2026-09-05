@@ -32,13 +32,17 @@ type mockNetwork struct {
 
 func (m *mockNetwork) GetExternalIP() (string, error) { return m.ip, m.err }
 
-// mockLogs implements service.LogReader for testing.
+// mockLogs implements service.LogReader for testing and records the paths read.
 type mockLogs struct {
 	output string
 	err    error
+	paths  []string
 }
 
-func (m *mockLogs) Read(_ string, _ int) (string, error) { return m.output, m.err }
+func (m *mockLogs) Read(path string, _ int) (string, error) {
+	m.paths = append(m.paths, path)
+	return m.output, m.err
+}
 
 // mockConfig implements service.ConfigStore for testing.
 type mockConfig struct {
@@ -103,11 +107,16 @@ func newTestDeps(t *testing.T) *Deps {
 	jwt := auth.NewJWTService("test-secret-key-32bytes!!!!!!!!", 1*time.Hour)
 
 	return &Deps{
-		Config:       &mockConfig{},
-		VPN:          &mockVPN{statusOutput: "all systems operational"},
-		Xray:         &mockXray{},
-		Network:      &mockNetwork{ip: "203.0.113.42"},
-		Logs:         &mockLogs{output: "log line 1\nlog line 2"},
+		Config:  &mockConfig{},
+		VPN:     &mockVPN{statusOutput: "all systems operational"},
+		Xray:    &mockXray{},
+		Network: &mockNetwork{ip: "203.0.113.42"},
+		Logs:    &mockLogs{output: "log line 1\nlog line 2"},
+		LogPaths: map[string]string{
+			"bot":  "/tmp/test-telegram-bot.log",
+			"vpn":  "/tmp/test-vpn-director.log",
+			"xray": "/tmp/test-xray-error.log",
+		},
 		Shadow:       shadow,
 		JWT:          jwt,
 		Version:      "1.0.0-test",

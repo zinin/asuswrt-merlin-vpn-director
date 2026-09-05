@@ -21,6 +21,7 @@ func TestDefault(t *testing.T) {
 		{"XrayConfig", p.XrayConfig, "/opt/etc/xray/", ".json"},
 		{"BotLogPath", p.BotLogPath, "/tmp/", "telegram-bot.log"},
 		{"VPNLogPath", p.VPNLogPath, "/tmp/", "vpn-director.log"},
+		{"XrayLogPath", p.XrayLogPath, "/tmp/", "xray-error.log"},
 	}
 
 	for _, tt := range tests {
@@ -80,6 +81,7 @@ func TestDevPaths(t *testing.T) {
 		{"XrayConfig", p.XrayConfig, "testdata/dev/", "xray.json"},
 		{"BotLogPath", p.BotLogPath, "testdata/dev/", "bot.log"},
 		{"VPNLogPath", p.VPNLogPath, "testdata/dev/", "vpn.log"},
+		{"XrayLogPath", p.XrayLogPath, "testdata/dev/", "xray-error.log"},
 	}
 
 	for _, tt := range tests {

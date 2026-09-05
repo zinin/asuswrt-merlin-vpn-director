@@ -171,6 +171,48 @@ func TestHandleLogs_AllSourcesWithError(t *testing.T) {
 	}
 }
 
+func TestHandleLogs_ReadsPathFromDeps(t *testing.T) {
+	deps := newTestDeps(t)
+	logs := &mockLogs{output: "xray warning"}
+	deps.Logs = logs
+
+	handler := handleLogs(deps)
+
+	req := httptest.NewRequest("GET", "/api/logs?source=xray", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(logs.paths) != 1 || logs.paths[0] != "/tmp/test-xray-error.log" {
+		t.Errorf("expected read of /tmp/test-xray-error.log, got %v", logs.paths)
+	}
+}
+
+func TestHandleLogs_InvalidSourceListsValidOnes(t *testing.T) {
+	deps := newTestDeps(t)
+
+	handler := handleLogs(deps)
+
+	req := httptest.NewRequest("GET", "/api/logs?source=invalid", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "unknown source: valid values are bot, vpn, xray" {
+		t.Errorf("unexpected error text: %q", resp["error"])
+	}
+}
+
 func TestHandleConfig_OK(t *testing.T) {
 	deps := newTestDeps(t)
 	deps.Config = &mockConfig{
