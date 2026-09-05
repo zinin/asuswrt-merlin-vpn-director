@@ -23,7 +23,7 @@ func handleApply(deps *Deps) http.HandlerFunc {
 		defer deps.OpMutex.Unlock()
 
 		if err := deps.VPN.Apply(); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to apply configuration")
+			jsonError(w, http.StatusInternalServerError, "failed to apply configuration: "+lastErrorLine(err))
 			return
 		}
 		jsonOK(w, map[string]bool{"ok": true})
@@ -37,7 +37,7 @@ func handleRestart(deps *Deps) http.HandlerFunc {
 		defer deps.OpMutex.Unlock()
 
 		if err := deps.VPN.Restart(); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to restart")
+			jsonError(w, http.StatusInternalServerError, "failed to restart: "+lastErrorLine(err))
 			return
 		}
 		jsonOK(w, map[string]bool{"ok": true})
@@ -51,7 +51,7 @@ func handleStop(deps *Deps) http.HandlerFunc {
 		defer deps.OpMutex.Unlock()
 
 		if err := deps.VPN.Stop(); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to stop")
+			jsonError(w, http.StatusInternalServerError, "failed to stop: "+lastErrorLine(err))
 			return
 		}
 		jsonOK(w, map[string]bool{"ok": true})
