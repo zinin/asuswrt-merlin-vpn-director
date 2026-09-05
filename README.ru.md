@@ -90,6 +90,7 @@ curl -fsSL \
 /opt/vpn-director/vpn-director.sh -v status           # Подробный вывод
 /opt/vpn-director/vpn-director.sh -f apply            # Принудительное применение
 /opt/vpn-director/vpn-director.sh --dry-run apply     # Показать, что будет сделано
+/opt/vpn-director/vpn-director.sh --wait apply        # Ждать занятый лок до 120 с вместо пропуска
 
 # Импорт серверов
 /opt/vpn-director/import_server_list.sh

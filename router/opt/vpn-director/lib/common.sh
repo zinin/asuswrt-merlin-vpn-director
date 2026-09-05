@@ -25,8 +25,9 @@
 #       Levels: TRACE, DEBUG, INFO (default), WARN, ERROR
 #
 #   acquire_lock [<name>]
-#       Acquires an exclusive non-blocking lock via /var/lock/<name>.lock; exits early if another
-#       instance is already running.
+#       Acquires an exclusive lock via /var/lock/<name>.lock. Without VPD_LOCK_WAIT it exits 0 at
+#       once when another instance holds it; with VPD_LOCK_WAIT=<sec> it waits up to <sec> seconds
+#       and exits 1 on timeout.
 #
 #   tmp_file
 #       Creates a UUID-named /tmp file tied to the script and tracks it for automatic cleanup.
@@ -417,7 +418,7 @@ log_error_trace() {
 }
 
 ###################################################################################################
-# acquire_lock - acquire an exclusive, non-blocking lock for the running script
+# acquire_lock - acquire an exclusive lock for the running script
 # -------------------------------------------------------------------------------------------------
 # Usage:
 #   acquire_lock             # uses get_script_name -n for lock name
@@ -426,20 +427,39 @@ log_error_trace() {
 # Behavior:
 #   * Creates /var/lock/<name>.lock and acquires exclusive lock
 #     on file descriptor 200.
-#   * If the lock is already held, logs the fact and exits with code 0.
+#   * VPD_LOCK_WAIT unset: non-blocking. If the lock is already held, logs the
+#     fact and exits with code 0 (firewall-start, wan-event and S99vpn-director
+#     rely on this: a second apply during boot is simply redundant).
+#   * VPD_LOCK_WAIT=<sec> (set by `vpn-director.sh --wait[=SEC]`): retries
+#     `flock -n` once a second for up to <sec> seconds, because BusyBox flock
+#     has no -w, then logs an ERROR and exits with code 1 so the caller learns
+#     that nothing was applied.
 #   * The lock persists until the script exits, automatically releasing it.
 ###################################################################################################
 acquire_lock() {
     local name="${1:-$(get_script_name -n)}"
     local file="/var/lock/${name}.lock"
+    local waited=0
 
     # Ensure /var/lock exists (tmpfs on most routers)
     [ -d /var/lock ] || mkdir -p /var/lock 2>/dev/null
 
     exec 200>"$file"           # FD 200 -> /var/lock/foo.lock
-    if ! flock -n 200; then
-        log "Another instance is already running (lock: $file) - exiting"
-        exit 0
+    if [[ -z ${VPD_LOCK_WAIT:-} ]]; then
+        if ! flock -n 200; then
+            log "Another instance is already running (lock: $file) - exiting"
+            exit 0
+        fi
+    else
+        until flock -n 200; do
+            if (( waited >= VPD_LOCK_WAIT )); then
+                log -l ERROR "Timed out waiting for lock (lock: $file, waited ${waited}s)"
+                exit 1
+            fi
+            (( waited == 0 )) && log "Another instance is running (lock: $file) - waiting up to ${VPD_LOCK_WAIT}s"
+            sleep 1
+            waited=$((waited + 1))
+        done
     fi
     printf '%s\n' "$$" 1>&200  # store our PID for clarity
 }

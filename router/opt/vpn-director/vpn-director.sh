@@ -15,6 +15,7 @@
 #   -q, --quiet    Minimal output
 #   -v, --verbose  Debug output
 #   --dry-run      Show what would be done
+#   --wait[=SEC]   Wait up to SEC seconds (default 120) for a running instance instead of exiting
 #   -h, --help     Show this help
 ###################################################################################################
 
@@ -44,6 +45,11 @@ parse_option() {
         -q|--quiet)   QUIET=1; return 0 ;;
         -v|--verbose) VERBOSE=1; export DEBUG=1; return 0 ;;
         --dry-run)    DRY_RUN=1; return 0 ;;
+        --wait)       export VPD_LOCK_WAIT=120; return 0 ;;
+        --wait=*)
+            local secs="${1#--wait=}"
+            [[ $secs =~ ^[0-9]+$ ]] || { echo "Invalid --wait value: $secs (expected seconds)" >&2; exit 1; }
+            export VPD_LOCK_WAIT="$secs"; return 0 ;;
         -h|--help)    COMMAND="help"; return 0 ;;
         -*)           echo "Unknown option: $1" >&2; exit 1 ;;
         *)            return 1 ;;
@@ -95,6 +101,7 @@ Options:
   -q, --quiet    Minimal output
   -v, --verbose  Debug output
   --dry-run      Show what would be done
+  --wait[=SEC]   Wait up to SEC seconds (default 120) for a running instance instead of exiting
   -h, --help     Show this help
 
 Examples:

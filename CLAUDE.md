@@ -14,6 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 /opt/vpn-director/vpn-director.sh stop                # Stop all components
 /opt/vpn-director/vpn-director.sh restart             # Restart all
 /opt/vpn-director/vpn-director.sh update              # Update ipsets + reapply
+/opt/vpn-director/vpn-director.sh --wait apply        # Queue for a running instance (120 s) instead of skipping
 
 # Component-specific commands
 /opt/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only

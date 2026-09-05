@@ -246,3 +246,31 @@ setup() {
     assert_success
     assert_output --partial "Usage:"
 }
+
+# ============================================================================
+# --wait option
+# ============================================================================
+
+@test "vpn-director: --wait exports VPD_LOCK_WAIT=120 by default" {
+    run bash -c 'source "$1" --source-only --wait apply && echo "wait=$VPD_LOCK_WAIT cmd=$COMMAND"' -- "$SCRIPTS_DIR/vpn-director.sh"
+    assert_success
+    assert_output "wait=120 cmd=apply"
+}
+
+@test "vpn-director: --wait=SEC exports the given number of seconds" {
+    run bash -c 'source "$1" --source-only --wait=30 apply && echo "wait=$VPD_LOCK_WAIT"' -- "$SCRIPTS_DIR/vpn-director.sh"
+    assert_success
+    assert_output "wait=30"
+}
+
+@test "vpn-director: --wait with a non-numeric value fails" {
+    run "$SCRIPTS_DIR/vpn-director.sh" --wait=abc apply
+    assert_failure
+    assert_output --partial "Invalid --wait value"
+}
+
+@test "vpn-director: --help documents --wait" {
+    run "$SCRIPTS_DIR/vpn-director.sh" --help
+    assert_success
+    assert_output --partial "--wait"
+}

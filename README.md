@@ -90,6 +90,7 @@ After installation, configs are located at:
 /opt/vpn-director/vpn-director.sh -v status           # Verbose output
 /opt/vpn-director/vpn-director.sh -f apply            # Force reapply
 /opt/vpn-director/vpn-director.sh --dry-run apply     # Show what would be done
+/opt/vpn-director/vpn-director.sh --wait apply        # Wait up to 120 s for a running instance instead of skipping
 
 # Import servers
 /opt/vpn-director/import_server_list.sh
