@@ -127,12 +127,13 @@ Web UI settings are in `/opt/vpn-director/vpn-director.json` under the `webui` s
     "port": 8444,
     "cert_file": "/opt/vpn-director/certs/server.crt",
     "key_file": "/opt/vpn-director/certs/server.key",
-    "jwt_secret": ""
+    "jwt_secret": "",
+    "log_level": "info"
   }
 }
 ```
 
-`jwt_secret` is auto-generated on first start if left empty.
+`jwt_secret` is auto-generated on first start if left empty. `log_level` accepts `debug`, `info`, `warn`, `error` (default `info`). The Web UI logs to `/tmp/vpn-director-webui.log`; all logs are truncated at 200 KB.
 
 ### Service Management
 

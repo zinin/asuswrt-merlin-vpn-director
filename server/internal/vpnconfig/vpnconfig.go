@@ -28,6 +28,7 @@ type WebUIConfig struct {
 	CertFile  string `json:"cert_file,omitempty"`
 	KeyFile   string `json:"key_file,omitempty"`
 	JWTSecret string `json:"jwt_secret,omitempty"`
+	LogLevel  string `json:"log_level,omitempty"` // debug, info, warn, error; empty means info
 }
 
 type VPNDirectorConfig struct {

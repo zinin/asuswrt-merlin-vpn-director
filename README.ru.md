@@ -127,12 +127,13 @@ HTTPS веб-интерфейс для управления VPN Director из б
     "port": 8444,
     "cert_file": "/opt/vpn-director/certs/server.crt",
     "key_file": "/opt/vpn-director/certs/server.key",
-    "jwt_secret": ""
+    "jwt_secret": "",
+    "log_level": "info"
   }
 }
 ```
 
-`jwt_secret` генерируется автоматически при первом запуске, если оставлен пустым.
+`jwt_secret` генерируется автоматически при первом запуске, если оставлен пустым. `log_level` принимает `debug`, `info`, `warn`, `error` (по умолчанию `info`). Web UI пишет лог в `/tmp/vpn-director-webui.log`; все логи обрезаются при 200 КБ.
 
 ### Управление сервисом
 

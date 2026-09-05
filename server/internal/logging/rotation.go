@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// DefaultMaxSize is the size at which StartRotation truncates a log file.
+// /tmp is tmpfs on the router, so the logs compete with everything else for RAM.
+const DefaultMaxSize int64 = 200 * 1024
+
 // TruncateIfNeeded truncates file if it exceeds maxSize
 func TruncateIfNeeded(path string, maxSize int64) {
 	info, err := os.Stat(path)

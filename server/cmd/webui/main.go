@@ -17,6 +17,7 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/devmode"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/logging"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
@@ -56,6 +57,15 @@ func main() {
 		p = paths.Default()
 	}
 
+	// Log file first, like the bot, so a config load failure is logged too.
+	slogger, logger, err := logging.NewSlogLogger(p.WebUILogPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logging: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Close()
+	slog.SetDefault(slogger)
+
 	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag)
 
 	// Derive scripts directory from --config path so runtime reads/writes
@@ -80,6 +90,8 @@ func main() {
 	if vpnCfg.WebUI.KeyFile == "" {
 		vpnCfg.WebUI.KeyFile = "/opt/vpn-director/certs/server.key"
 	}
+
+	logger.SetLevel(vpnCfg.WebUI.LogLevel) // "" keeps info
 
 	// Auto-generate JWT secret if empty. The write goes through the config
 	// lock like every other writer; if another process filled the secret in
@@ -151,6 +163,8 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	logger.StartRotation(ctx, p.RotatedLogs(), logging.DefaultMaxSize, time.Minute)
+
 	serverCfg := webapi.ServerConfig{
 		Port:     vpnCfg.WebUI.Port,
 		CertFile: vpnCfg.WebUI.CertFile,
@@ -198,6 +212,7 @@ func ensureDevFiles(configPath, shadowPath, dataDir string) {
 			WebUI: vpnconfig.WebUIConfig{
 				Port:      8444,
 				JWTSecret: "dev-secret-not-for-production-use!!",
+				LogLevel:  "debug",
 			},
 			Xray: vpnconfig.XrayConfig{
 				Clients:     []string{"192.168.50.0/24"},

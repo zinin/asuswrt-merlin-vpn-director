@@ -405,7 +405,8 @@ func TestLoadVPNDirectorConfig_WithWebUI(t *testing.T) {
 			"port": 8444,
 			"cert_file": "/opt/vpn-director/certs/server.crt",
 			"key_file": "/opt/vpn-director/certs/server.key",
-			"jwt_secret": "supersecret123"
+			"jwt_secret": "supersecret123",
+			"log_level": "debug"
 		},
 		"tunnel_director": {"tunnels": {}},
 		"xray": {"clients": [], "servers": [], "exclude_sets": []}
@@ -432,6 +433,9 @@ func TestLoadVPNDirectorConfig_WithWebUI(t *testing.T) {
 	}
 	if cfg.WebUI.JWTSecret != "supersecret123" {
 		t.Errorf("expected WebUI.JWTSecret 'supersecret123', got '%s'", cfg.WebUI.JWTSecret)
+	}
+	if cfg.WebUI.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want %q", cfg.WebUI.LogLevel, "debug")
 	}
 }
 

@@ -34,8 +34,6 @@ func versionString() string {
 	return fmt.Sprintf("%s (%s, %s)", VersionFull, Commit, BuildDate)
 }
 
-const maxLogSize = 200 * 1024
-
 func main() {
 	devFlag := flag.Bool("dev", false, "Run in development mode (local testing)")
 	flag.Parse()
@@ -103,7 +101,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger.StartRotation(ctx, []string{p.BotLogPath, p.VPNLogPath, p.XrayLogPath}, maxLogSize, time.Minute)
+	logger.StartRotation(ctx, p.RotatedLogs(), logging.DefaultMaxSize, time.Minute)
 
 	// Create chat store for update notifications (not in dev mode)
 	var store *chatstore.Store
