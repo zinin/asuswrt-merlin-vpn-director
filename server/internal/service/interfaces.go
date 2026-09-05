@@ -44,7 +44,7 @@ type ConfigStore interface {
 	// from fn is returned as is and skips the save, and a lock held by
 	// another process for the whole wait yields ErrConfigLockTimeout.
 	//
-	// There is deliberately no SaveVPNConfig: every writer goes through
+	// There is deliberately no unlocked save method: every writer goes through
 	// UpdateVPNConfig, so no code path can skip the lock.
 	UpdateVPNConfig(fn func(cfg *vpnconfig.VPNDirectorConfig) error) error
 	DataDir() (string, error)

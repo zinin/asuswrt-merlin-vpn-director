@@ -306,7 +306,7 @@ func TestSyncXrayServers_SaveError(t *testing.T) {
 	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
 
 	if err == nil {
-		t.Fatal("expected error when SaveVPNConfig fails, got nil")
+		t.Fatal("expected error when saving config fails, got nil")
 	}
 }
 
