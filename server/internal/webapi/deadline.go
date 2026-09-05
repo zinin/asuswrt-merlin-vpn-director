@@ -18,6 +18,13 @@ const (
 	deadlineSlack  = 30 * time.Second
 	applyDeadline  = service.ApplyTimeout + deadlineSlack
 	updateDeadline = service.UpdateTimeout + deadlineSlack
+	// statusDeadline covers `vpn-director.sh status`, whose own StatusTimeout
+	// equals WriteTimeout: without the extension the connection is torn down
+	// exactly when the router is slow enough to need diagnostics.
+	statusDeadline = service.StatusTimeout + deadlineSlack
+	// logsDeadline covers the all-sources branch of /api/logs, which tails the
+	// four log files sequentially, each under TailTimeout.
+	logsDeadline = 4*service.TailTimeout + deadlineSlack
 	// importDeadline covers the 10-second subscription download plus one DNS
 	// lookup per server; the import runs no shell command.
 	importDeadline = 2 * time.Minute

@@ -126,6 +126,9 @@ func TestLongOpHandlers_ExtendWriteDeadline(t *testing.T) {
 		handler func(*Deps) http.HandlerFunc
 		want    time.Duration
 	}{
+		{"status", "GET", "/api/status", "", handleStatus, statusDeadline},
+		{"logs (all sources)", "GET", "/api/logs", "", handleLogs, logsDeadline},
+		{"logs (single source)", "GET", "/api/logs?source=vpn", "", handleLogs, logsDeadline},
 		{"apply", "POST", "/api/apply", "", handleApply, applyDeadline},
 		{"restart", "POST", "/api/restart", "", handleRestart, applyDeadline},
 		{"stop", "POST", "/api/stop", "", handleStop, applyDeadline},

@@ -7,6 +7,8 @@ import (
 // handleStatus returns a handler that reports the current VPN Director status.
 func handleStatus(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
+		extendWriteDeadline(w, statusDeadline)
+
 		output, err := deps.VPN.Status()
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to get status")
