@@ -34,7 +34,15 @@ type mockUpdater struct {
 	downloadErr   error
 	runScriptErr  error
 
+	// downloadGate holds DownloadRelease until the test closes it, so a test
+	// can make something happen — cancelling the context it passed to Start —
+	// before the download inspects what it was handed. Set before any
+	// goroutine starts and nil for every other test.
+	downloadGate chan struct{}
+
 	createLockCalled bool
+	downloadCalled   bool
+	downloadCtxDone  bool // the download was handed an already-cancelled context
 	cleanFilesCalled bool
 	removeLockCalled bool
 	runScriptCalled  bool
@@ -101,9 +109,21 @@ func (m *mockUpdater) CleanFiles() {
 	m.cleanFilesCalled = true
 }
 
-func (m *mockUpdater) DownloadRelease(_ context.Context, _ *updater.Release) error {
+func (m *mockUpdater) DownloadRelease(ctx context.Context, _ *updater.Release) error {
+	m.mu.Lock()
+	gate := m.downloadGate
+	m.mu.Unlock()
+
+	// Wait outside m.mu, so the test can still read the mock while the
+	// download is held.
+	if gate != nil {
+		<-gate
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.downloadCalled = true
+	m.downloadCtxDone = ctx.Err() != nil
 	return m.downloadErr
 }
 

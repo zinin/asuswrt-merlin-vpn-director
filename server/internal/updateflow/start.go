@@ -15,6 +15,19 @@ type StartResult struct {
 	To   string `json:"to"`
 }
 
+// report delivers one progress line. progress is caller-supplied — a Telegram
+// send on a nil client, a write to a closed channel — so a panic from it has
+// to die right here: reaching the goroutine's recover would call CleanFiles
+// and delete files/ from under an update script that is already running.
+func report(progress func(string), line string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("update progress callback panicked", "error", r, "line", line)
+		}
+	}()
+	progress(line)
+}
+
 // Start runs the pre-flight checks synchronously, takes the lock and launches
 // the download plus the update script in a goroutine; progress receives
 // human-readable status lines. It returns as soon as the background work is
@@ -57,6 +70,14 @@ func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progre
 	if release == nil {
 		return res, fmt.Errorf("no release information available")
 	}
+	// Check and latestRelease read the cache under separate acquisitions of
+	// f.mu, and Check holds that mutex across the network call: a check that
+	// was queued behind it can replace the release in between. Refuse rather
+	// than install one release under another version's name; the next attempt
+	// sees a pair that agrees. Still before CreateLock, so nothing to unwind.
+	if release.TagName != check.Latest {
+		return res, fmt.Errorf("release changed while starting: have %q, want %q, please retry", release.TagName, check.Latest)
+	}
 
 	if err := f.upd.CreateLock(); err != nil {
 		return res, err
@@ -66,11 +87,12 @@ func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progre
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("update goroutine panicked", "error", r)
-				// Unwind before reporting: progress is caller-supplied, and a
-				// panic in it must not leave the lock behind.
+				// Unwind before reporting: with report absorbing callback
+				// panics, anything arriving here is a failure of our own and
+				// the lock must go regardless of what reporting does.
 				f.upd.CleanFiles()
 				f.upd.RemoveLock()
-				progress("Update failed unexpectedly. Check logs.")
+				report(progress, "Update failed unexpectedly. Check logs.")
 			}
 		}()
 		f.run(release, res, initiator, chatID, progress)
@@ -86,10 +108,10 @@ func (f *Flow) run(release *updater.Release, res StartResult, initiator string, 
 	if err := f.upd.DownloadRelease(context.Background(), release); err != nil {
 		f.upd.CleanFiles()
 		f.upd.RemoveLock()
-		progress(fmt.Sprintf("Download failed: %v", err))
+		report(progress, fmt.Sprintf("Download failed: %v", err))
 		return
 	}
-	progress("Files downloaded, starting update...")
+	report(progress, "Files downloaded, starting update...")
 
 	err := f.upd.RunUpdateScript(updater.RunOptions{
 		OldVersion: res.From,
@@ -100,9 +122,9 @@ func (f *Flow) run(release *updater.Release, res StartResult, initiator string, 
 	if err != nil {
 		f.upd.CleanFiles()
 		f.upd.RemoveLock()
-		progress(fmt.Sprintf("Failed to run update script: %v", err))
+		report(progress, fmt.Sprintf("Failed to run update script: %v", err))
 		return
 	}
 
-	progress("Update script started, the service will restart in a few seconds...")
+	report(progress, "Update script started, the service will restart in a few seconds...")
 }

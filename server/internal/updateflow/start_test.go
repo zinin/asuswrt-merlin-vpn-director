@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 )
 
 // collectProgress returns a progress func and a getter for what it received.
@@ -122,8 +124,15 @@ func TestStart_RejectsWithoutTouchingAnything(t *testing.T) {
 			if _, err := f.Start(context.Background(), "bot", 42, progress); !errors.Is(err, tt.want) {
 				t.Fatalf("Start() error = %v, want %v", err, tt.want)
 			}
+			// "Touching anything" is all three: GitHub, the lock, the script.
+			if n := upd.calls(); n != 0 {
+				t.Errorf("a rejected start made %d GitHub requests, want 0", n)
+			}
 			upd.mu.Lock()
 			defer upd.mu.Unlock()
+			if upd.createLockCalled {
+				t.Error("rejected start must not take the lock")
+			}
 			if upd.runScriptCalled {
 				t.Error("rejected start must not run the script")
 			}
@@ -141,6 +150,114 @@ func TestStart_GitHubFailureIsTyped(t *testing.T) {
 	var ghErr *GitHubError
 	if !errors.As(err, &ghErr) {
 		t.Fatalf("Start() error = %v, want *GitHubError", err)
+	}
+	upd.mu.Lock()
+	defer upd.mu.Unlock()
+	if upd.createLockCalled {
+		t.Error("a failed check must not leave a lock behind")
+	}
+}
+
+func TestStart_StaleReleaseIsRejectedBeforeTheLock(t *testing.T) {
+	// Check and latestRelease read the cache under separate acquisitions of
+	// f.mu, and Check holds that mutex across the network call: a forced check
+	// queued behind it takes the lock the moment Check returns and can replace
+	// the release while Start is between the two. Installing one release under
+	// another version's name is what the guard prevents.
+	upd := newMockUpdater()
+	f := New(upd, "v1.2.0", false)
+
+	if _, err := f.Check(context.Background(), false); err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	f.mu.Lock()
+	f.cachedRelease = &updater.Release{TagName: "v1.4.0"}
+	f.mu.Unlock()
+
+	progress, _ := collectProgress()
+	_, err := f.Start(context.Background(), "bot", 42, progress)
+	if err == nil || !strings.Contains(err.Error(), "v1.4.0") {
+		t.Fatalf("Start() error = %v, want the release mismatch", err)
+	}
+	upd.mu.Lock()
+	defer upd.mu.Unlock()
+	if upd.createLockCalled {
+		t.Error("the mismatch must be caught before the lock is taken, so a retry is possible")
+	}
+	if upd.runScriptCalled {
+		t.Error("a mismatched release must not be installed")
+	}
+}
+
+func TestStart_ProgressCallbackCannotAbortTheUpdate(t *testing.T) {
+	// progress is caller-supplied: a Telegram send on a nil client, a write to
+	// a closed channel, or simply no callback at all. A panic from it must be
+	// absorbed where it happens. If it reached the goroutine's recover
+	// instead, that recover would call CleanFiles and delete files/ from under
+	// an update script that is still stopping daemons.
+	//
+	// The first progress line is emitted before RunUpdateScript, so the script
+	// runs at all only if the panic was absorbed — that makes runScriptCalled
+	// a positive anchor rather than a wait on the absence of something.
+	tests := []struct {
+		name     string
+		progress func(string)
+	}{
+		{name: "panicking", progress: func(string) { panic("progress exploded") }},
+		{name: "nil", progress: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upd := newMockUpdater()
+			f := New(upd, "v1.2.0", false)
+
+			if _, err := f.Start(context.Background(), "bot", 42, tt.progress); err != nil {
+				t.Fatalf("Start() error = %v", err)
+			}
+
+			waitFor(t, "the update script to run despite the callback", func() bool {
+				upd.mu.Lock()
+				defer upd.mu.Unlock()
+				return upd.runScriptCalled
+			})
+			upd.mu.Lock()
+			defer upd.mu.Unlock()
+			if upd.cleanFilesCalled || upd.removeLockCalled {
+				t.Error("a run already handed to the script must not be unwound by a broken callback")
+			}
+		})
+	}
+}
+
+func TestStart_DownloadOutlivesTheCallersContext(t *testing.T) {
+	// The whole point of the goroutine: a closed browser tab or a finished
+	// Telegram poll cancels the request context, and the download must carry
+	// on regardless.
+	upd := newMockUpdater()
+	upd.downloadGate = make(chan struct{})
+	f := New(upd, "v1.2.0", false)
+	progress, _ := collectProgress()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if _, err := f.Start(ctx, "webui", 0, progress); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	// The gate holds the download until the caller is gone, so a download
+	// that had inherited ctx would see it already cancelled.
+	cancel()
+	close(upd.downloadGate)
+
+	waitFor(t, "the update to continue past the cancelled request", func() bool {
+		upd.mu.Lock()
+		defer upd.mu.Unlock()
+		return upd.runScriptCalled
+	})
+	upd.mu.Lock()
+	defer upd.mu.Unlock()
+	if upd.downloadCtxDone {
+		t.Error("run() must not download with the caller's context")
 	}
 }
 
