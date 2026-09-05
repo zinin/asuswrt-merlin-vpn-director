@@ -1,4 +1,9 @@
 {
+  "log": {
+    "loglevel": "warning",
+    "access": "none",
+    "error": "testdata/dev/xray-error.log"
+  },
   "inbounds": [
     {
       "port": 12345,

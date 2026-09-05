@@ -179,3 +179,34 @@ func TestGenerateConfig_RealityMissingRequiredFields(t *testing.T) {
 		t.Errorf("reality without shortId should succeed, got %v", err)
 	}
 }
+
+func TestGenerateConfig_KeepsTemplateLogSection(t *testing.T) {
+	tmpDir := t.TempDir()
+	templatePath := filepath.Join(tmpDir, "config.json.template")
+	outputPath := filepath.Join(tmpDir, "config.json")
+	tmpl := `{"log":{"loglevel":"warning","access":"none","error":"/tmp/xray-error.log"},"inbounds":[],"outbounds":[],"routing":{}}`
+	if err := os.WriteFile(templatePath, []byte(tmpl), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := vpnconfig.Server{Address: "1.2.3.4", Port: 443, UUID: "u1", Security: "tls"}
+	if err := NewXrayService(templatePath, outputPath).GenerateConfig(server); err != nil {
+		t.Fatalf("GenerateConfig error: %v", err)
+	}
+
+	content, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(content, &cfg); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	logSection, ok := cfg["log"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected log section to be preserved, got %v", cfg["log"])
+	}
+	if logSection["error"] != "/tmp/xray-error.log" || logSection["access"] != "none" {
+		t.Errorf("log section altered: %v", logSection)
+	}
+}

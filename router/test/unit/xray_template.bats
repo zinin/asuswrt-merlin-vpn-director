@@ -15,3 +15,13 @@ load '../test_helper'
     run jq -e '.inbounds | length == 2' "$PROJECT_ROOT/opt/etc/xray/config.json.template"
     [ "$status" -eq 0 ]
 }
+
+@test "config.json.template writes Xray errors to /tmp/xray-error.log and disables the access log" {
+    run jq -r '.log.error' "$PROJECT_ROOT/opt/etc/xray/config.json.template"
+    [ "$status" -eq 0 ]
+    [ "$output" = "/tmp/xray-error.log" ]
+    run jq -r '.log.access' "$PROJECT_ROOT/opt/etc/xray/config.json.template"
+    [ "$output" = "none" ]
+    run jq -r '.log.loglevel' "$PROJECT_ROOT/opt/etc/xray/config.json.template"
+    [ "$output" = "warning" ]
+}
