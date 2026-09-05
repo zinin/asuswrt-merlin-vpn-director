@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -60,11 +62,23 @@ func (m *mockConfigClients) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) erro
 	m.savedConfig = cfg
 	return m.saveErr
 }
-func (m *mockConfigClients) LoadServers() ([]vpnconfig.Server, error)   { return nil, nil }
-func (m *mockConfigClients) SaveServers(s []vpnconfig.Server) error     { return nil }
-func (m *mockConfigClients) DataDir() (string, error)                   { return "/data", nil }
-func (m *mockConfigClients) DataDirOrDefault() string                   { return "/data" }
-func (m *mockConfigClients) ScriptsDir() string                         { return "/scripts" }
+
+func (m *mockConfigClients) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
+	if m.loadErr != nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, m.loadErr)
+	}
+	if err := fn(m.vpnConfig); err != nil {
+		return err
+	}
+	m.savedConfig = m.vpnConfig
+	return m.saveErr
+}
+
+func (m *mockConfigClients) LoadServers() ([]vpnconfig.Server, error) { return nil, nil }
+func (m *mockConfigClients) SaveServers(s []vpnconfig.Server) error   { return nil }
+func (m *mockConfigClients) DataDir() (string, error)                 { return "/data", nil }
+func (m *mockConfigClients) DataDirOrDefault() string                 { return "/data" }
+func (m *mockConfigClients) ScriptsDir() string                       { return "/scripts" }
 
 type mockVPNClients struct {
 	applyErr error

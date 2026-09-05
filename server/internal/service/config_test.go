@@ -2,9 +2,15 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
 func TestConfigService_DataDir(t *testing.T) {
@@ -72,5 +78,147 @@ func TestConfigService_SaveServers_CreatesDir(t *testing.T) {
 	// Directory should exist now
 	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
 		t.Error("SaveServers should create data directory")
+	}
+}
+
+func writeTestConfig(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "vpn-director.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfigService_UpdateVPNConfig_LoadMutateSave(t *testing.T) {
+	dir := t.TempDir()
+	writeTestConfig(t, dir, `{"data_dir": "/d", "xray": {"clients": ["1.1.1.1"]}}`)
+	svc := NewConfigService(dir, filepath.Join(dir, "data"))
+
+	err := svc.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+		cfg.Xray.Clients = append(cfg.Xray.Clients, "2.2.2.2")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateVPNConfig: %v", err)
+	}
+
+	cfg, err := svc.LoadVPNConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Xray.Clients) != 2 || cfg.Xray.Clients[1] != "2.2.2.2" {
+		t.Errorf("clients = %v, want the appended entry saved", cfg.Xray.Clients)
+	}
+	if _, err := os.Stat(svc.LockPath()); err != nil {
+		t.Errorf("lock file %s not created: %v", svc.LockPath(), err)
+	}
+}
+
+func TestConfigService_UpdateVPNConfig_FnErrorSkipsSaveAndReleasesLock(t *testing.T) {
+	dir := t.TempDir()
+	writeTestConfig(t, dir, `{"data_dir": "/d"}`)
+	svc := NewConfigService(dir, filepath.Join(dir, "data"))
+	svc.lockTimeout = 200 * time.Millisecond
+
+	sentinel := errors.New("nope")
+	err := svc.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+		cfg.DataDir = "/changed"
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want the fn error unchanged", err)
+	}
+	cfg, _ := svc.LoadVPNConfig()
+	if cfg.DataDir != "/d" {
+		t.Error("a change made by a failing fn must not be saved")
+	}
+	// The lock must be released: a second update succeeds within the timeout.
+	if err := svc.UpdateVPNConfig(func(*vpnconfig.VPNDirectorConfig) error { return nil }); err != nil {
+		t.Fatalf("lock not released after fn error: %v", err)
+	}
+}
+
+func TestConfigService_UpdateVPNConfig_MissingConfigIsErrConfigLoad(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewConfigService(dir, filepath.Join(dir, "data"))
+
+	called := false
+	err := svc.UpdateVPNConfig(func(*vpnconfig.VPNDirectorConfig) error { called = true; return nil })
+	if !errors.Is(err, ErrConfigLoad) {
+		t.Fatalf("err = %v, want ErrConfigLoad", err)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the cause was lost: %v", err)
+	}
+	if called {
+		t.Error("fn must not run when the config cannot be loaded")
+	}
+}
+
+func TestConfigService_UpdateVPNConfig_TimesOutWhenLockHeld(t *testing.T) {
+	dir := t.TempDir()
+	writeTestConfig(t, dir, `{"data_dir": "/d"}`)
+	svc := NewConfigService(dir, filepath.Join(dir, "data"))
+	svc.lockTimeout = 200 * time.Millisecond
+	svc.lockPoll = 20 * time.Millisecond
+
+	holder, err := os.OpenFile(svc.LockPath(), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	if err := syscall.Flock(int(holder.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	start := time.Now()
+	err = svc.UpdateVPNConfig(func(*vpnconfig.VPNDirectorConfig) error { called = true; return nil })
+	if !errors.Is(err, ErrConfigLockTimeout) {
+		t.Fatalf("err = %v, want ErrConfigLockTimeout", err)
+	}
+	if err.Error() != "config lock timeout" {
+		t.Errorf("error text = %q, want %q", err.Error(), "config lock timeout")
+	}
+	if called {
+		t.Error("fn must not run without the lock")
+	}
+	if time.Since(start) < 200*time.Millisecond {
+		t.Error("returned before the lock timeout elapsed")
+	}
+}
+
+func TestConfigService_UpdateVPNConfig_SerializesConcurrentWriters(t *testing.T) {
+	dir := t.TempDir()
+	writeTestConfig(t, dir, `{"xray": {"clients": []}}`)
+	// Two services, two lock descriptors, like the bot and the Web UI.
+	a := NewConfigService(dir, filepath.Join(dir, "data"))
+	b := NewConfigService(dir, filepath.Join(dir, "data"))
+
+	const n = 25
+	var wg sync.WaitGroup
+	for _, svc := range []*ConfigService{a, b} {
+		wg.Add(1)
+		go func(svc *ConfigService) {
+			defer wg.Done()
+			for i := 0; i < n; i++ {
+				err := svc.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+					cfg.Xray.Clients = append(cfg.Xray.Clients, "x")
+					return nil
+				})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}(svc)
+	}
+	wg.Wait()
+
+	cfg, err := a.LoadVPNConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Xray.Clients) != 2*n {
+		t.Errorf("lost updates: %d clients saved, want %d", len(cfg.Xray.Clients), 2*n)
 	}
 }

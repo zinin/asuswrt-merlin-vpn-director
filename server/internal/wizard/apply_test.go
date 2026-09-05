@@ -2,9 +2,12 @@ package wizard
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -67,6 +70,21 @@ func (m *trackingConfigStore) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) er
 }
 
 func (m *trackingConfigStore) SaveServers([]vpnconfig.Server) error {
+	return m.saveErr
+}
+
+func (m *trackingConfigStore) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
+	if m.loadErr != nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, m.loadErr)
+	}
+	if m.vpnConfig == nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, os.ErrNotExist)
+	}
+	if err := fn(m.vpnConfig); err != nil {
+		return err
+	}
+	m.saveConfigCalled = true
+	m.savedConfig = m.vpnConfig
 	return m.saveErr
 }
 

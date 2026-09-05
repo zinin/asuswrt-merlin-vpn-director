@@ -6,3 +6,4 @@ testdata/dev/telegram-bot.json
 testdata/dev/xray.json
 testdata/dev/shadow
 testdata/dev/*.log
+testdata/dev/.vpn-director.json.lock

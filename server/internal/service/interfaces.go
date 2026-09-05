@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
@@ -23,12 +24,27 @@ type ShellExecutor interface {
 	Exec(ctx context.Context, name string, args ...string) (*shell.Result, error)
 }
 
+// ErrConfigLoad marks an UpdateVPNConfig failure that happened before fn ran:
+// vpn-director.json could not be read and nothing was changed. The cause is
+// wrapped as well, so errors.Is(err, os.ErrNotExist) still works.
+var ErrConfigLoad = errors.New("load config")
+
+// ErrConfigLockTimeout is returned when another process held the config lock
+// for the whole wait; nothing was read or written.
+var ErrConfigLockTimeout = errors.New("config lock timeout")
+
 // ConfigStore is the interface for config operations
 type ConfigStore interface {
 	LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error)
 	LoadServers() ([]vpnconfig.Server, error)
 	SaveVPNConfig(*vpnconfig.VPNDirectorConfig) error
 	SaveServers([]vpnconfig.Server) error
+	// UpdateVPNConfig runs fn under an exclusive cross-process lock:
+	// lock, load, fn, save, unlock. Readers stay lock-free because Save is
+	// atomic. A load failure comes back wrapped in ErrConfigLoad, an error
+	// from fn is returned as is and skips the save, and a lock held by
+	// another process for the whole wait yields ErrConfigLockTimeout.
+	UpdateVPNConfig(fn func(cfg *vpnconfig.VPNDirectorConfig) error) error
 	DataDir() (string, error)
 	DataDirOrDefault() string
 	ScriptsDir() string

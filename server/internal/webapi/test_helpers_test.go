@@ -1,11 +1,14 @@
 package webapi
 
 import (
+	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -52,6 +55,7 @@ type mockConfig struct {
 	saveVPNCfgErr error                        // independent error for SaveVPNConfig only
 	savedCfg      *vpnconfig.VPNDirectorConfig // captured by SaveVPNConfig
 	savedServers  []vpnconfig.Server           // captured by SaveServers
+	updateErr     error                        // returned by UpdateVPNConfig before fn runs, e.g. service.ErrConfigLockTimeout
 }
 
 func (m *mockConfig) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
@@ -69,6 +73,28 @@ func (m *mockConfig) SaveServers(servers []vpnconfig.Server) error {
 	m.savedServers = servers
 	return m.err
 }
+
+// UpdateVPNConfig mirrors the real contract: a load failure (err or no cfg)
+// comes back wrapped in service.ErrConfigLoad before fn runs; an fn error
+// skips the save; otherwise the mutated cfg is recorded as savedCfg and
+// saveVPNCfgErr, if set, is returned after it.
+func (m *mockConfig) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	if m.err != nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, m.err)
+	}
+	if m.cfg == nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, os.ErrNotExist)
+	}
+	if err := fn(m.cfg); err != nil {
+		return err
+	}
+	m.savedCfg = m.cfg
+	return m.saveVPNCfgErr
+}
+
 func (m *mockConfig) DataDir() (string, error) { return "/tmp/test-data", m.err }
 func (m *mockConfig) DataDirOrDefault() string { return "/tmp/test-data" }
 func (m *mockConfig) ScriptsDir() string       { return "/tmp/test-scripts" }

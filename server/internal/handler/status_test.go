@@ -3,10 +3,13 @@ package handler
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -17,12 +20,12 @@ type mockVPNDirector struct {
 	stopErr      error
 }
 
-func (m *mockVPNDirector) Status() (string, error)  { return m.statusOutput, m.statusErr }
-func (m *mockVPNDirector) Apply() error             { return nil }
-func (m *mockVPNDirector) Restart() error           { return m.restartErr }
-func (m *mockVPNDirector) RestartXray() error       { return nil }
-func (m *mockVPNDirector) Stop() error              { return m.stopErr }
-func (m *mockVPNDirector) Update() error            { return nil }
+func (m *mockVPNDirector) Status() (string, error) { return m.statusOutput, m.statusErr }
+func (m *mockVPNDirector) Apply() error            { return nil }
+func (m *mockVPNDirector) Restart() error          { return m.restartErr }
+func (m *mockVPNDirector) RestartXray() error      { return nil }
+func (m *mockVPNDirector) Stop() error             { return m.stopErr }
+func (m *mockVPNDirector) Update() error           { return nil }
 
 // mockConfigStore is used by servers_test.go (Task 5.3)
 type mockConfigStore struct {
@@ -34,9 +37,19 @@ func (m *mockConfigStore) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) 
 func (m *mockConfigStore) LoadServers() ([]vpnconfig.Server, error)             { return m.servers, m.err }
 func (m *mockConfigStore) SaveVPNConfig(*vpnconfig.VPNDirectorConfig) error     { return m.err }
 func (m *mockConfigStore) SaveServers([]vpnconfig.Server) error                 { return m.err }
-func (m *mockConfigStore) DataDir() (string, error)                             { return "/data", m.err }
-func (m *mockConfigStore) DataDirOrDefault() string                             { return "/data" }
-func (m *mockConfigStore) ScriptsDir() string                                   { return "/scripts" }
+
+// UpdateVPNConfig: this mock holds no vpn-director.json, like a router before
+// its first configure, so every update stops at the load step.
+func (m *mockConfigStore) UpdateVPNConfig(func(*vpnconfig.VPNDirectorConfig) error) error {
+	if m.err != nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, m.err)
+	}
+	return fmt.Errorf("%w: %w", service.ErrConfigLoad, os.ErrNotExist)
+}
+
+func (m *mockConfigStore) DataDir() (string, error) { return "/data", m.err }
+func (m *mockConfigStore) DataDirOrDefault() string { return "/data" }
+func (m *mockConfigStore) ScriptsDir() string       { return "/scripts" }
 
 func TestStatusHandler_HandleStatus(t *testing.T) {
 	sender := &mockSender{}
