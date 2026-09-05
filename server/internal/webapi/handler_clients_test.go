@@ -482,28 +482,6 @@ func TestContains(t *testing.T) {
 	}
 }
 
-func TestRemoveString(t *testing.T) {
-	result := removeString([]string{"a", "b", "c", "b"}, "b")
-	if len(result) != 2 {
-		t.Fatalf("expected 2 elements, got %d", len(result))
-	}
-	if result[0] != "a" || result[1] != "c" {
-		t.Errorf("expected [a c], got %v", result)
-	}
-
-	// Remove non-existent.
-	result = removeString([]string{"a", "b"}, "z")
-	if len(result) != 2 {
-		t.Errorf("expected 2 elements for non-existent removal, got %d", len(result))
-	}
-
-	// Remove from nil.
-	result = removeString(nil, "a")
-	if len(result) != 0 {
-		t.Errorf("expected 0 elements for nil slice, got %d", len(result))
-	}
-}
-
 func TestHandleAddClient_ConflictOtherRoute(t *testing.T) {
 	mc := &mockConfig{
 		cfg: &vpnconfig.VPNDirectorConfig{

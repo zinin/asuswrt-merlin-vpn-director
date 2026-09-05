@@ -2,24 +2,10 @@ package webapi
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
-
-// isValidIPOrCIDR checks if the string is a valid IP address or CIDR notation.
-//
-// Client addresses no longer use it — they go through
-// vpnconfig.NormalizeClientAddr — but the exclude handlers in
-// handler_excludes.go still do, so it stays until they are rewritten.
-func isValidIPOrCIDR(s string) bool {
-	if net.ParseIP(s) != nil {
-		return true
-	}
-	_, _, err := net.ParseCIDR(s)
-	return err == nil
-}
 
 // validRoutes is the set of allowed route names for client assignment.
 var validRoutes = map[string]bool{
@@ -292,15 +278,4 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
-}
-
-// removeString returns a new slice with all exact matches of item removed.
-func removeString(slice []string, item string) []string {
-	result := make([]string, 0, len(slice))
-	for _, s := range slice {
-		if s != item {
-			result = append(result, s)
-		}
-	}
-	return result
 }
