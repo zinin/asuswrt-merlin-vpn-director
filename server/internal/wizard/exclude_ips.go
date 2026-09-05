@@ -2,11 +2,11 @@ package wizard
 
 import (
 	"fmt"
-	"net"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
 // ExcludeIPsStep handles the exclude IPs wizard step
@@ -117,15 +117,10 @@ func (s *ExcludeIPsStep) buildUI(state *State) (string, tgbotapi.InlineKeyboardM
 	return sb.String(), kb.Build()
 }
 
-// IsValidIPOrCIDR validates input as IPv4 or IPv4 CIDR
+// IsValidIPOrCIDR reports whether s is an IPv4 address or IPv4 CIDR.
+// Validation lives in vpnconfig.NormalizeClientAddr so the bot and the
+// Web UI agree on what they accept.
 func IsValidIPOrCIDR(s string) bool {
-	if strings.Contains(s, "/") {
-		ip, _, err := net.ParseCIDR(s)
-		if err != nil {
-			return false
-		}
-		return ip.To4() != nil
-	}
-	ip := net.ParseIP(s)
-	return ip != nil && ip.To4() != nil
+	_, err := vpnconfig.NormalizeClientAddr(s)
+	return err == nil
 }

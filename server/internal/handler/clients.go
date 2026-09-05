@@ -2,7 +2,6 @@ package handler
 
 import (
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -298,33 +297,37 @@ func (h *ClientsHandler) HandleTextInput(msg *tgbotapi.Message) {
 		return
 	}
 
-	if !isValidIPOrCIDR(input) {
+	normalized, err := vpnconfig.NormalizeClientAddr(input)
+	if err != nil {
 		h.deps.Sender.SendPlain(chatID, "Invalid format. Enter IPv4 (192.168.50.10) or CIDR (192.168.50.0/24):")
 		return
 	}
 
-	// Normalize for duplicate check
-	normalized := normalizeIP(input)
 	cfg, err := h.deps.Config.LoadVPNConfig()
 	if err != nil {
 		h.deps.Sender.SendPlain(chatID, fmt.Sprintf("Config load error: %v", err))
 		return
 	}
 
+	// Compare normalized forms: older configs store both 1.2.3.4 and 1.2.3.4/32.
 	clients := vpnconfig.CollectClients(cfg)
 	for _, c := range clients {
-		if normalizeIP(c.IP) == normalized {
+		existing, err := vpnconfig.NormalizeClientAddr(c.IP)
+		if err != nil {
+			existing = c.IP
+		}
+		if existing == normalized {
 			h.deps.Sender.SendPlain(chatID, fmt.Sprintf("This IP is already configured for %s", c.Route))
 			return
 		}
 	}
 
-	// Save pending IP and show route selection
+	// Save pending IP (normalized) and show route selection
 	h.mu.Lock()
-	h.addState[chatID] = input
+	h.addState[chatID] = normalized
 	h.mu.Unlock()
 
-	h.showRouteSelection(chatID, input, cfg)
+	h.showRouteSelection(chatID, normalized, cfg)
 }
 
 func (h *ClientsHandler) showRouteSelection(chatID int64, ip string, cfg *vpnconfig.VPNDirectorConfig) {
@@ -370,8 +373,11 @@ func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
 		return
 	}
 
-	// Normalize IP: strip /32 for consistent storage
-	ip = normalizeIP(ip)
+	// Normalize IP: strip /32 for consistent storage. The pending state already
+	// holds the normalized form; this keeps older pending entries consistent.
+	if n, err := vpnconfig.NormalizeClientAddr(ip); err == nil {
+		ip = n
+	}
 
 	if route == "xray" {
 		cfg.Xray.Clients = append(cfg.Xray.Clients, ip)
@@ -399,21 +405,4 @@ func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
 
 	text, kb := h.buildClientList(cfg)
 	h.deps.Sender.EditMessage(chatID, msgID, text, kb)
-}
-
-func isValidIPOrCIDR(s string) bool {
-	if strings.Contains(s, "/") {
-		ip, _, err := net.ParseCIDR(s)
-		if err != nil {
-			return false
-		}
-		return ip.To4() != nil
-	}
-	ip := net.ParseIP(s)
-	return ip != nil && ip.To4() != nil
-}
-
-// normalizeIP strips /32 suffix from single-host addresses for consistent storage.
-func normalizeIP(ip string) string {
-	return strings.TrimSuffix(ip, "/32")
 }
