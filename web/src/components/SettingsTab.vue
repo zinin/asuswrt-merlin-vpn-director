@@ -17,6 +17,7 @@ const error = ref('')
 const canUpdate = computed(() => !!updateInfo.value?.update_available && !updating.value)
 
 async function loadVersion() {
+  error.value = ''
   try {
     const resp = await api.getVersion()
     versionInfo.value = resp.data
@@ -26,6 +27,8 @@ async function loadVersion() {
 }
 
 async function loadUpdate(force = false) {
+  error.value = ''
+  updateMessage.value = ''
   checking.value = true
   try {
     const resp = await api.checkUpdate(force)
@@ -38,6 +41,7 @@ async function loadUpdate(force = false) {
 }
 
 async function loadConfig() {
+  error.value = ''
   loading.value = true
   try {
     const resp = await api.getConfig()
@@ -82,11 +86,13 @@ async function doUpdate() {
   if (!confirm(`Update VPN Director to ${target}?`)) return
 
   updating.value = true
+  error.value = ''
   updateMessage.value = 'Starting update...'
   try {
     const resp = await api.update()
     const data = resp.data as UpdateStartResponse
     if (data.update_available === false) {
+      await loadUpdate()
       updateMessage.value = 'Already running the latest version.'
       updating.value = false
       return
