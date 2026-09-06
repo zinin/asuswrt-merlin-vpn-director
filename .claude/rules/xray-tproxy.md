@@ -113,8 +113,11 @@ ip rule add pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XR
 
 Script exits without changes if:
 - Required exclusion ipsets not found
-- Unknown country codes in `xray.exclude_sets` are not "required": `_tproxy_exclude_sets` drops them with a WARN before the check, so a typo cannot abort apply
 - xt_TPROXY module unavailable
+
+> An unknown country code in `xray.exclude_sets` is **not** one of those
+> reasons: `_tproxy_exclude_sets` drops it with a WARN before the check, so a
+> typo cannot abort apply.
 
 ## Extended Exclusion Sets
 

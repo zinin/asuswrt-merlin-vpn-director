@@ -149,6 +149,8 @@ The **Settings** tab shows the running version, the latest GitHub release and it
 
 An update started from the Web UI is announced in Telegram to every active chat. `/update` in the bot does the same thing from the other side — both paths update both daemons.
 
+Updates are authenticated by TLS to github.com and nothing else — there is no signature and no checksum on the binaries or the scripts, and they are installed and run as root. This is the same trust model as the `curl … | bash` install command above; anyone who can publish a release to this repository can run code on your router.
+
 > Upgrading **to** the first release with the unified updater is still done by the old bot-only updater, which does not know about the Web UI. Re-run the [Quick Install](#quick-install) command once after that upgrade; every later update handles both.
 
 ## Telegram Bot

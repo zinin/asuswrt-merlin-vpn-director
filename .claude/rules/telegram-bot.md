@@ -10,8 +10,10 @@ Go-based Telegram bot for remote VPN Director management.
 
 ```
 server/
-├── cmd/bot/main.go           # Entry point, signal handling, DI setup
+├── cmd/bot/main.go           # Bot entry point, signal handling, DI setup
+├── cmd/webui/main.go         # Web UI entry point — see webui.md
 ├── internal/
+│   ├── auth/                 # /etc/shadow verification and JWT — see webui.md
 │   ├── bot/                  # Core bot orchestration
 │   │   ├── bot.go            # Bot struct, Run(), message dispatch
 │   │   ├── router.go         # Command and callback routing
@@ -40,6 +42,7 @@ server/
 │   │   └── interfaces.go     # ShellExecutor, Network, etc.
 │   ├── shell/                # Shell command execution
 │   │   └── shell.go          # Real command executor
+│   ├── ssrf/                 # Dial guard: refuse private and reserved addresses
 │   ├── startup/              # Startup notifications
 │   │   └── notify.go         # Post-update notification
 │   ├── telegram/             # Telegram API helpers
@@ -53,11 +56,14 @@ server/
 │   │   ├── updater.go        # Daemon table (asset names, binaries, init scripts), GitHub API, lock file
 │   │   ├── github.go         # GitHub release fetching
 │   │   ├── downloader.go     # Asset downloading
-│   │   └── script.go         # Update script generation
+│   │   ├── script.go         # Update script generation
+│   │   ├── version.go        # Semantic version comparison and validation
+│   │   └── update_script.sh.tmpl # The script rendered from the daemon table
 │   ├── vless/                # VLESS protocol
 │   │   └── parser.go         # VLESS URL parser, subscription decoder
 │   ├── vpnconfig/            # VPN Director config
 │   │   └── vpnconfig.go      # vpn-director.json, servers.json
+│   ├── webapi/               # Web UI HTTP API — see webui.md
 │   └── wizard/               # Configuration wizard
 │       ├── state.go          # Thread-safe state storage
 │       └── wizard.go         # Wizard manager
@@ -182,6 +188,13 @@ go test ./... -cover
 ```
 
 Binary: `bin/telegram-bot-{arch}`
+
+```bash
+# Web UI (from the repository root: needs the SPA embedded first)
+make build-webui
+make build-webui-arm64
+make build-webui-arm
+```
 
 ## Test Commands
 
