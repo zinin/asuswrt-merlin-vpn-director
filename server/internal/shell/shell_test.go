@@ -130,10 +130,10 @@ func TestExecContext_TimeoutKillsChildThatIgnoresTerm(t *testing.T) {
 	}
 }
 
-// TestExecContext_TimeoutErrorUnwrapsToDeadlineExceeded: the message is pinned
-// by spec 5.2 and stays exactly as it is, but a caller that asks
-// errors.Is(err, context.DeadlineExceeded) has to get true - otherwise every
-// future caller has to match on the string.
+// TestExecContext_TimeoutErrorUnwrapsToDeadlineExceeded: spec 5.2's wording is
+// pinned as the error's prefix, which is all this test asserts about the text,
+// but a caller that asks errors.Is(err, context.DeadlineExceeded) has to get
+// true - otherwise every future caller has to match on the string.
 func TestExecContext_TimeoutErrorUnwrapsToDeadlineExceeded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
