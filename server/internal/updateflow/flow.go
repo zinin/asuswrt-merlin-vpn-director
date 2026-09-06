@@ -91,13 +91,12 @@ func (f *Flow) Check(ctx context.Context, force bool) (CheckResult, error) {
 			return f.cached, nil
 		}
 	}
-	if force {
-		f.lastForce = now
-	}
-
 	release, err := f.upd.GetLatestRelease(ctx)
 	if err != nil {
 		return CheckResult{}, &GitHubError{Err: err}
+	}
+	if force {
+		f.lastForce = now
 	}
 
 	available, err := f.upd.ShouldUpdate(f.currentVersion, release.TagName)

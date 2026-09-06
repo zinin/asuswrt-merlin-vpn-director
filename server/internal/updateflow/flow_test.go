@@ -321,6 +321,23 @@ func TestCheck_DevModeAndDevVersion(t *testing.T) {
 	}
 }
 
+func TestCheck_FailedForceDoesNotStartCooldown(t *testing.T) {
+	upd := newMockUpdater()
+	upd.setReleaseErr(errors.New("connection refused"))
+	f := New(upd, "v1.2.0", false)
+
+	if _, err := f.Check(context.Background(), true); err == nil {
+		t.Fatal("forced Check must fail")
+	}
+	upd.setReleaseErr(nil)
+	if _, err := f.Check(context.Background(), true); err != nil {
+		t.Fatalf("retry after a failed force: %v", err)
+	}
+	if upd.calls() != 2 {
+		t.Errorf("failed force must not burn the cooldown, got %d GitHub calls", upd.calls())
+	}
+}
+
 func TestCheck_GitHubFailureIsTyped(t *testing.T) {
 	upd := newMockUpdater()
 	upd.setReleaseErr(errors.New("fetch release: connection refused"))
