@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -111,8 +112,8 @@ func TestCreateLock_AlreadyExists(t *testing.T) {
 
 	// Try to create lock - should fail
 	err := s.CreateLock()
-	if err == nil {
-		t.Error("CreateLock() should fail when lock already exists")
+	if !errors.Is(err, ErrLockExists) {
+		t.Errorf("CreateLock() error = %v, want ErrLockExists", err)
 	}
 
 	// Original content should be preserved

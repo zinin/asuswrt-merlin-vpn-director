@@ -2,6 +2,7 @@ package updateflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -80,6 +81,9 @@ func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progre
 	}
 
 	if err := f.upd.CreateLock(); err != nil {
+		if errors.Is(err, updater.ErrLockExists) {
+			return res, ErrInProgress
+		}
 		return res, err
 	}
 

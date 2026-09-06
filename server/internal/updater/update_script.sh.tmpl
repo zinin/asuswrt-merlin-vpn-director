@@ -82,6 +82,11 @@ if ! command -v pgrep >/dev/null 2>&1; then
     exit 1
 fi
 
+# The lock still names the daemon that started us. That process is about to
+# be stopped; until we overwrite it, the other daemon's IsUpdateInProgress
+# treats the lock as stale and deletes it.
+echo $$ > "$LOCK_FILE"
+
 log "Starting update from $OLD_VERSION to $NEW_VERSION (initiator: $INITIATOR)"
 
 # 1. Remember which daemons are running. Matching the full binary path keeps
@@ -155,6 +160,11 @@ for entry in $DAEMONS; do
     chmod +x "$INIT_DIR/${entry##*|}"
     chmod +x "${rest%%|*}"
 done
+
+# Drop the payload copies. notify.json and update.log stay; the bot removes
+# the directory after a successful notify. A Web UI-only router has no bot
+# to do that, and leaving two binaries in tmpfs until reboot is waste.
+rm -rf "$FILES_DIR"
 
 # 6. Create notify file
 log "Creating notify file"

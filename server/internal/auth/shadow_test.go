@@ -313,3 +313,47 @@ func TestFingerprint_UnreadableFileIsNotErrUserNotFound(t *testing.T) {
 		t.Errorf("Fingerprint() error = %v, want a read error distinct from ErrUserNotFound", err)
 	}
 }
+
+func TestVerifyWithFingerprint_MatchesTheHashItVerified(t *testing.T) {
+	path := writeShadowFile(t, "admin:"+sha256Hash+":19000:0:99999:7:::\n")
+	sa := NewShadowAuth(path)
+
+	ok, fp, err := sa.VerifyWithFingerprint("admin", "testpass")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected VerifyWithFingerprint to return true")
+	}
+	want, err := sa.Fingerprint("admin")
+	if err != nil {
+		t.Fatalf("Fingerprint: %v", err)
+	}
+	if fp != want {
+		t.Errorf("fingerprint %q, want %q from the same hash", fp, want)
+	}
+
+	if err := os.WriteFile(path, []byte("admin:"+sha512Hash+":19000:0:99999:7:::\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	after, err := sa.Fingerprint("admin")
+	if err != nil {
+		t.Fatalf("Fingerprint after rewrite: %v", err)
+	}
+	if after == fp {
+		t.Fatal("rewriting the hash did not change Fingerprint, so the test cannot show a second read would have minted a new pwh")
+	}
+}
+
+func TestVerifyWithFingerprint_WrongPasswordHasNoFingerprint(t *testing.T) {
+	path := writeShadowFile(t, "admin:"+sha256Hash+":19000:0:99999:7:::\n")
+	sa := NewShadowAuth(path)
+
+	ok, fp, err := sa.VerifyWithFingerprint("admin", "wrongpassword")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok || fp != "" {
+		t.Errorf("wrong password: ok=%v fp=%q, want false and empty", ok, fp)
+	}
+}

@@ -153,6 +153,33 @@ func TestHandleSelectServer_NegativeIndex(t *testing.T) {
 	}
 }
 
+func TestHandleSelectServer_RestartXraySurfacesTheShellLine(t *testing.T) {
+	mc := &mockConfig{
+		servers: []vpnconfig.Server{
+			{Address: "s1.example.com", Port: 443, UUID: "uuid-1", Name: "S1", IPs: []string{"1.1.1.1"}},
+		},
+		cfg: &vpnconfig.VPNDirectorConfig{},
+	}
+	deps := newTestDeps(t)
+	deps.Config = mc
+	deps.VPN = &mockVPN{err: errors.New("xray: failed\nlast line of init")}
+
+	handler := handleSelectServer(deps)
+	req := httptest.NewRequest("POST", "/api/servers/active", strings.NewReader(`{"index":0}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "last line of init") {
+		t.Errorf("body %s, want lastErrorLine of the shell error", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "failed to restart xray") {
+		t.Errorf("body %s, want the restart prefix", rec.Body.String())
+	}
+}
+
 func TestHandleSelectServer_InvalidJSON(t *testing.T) {
 	deps := newTestDeps(t)
 

@@ -91,6 +91,17 @@ func TestGenerateScript(t *testing.T) {
 		t.Error("Script missing || true for monit monitor")
 	}
 
+	own := strings.Index(script, `echo $$ > "$LOCK_FILE"`)
+	stop := strings.Index(script, "# 3. Stop the running daemons")
+	if own < 0 {
+		t.Error("script must take lock ownership before it stops the initiator")
+	} else if stop < 0 || own > stop {
+		t.Error("lock ownership must be taken before the stop loop")
+	}
+	if !strings.Contains(script, `rm -rf "$FILES_DIR"`) {
+		t.Error("script must drop files/ after the copy so a Web UI-only router does not keep binaries in tmpfs")
+	}
+
 	// Check that cp commands do NOT have || true (critical commands)
 	for _, line := range strings.Split(script, "\n") {
 		trimmed := strings.TrimSpace(line)

@@ -77,6 +77,19 @@ EOF
     assert_output --partial "https://192.168.1.1:8444"
 }
 
+@test "start_webui: uses webui.port from the config when present" {
+    load_installer
+    touch "$VPD_DIR/webui"
+    chmod +x "$VPD_DIR/webui"
+    fake_init 0
+    printf '%s\n' '{"webui":{"port":9444}}' > "$VPD_DIR/vpn-director.json"
+
+    run start_webui
+
+    assert_success
+    assert_output --partial "https://192.168.50.1:9444"
+}
+
 @test "start_webui: records the LAN URL in WEBUI_URL for print_next_steps" {
     load_installer
     touch "$VPD_DIR/webui"

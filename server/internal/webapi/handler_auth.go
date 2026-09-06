@@ -1,7 +1,6 @@
 package webapi
 
 import (
-	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -31,8 +30,10 @@ func handleLogin(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Verify credentials.
-		ok, err := deps.Shadow.Verify(req.Username, req.Password)
+		// One shadow read: the pwh claim must fingerprint the hash that just
+		// matched. A second read can see a password change and mint a token
+		// for credentials that are no longer valid.
+		ok, fingerprint, err := deps.Shadow.VerifyWithFingerprint(req.Username, req.Password)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "authentication error")
 			return
@@ -40,19 +41,6 @@ func handleLogin(deps *Deps) http.HandlerFunc {
 		if !ok {
 			deps.loginLimiter.record(ip)
 			jsonError(w, http.StatusUnauthorized, "invalid credentials")
-			return
-		}
-
-		// Bind the token to the password it was issued under: authMiddleware
-		// re-checks this fingerprint on every request. Verify has just
-		// succeeded, so an error here means the file changed under us between
-		// the two reads - it became unreadable, or the account was locked. Log
-		// it as the middleware does: a 500 with no log line leaves the operator
-		// nothing to read.
-		fingerprint, err := deps.Shadow.Fingerprint(req.Username)
-		if err != nil {
-			slog.Error("cannot read the password fingerprint", "error", err)
-			jsonError(w, http.StatusInternalServerError, "authentication error")
 			return
 		}
 

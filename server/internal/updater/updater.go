@@ -21,6 +21,10 @@ const (
 	ScriptFile = UpdateDir + "/update.sh"
 )
 
+// ErrLockExists is returned by CreateLock when the lock file is already there.
+// Start maps it to updateflow.ErrInProgress so a second caller gets 409, not 500.
+var ErrLockExists = errors.New("lock file already exists (update in progress)")
+
 // Release represents a GitHub release.
 type Release struct {
 	TagName string
@@ -205,7 +209,7 @@ func (s *Service) CreateLock() error {
 	f, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("lock file already exists (update in progress)")
+			return ErrLockExists
 		}
 		return fmt.Errorf("failed to create lock file: %w", err)
 	}

@@ -48,9 +48,6 @@ type addClientRequest struct {
 // and a newly created tunnel inherits xray.exclude_sets like the bot wizard.
 func handleAddClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		var req addClientRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -74,6 +71,9 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "invalid route: must be one of xray, wgc1-wgc5, ovpnc1-ovpnc5")
 			return
 		}
+
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
 			if existing, found := findClient(cfg, ip); found {
@@ -108,13 +108,13 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 // shell subtracts paused_clients from the clients arrays by exact string.
 func handlePauseClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {
 			return
 		}
+
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
 			existing, found := findClient(cfg, ip)
@@ -136,13 +136,13 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 // handleResumeClient returns a handler that resumes a paused client.
 func handleResumeClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {
 			return
 		}
+
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
 			if _, found := findClient(cfg, ip); !found {
@@ -158,13 +158,13 @@ func handleResumeClient(deps *Deps) http.HandlerFunc {
 // and from the paused list, matching every stored spelling of the address.
 func handleDeleteClient(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {
 			return
 		}
+
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
 			if _, found := findClient(cfg, ip); !found {

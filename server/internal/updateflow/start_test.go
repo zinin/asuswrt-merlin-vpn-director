@@ -306,6 +306,23 @@ func TestStart_ScriptFailureCleansUp(t *testing.T) {
 	})
 }
 
+func TestStart_ExistingLockIsErrInProgress(t *testing.T) {
+	upd := newMockUpdater()
+	upd.createLockErr = updater.ErrLockExists
+	f := New(upd, "v1.2.0", false)
+	progress, _ := collectProgress()
+
+	_, err := f.Start(context.Background(), "bot", 42, progress)
+	if !errors.Is(err, ErrInProgress) {
+		t.Fatalf("Start() error = %v, want ErrInProgress", err)
+	}
+	upd.mu.Lock()
+	defer upd.mu.Unlock()
+	if upd.runScriptCalled {
+		t.Error("no lock, no update")
+	}
+}
+
 func TestStart_LockFailureIsReportedSynchronously(t *testing.T) {
 	upd := newMockUpdater()
 	upd.createLockErr = errors.New("lock file already exists (update in progress)")

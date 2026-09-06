@@ -344,7 +344,7 @@ setup_webui_config() {
         fi
 
         local tmp="${config_path}.tmp.$$"
-        jq '. + {"webui": {"port": 8444, "cert_file": "/opt/vpn-director/certs/server.crt", "key_file": "/opt/vpn-director/certs/server.key", "jwt_secret": "", "log_level": "info"}}' "$config_path" > "$tmp" && mv "$tmp" "$config_path"
+        jq '. + {"webui": {"port": 8444, "cert_file": "/opt/vpn-director/certs/server.crt", "key_file": "/opt/vpn-director/certs/server.key", "jwt_secret": "", "log_level": "info"}}' "$config_path" > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$config_path"
         print_success "Added webui section to config"
     else
         print_info "Install jq for automatic webui config setup: opkg install jq"
@@ -380,7 +380,15 @@ start_webui() {
 
     lan_ip=$(nvram get lan_ipaddr 2>/dev/null || true)
     [[ -n "$lan_ip" ]] || lan_ip="192.168.1.1"
-    WEBUI_URL="https://${lan_ip}:8444"
+    local port=8444
+    if [[ -f "$VPD_DIR/vpn-director.json" ]] && command -v jq >/dev/null 2>&1; then
+        local p
+        p=$(jq -r '.webui.port // empty' "$VPD_DIR/vpn-director.json" 2>/dev/null || true)
+        if [[ "$p" =~ ^[1-9][0-9]*$ ]] && (( p <= 65535 )); then
+            port=$p
+        fi
+    fi
+    WEBUI_URL="https://${lan_ip}:${port}"
     print_success "Web UI started: $WEBUI_URL"
 }
 

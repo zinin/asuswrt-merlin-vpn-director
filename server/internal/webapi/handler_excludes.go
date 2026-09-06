@@ -54,9 +54,6 @@ func normalizeExcludeSets(sets []string) ([]string, error) {
 // list and applies the configuration.
 func handleUpdateExcludeSets(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		var req updateExcludeSetsRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -73,6 +70,9 @@ func handleUpdateExcludeSets(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
 			cfg.Xray.ExcludeSets = sets
@@ -102,9 +102,6 @@ type addExcludeIPRequest struct {
 // list and applies the configuration.
 func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		var req addExcludeIPRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -121,6 +118,9 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
+
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
 			if !containsAddr(cfg.Xray.ExcludeIPs, ip) {
 				cfg.Xray.ExcludeIPs = append(cfg.Xray.ExcludeIPs, ip)
@@ -134,13 +134,13 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 // exclusion list (any stored spelling) and applies the configuration.
 func handleDeleteExcludeIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		ip, ok := clientAddrFromQuery(w, r)
 		if !ok {
 			return
 		}
+
+		unlock := lockLongOp(w, deps, applyDeadline)
+		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
 			cfg.Xray.ExcludeIPs = removeAddr(cfg.Xray.ExcludeIPs, ip)

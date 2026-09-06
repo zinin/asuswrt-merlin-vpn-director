@@ -86,7 +86,7 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 		}
 
 		if err := deps.VPN.RestartXray(); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to restart xray")
+			jsonError(w, http.StatusInternalServerError, "failed to restart xray: "+lastErrorLine(err))
 			return
 		}
 

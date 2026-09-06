@@ -75,6 +75,39 @@ func (sa *ShadowAuth) Verify(username, password string) (bool, error) {
 	return true, nil
 }
 
+// VerifyWithFingerprint is Verify plus the pwh fingerprint of the hash that
+// just matched, from the same shadow read. Login must not call Verify and
+// Fingerprint back-to-back: a password change between the two reads can mint a
+// token bound to the new hash for a password that is no longer valid.
+func (sa *ShadowAuth) VerifyWithFingerprint(username, password string) (bool, string, error) {
+	entry, err := sa.findEntry(username)
+	if err != nil {
+		return false, "", err
+	}
+	if entry == nil {
+		return false, "", nil
+	}
+
+	hash := entry.hash
+	if isUnusableHash(hash) {
+		return false, "", nil
+	}
+
+	crypter, err := newCrypter(hash)
+	if err != nil {
+		return false, "", err
+	}
+
+	if err := crypter.Verify(hash, []byte(password)); err != nil {
+		if err == crypt.ErrKeyMismatch {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("verify password: %w", err)
+	}
+
+	return true, fingerprintHash(hash), nil
+}
+
 // Fingerprint returns the first 8 bytes of the SHA-256 of the user's stored
 // password hash, hex encoded. The Web UI puts it in the token's pwh claim and
 // re-checks it on every request, so changing the router password invalidates
@@ -89,8 +122,12 @@ func (sa *ShadowAuth) Fingerprint(username string) (string, error) {
 	if entry == nil || isUnusableHash(entry.hash) {
 		return "", ErrUserNotFound
 	}
-	sum := sha256.Sum256([]byte(entry.hash))
-	return hex.EncodeToString(sum[:8]), nil
+	return fingerprintHash(entry.hash), nil
+}
+
+func fingerprintHash(hash string) string {
+	sum := sha256.Sum256([]byte(hash))
+	return hex.EncodeToString(sum[:8])
 }
 
 // isUnusableHash reports whether the shadow field carries no password that can
