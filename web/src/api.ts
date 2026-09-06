@@ -85,7 +85,15 @@ export default {
   getConfig: () =>
     api.get('/api/config'),
 
-  // System
+  // Self-update
+  checkUpdate: (force = false) =>
+    api.get('/api/update/check', { params: force ? { force: 1 } : {} }),
   update: () =>
     api.post('/api/update'),
+  updateStatus: () =>
+    api.get('/api/update/status'),
+  // pollVersion is used while the server restarts: connection errors and a
+  // brief 401 must not bounce the user to the login page.
+  pollVersion: () =>
+    api.get('/api/version', { skipAuthRedirect: true } as any),
 }

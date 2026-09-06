@@ -49,6 +49,12 @@ a:hover {
   margin-left: 0.5rem;
 }
 
+.update-banner {
+  cursor: pointer;
+  color: #f0a020;
+  font-size: 0.85rem;
+}
+
 /* Tabs */
 .tabs {
   display: flex;
