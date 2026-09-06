@@ -161,23 +161,104 @@ func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
 	}
 }
 
+func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	// pgrep decides both what gets stopped and what gets started again. When
+	// it is missing its 127 reads as "this daemon is not running" inside
+	// every `if` below, so nothing is stopped, cp -f lands under live
+	// processes and notify.json still says ok.
+	steps := afterOnExit(t, script)
+	const guard = "if ! command -v pgrep >/dev/null 2>&1; then"
+	i := strings.Index(steps, guard)
+	if i < 0 {
+		t.Fatal("script must refuse to run without pgrep, not read its absence as \"nothing is running\"")
+	}
+	if j := strings.Index(steps, `pgrep -f "$bin"`); j >= 0 && j < i {
+		t.Error("the pgrep guard must come before the first pgrep use")
+	}
+
+	block := steps[i:]
+	if k := strings.Index(block, "\nfi\n"); k >= 0 {
+		block = block[:k]
+	}
+	if !strings.Contains(block, "exit 1") {
+		t.Error("the pgrep guard must abort the update, not just log and carry on")
+	}
+}
+
+func TestGenerateScript_ReportsAFailedStart(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	// notify.json is committed as ok at step 6, before the daemons are
+	// started at step 9, so step 9 is the only place that can correct it.
+	// Both needles have a copy inside the trap, so this looks below it only.
+	steps := afterOnExit(t, script)
+	if !strings.Contains(steps, "if ! start_running; then") {
+		t.Error("step 9 must notice a failed start instead of reporting the update complete")
+	}
+	if !strings.Contains(steps, "write_notify failed") {
+		t.Error("a daemon that fails to come back must turn notify.json to failed")
+	}
+
+	// ... which it can only do if start_running answers the question.
+	body := functionBody(t, script, "start_running")
+	if strings.Contains(body, "start || log") {
+		t.Error("start_running must not swallow a failed start behind || log")
+	}
+	if !strings.Contains(body, "return") {
+		t.Error("start_running must return a status its caller can branch on")
+	}
+}
+
+// functionBody returns the body of a shell function, so an assertion lands on
+// the path that function is on and not on the script mentioning the words
+// somewhere.
+func functionBody(t *testing.T, script, name string) string {
+	t.Helper()
+
+	open := name + "() {\n"
+	i := strings.Index(script, open)
+	if i < 0 {
+		t.Fatalf("script has no %s function", name)
+	}
+	body := script[i+len(open):]
+	j := strings.Index(body, "\n}\n")
+	if j < 0 {
+		t.Fatalf("%s is never closed", name)
+	}
+	return body[:j]
+}
+
 // onExitBody returns the body of the on_exit handler, so a recovery
 // assertion is about the recovery path and not about the script mentioning
 // the words somewhere.
 func onExitBody(t *testing.T, script string) string {
 	t.Helper()
 
-	const open = "on_exit() {\n"
-	i := strings.Index(script, open)
+	return functionBody(t, script, "on_exit")
+}
+
+// afterOnExit returns everything below the EXIT trap: the numbered steps the
+// script walks on the happy path. Asserting there keeps a happy-path claim
+// from being satisfied by the recovery copy of the same line.
+func afterOnExit(t *testing.T, script string) string {
+	t.Helper()
+
+	const marker = "\ntrap on_exit EXIT\n"
+	i := strings.Index(script, marker)
 	if i < 0 {
-		t.Fatal("script has no on_exit handler")
+		t.Fatal("script does not install on_exit as its EXIT trap")
 	}
-	body := script[i+len(open):]
-	j := strings.Index(body, "\n}\n")
-	if j < 0 {
-		t.Fatal("on_exit handler is never closed")
-	}
-	return body[:j]
+	return script[i+len(marker):]
 }
 
 func TestGenerateScript_NotifyFormat(t *testing.T) {

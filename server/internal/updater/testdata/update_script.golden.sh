@@ -35,12 +35,18 @@ EOF
 }
 
 # Start back the daemons that were running before the update. A daemon that
-# was stopped beforehand stays stopped.
+# was stopped beforehand stays stopped. Returns non-zero when any start
+# failed, so the caller can tell a complete restart from a partial one.
 start_running() {
+    rc=0
     for init in $RUNNING_INITS; do
         log "Starting $init"
-        "$INIT_DIR/$init" start || log "WARNING: $init start failed"
+        if ! "$INIT_DIR/$init" start; then
+            log "WARNING: $init start failed"
+            rc=1
+        fi
     done
+    return $rc
 }
 
 # ash has no ERR trap, so recovery hangs off EXIT and inspects the code.
@@ -64,6 +70,17 @@ on_exit() {
     exit "$code"
 }
 trap on_exit EXIT
+
+# Every stop and every restart below is decided by pgrep. Without it the
+# shell's 127 would read as "this daemon is not running": nothing would be
+# stopped, the copies would land under live processes and the update would
+# report success while both daemons kept running the old code. Refuse
+# instead - RUNNING_INITS is still empty, so the trap stops nothing, starts
+# nothing and reports the failure.
+if ! command -v pgrep >/dev/null 2>&1; then
+    log "ERROR: pgrep not found, cannot tell which daemons are running"
+    exit 1
+fi
 
 log "Starting update from $OLD_VERSION to $NEW_VERSION (initiator: $INITIATOR)"
 
@@ -154,8 +171,19 @@ if command -v monit >/dev/null 2>&1; then
     done
 fi
 
-# 9. Start the daemons that were running before the update
-start_running
+# 9. Start the daemons that were running before the update. notify.json
+#    already says ok - the step order commits it at step 6 - so a daemon that
+#    fails to come back has to correct it here, or the operator is told the
+#    update succeeded while the Web UI is gone. The trap is disarmed first:
+#    every daemon has just had its start attempt and repeating it would add
+#    nothing. The lock went at step 7, so there is nothing left to release.
+if ! start_running; then
+    trap - EXIT
+    set +e
+    log "ERROR: a daemon failed to start, the update is not complete"
+    write_notify failed
+    exit 1
+fi
 
 # 10. Cleanup deferred to the bot after a successful startup notification
 # (leave $UPDATE_DIR for notify.json and update.log)
