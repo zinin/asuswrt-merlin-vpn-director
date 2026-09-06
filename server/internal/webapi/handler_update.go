@@ -9,6 +9,19 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
 )
 
+// writeGitHubError answers 502 when err came from the GitHub API and reports
+// whether it did. Both update routes surface the underlying message: a user
+// looking at "Failed to check for updates" needs to know whether GitHub was
+// down or the router has no DNS.
+func writeGitHubError(w http.ResponseWriter, err error) bool {
+	var ghErr *updateflow.GitHubError
+	if !errors.As(err, &ghErr) {
+		return false
+	}
+	jsonError(w, http.StatusBadGateway, "failed to check for updates: "+ghErr.Err.Error())
+	return true
+}
+
 // handleUpdateCheck reports the latest release. force=1 bypasses the flow's
 // 30-minute cache, at most once a minute. A dev build cannot compare versions,
 // so it answers with the dev marker instead of an error the UI would have to
@@ -31,9 +44,7 @@ func handleUpdateCheck(deps *Deps) http.HandlerFunc {
 			jsonOK(w, map[string]interface{}{"update_available": false, "dev": true})
 			return
 		}
-		var ghErr *updateflow.GitHubError
-		if errors.As(err, &ghErr) {
-			jsonError(w, http.StatusBadGateway, "failed to check for updates: "+ghErr.Err.Error())
+		if writeGitHubError(w, err) {
 			return
 		}
 		slog.Warn("update check failed", "error", err)
@@ -74,9 +85,7 @@ func handleUpdateStart(deps *Deps) http.HandlerFunc {
 		case errors.Is(err, updateflow.ErrInProgress):
 			jsonError(w, http.StatusConflict, err.Error())
 		default:
-			var ghErr *updateflow.GitHubError
-			if errors.As(err, &ghErr) {
-				jsonError(w, http.StatusBadGateway, "failed to check for updates: "+ghErr.Err.Error())
+			if writeGitHubError(w, err) {
 				return
 			}
 			slog.Warn("update start failed", "error", err)

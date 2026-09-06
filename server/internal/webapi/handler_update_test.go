@@ -38,14 +38,30 @@ func TestHandleUpdateCheck_ReturnsTheResult(t *testing.T) {
 }
 
 func TestHandleUpdateCheck_ForcePassedThrough(t *testing.T) {
-	deps := newTestDeps(t)
-	flow := deps.Update.(*mockUpdateFlow)
+	// The negative case is the one that matters: a handler that hardcoded
+	// force = true passes every other test in this file and would spend the
+	// whole 60-per-hour GitHub budget on banner loads.
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"force=1", "/api/update/check?force=1", true},
+		{"no force", "/api/update/check", false},
+		{"force=0", "/api/update/check?force=0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := newTestDeps(t)
+			flow := deps.Update.(*mockUpdateFlow)
 
-	rec := httptest.NewRecorder()
-	handleUpdateCheck(deps)(rec, httptest.NewRequest("GET", "/api/update/check?force=1", nil))
+			rec := httptest.NewRecorder()
+			handleUpdateCheck(deps)(rec, httptest.NewRequest("GET", tt.path, nil))
 
-	if !flow.checkForce {
-		t.Error("force=1 must reach the flow, otherwise the button does nothing")
+			if flow.checkForce != tt.want {
+				t.Errorf("flow saw force=%v, want %v", flow.checkForce, tt.want)
+			}
+		})
 	}
 }
 

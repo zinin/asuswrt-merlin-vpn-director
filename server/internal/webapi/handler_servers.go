@@ -235,17 +235,15 @@ func collectServerIPs(servers []vpnconfig.Server) []string {
 }
 
 // syncXrayServers updates xray.servers with the IPs of all given servers under
-// the config lock. A load or save failure is returned so the caller can
-// surface it instead of silently leaving xray.servers stale.
+// the config lock. The error is returned unwrapped: the only caller already
+// prefixes it with "xray.servers sync failed", and wrapping here produced
+// "servers saved, but xray.servers sync failed: sync xray.servers: ..." in the
+// user's face.
 func syncXrayServers(config service.ConfigStore, servers []vpnconfig.Server) error {
-	err := config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+	return config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
 		cfg.Xray.Servers = collectServerIPs(servers)
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("sync xray.servers: %w", err)
-	}
-	return nil
 }
 
 // noServersMessage explains an empty subscription. Up to three parse errors
