@@ -36,7 +36,12 @@ async function loadVersion() {
 
 async function loadUpdate(force = false) {
   error.value = ''
-  updateMessage.value = ''
+  // Only a check the user asked for clears the message: updateMessage is module
+  // state now, and the other two callers are a remount - which must show the
+  // message it left behind - and doUpdate, which overwrites it a line later.
+  if (force) {
+    updateMessage.value = ''
+  }
   checking.value = true
   try {
     const resp = await api.checkUpdate(force)
@@ -156,7 +161,15 @@ onMounted(async () => {
   if (updating.value) {
     // An update started before the tab was left. Rejoin its screen instead of
     // asking a restarting server for a version and a release list.
-    void runPolling()
+    //
+    // With no target yet there is nothing to poll for: doUpdate is still
+    // awaiting /api/update, the answer that carries the version to wait for.
+    // That call outlives this component - an in-flight async call keeps its
+    // closure alive - so it starts the real loop itself once the answer lands.
+    // Claiming the loop here would poll for '' and lock doUpdate out of it.
+    if (updateTarget.value) {
+      void runPolling()
+    }
     return
   }
   await loadVersion()

@@ -51,20 +51,23 @@ export interface IPResponse {
   ip: string
 }
 
+/** Go marshals a nil slice as null and none of these four fields carry
+ *  omitempty, so an empty router answers with null, not []. The `?? []` guards
+ *  at the call sites are load-bearing; the nullable type keeps them that way. */
 export interface ServersResponse {
-  servers: Server[]
+  servers: Server[] | null
 }
 
 export interface ClientsResponse {
-  clients: ClientInfo[]
+  clients: ClientInfo[] | null
 }
 
 export interface ExcludeSetsResponse {
-  sets: string[]
+  sets: string[] | null
 }
 
 export interface ExcludeIPsResponse {
-  ips: string[]
+  ips: string[] | null
 }
 
 /** GET /api/logs?source=... — one file. */
