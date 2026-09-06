@@ -155,12 +155,12 @@ func TestUpdateAndApply_LockTimeoutIsASaveFailure(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeSaveApplyResult(rec, updateAndApply(deps, func(*vpnconfig.VPNDirectorConfig) error { return nil }))
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
 	}
 	var resp map[string]interface{}
 	_ = json.NewDecoder(rec.Body).Decode(&resp)
-	if resp["error"] != "failed to save configuration" {
+	if resp["error"] != "configuration is busy, try again" {
 		t.Errorf("unexpected error text: %v", resp["error"])
 	}
 	if _, has := resp["saved"]; has {

@@ -75,6 +75,10 @@ func writeSaveApplyResult(w http.ResponseWriter, err error) {
 		jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 		return
 	}
+	if errors.Is(err, service.ErrConfigLockTimeout) {
+		jsonError(w, http.StatusServiceUnavailable, "configuration is busy, try again")
+		return
+	}
 	slog.Warn("configuration update failed", "error", err)
 	jsonError(w, http.StatusInternalServerError, "failed to save configuration")
 }
