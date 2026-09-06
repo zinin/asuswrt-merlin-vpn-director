@@ -73,6 +73,40 @@ func TestLockLongOp_ExtendsBeforeAndAfterTheWait(t *testing.T) {
 	}
 }
 
+func TestUpdateHandlers_ReArmTheDeadlineAfterTheFlowCall(t *testing.T) {
+	// The flow serializes its callers on one mutex, so a caller can spend a
+	// whole updater.APITimeout queued before its own GitHub call starts -
+	// exactly githubDeadline, leaving the response no margin at all. Both
+	// routes therefore extend again once the call returns, when only the
+	// write is left. On POST /api/update that write is the 202 without which
+	// the page never starts polling, while the update runs anyway.
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		handler func(*Deps) http.HandlerFunc
+	}{
+		{"update check", "GET", "/api/update/check", handleUpdateCheck},
+		{"update start", "POST", "/api/update", handleUpdateStart},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := newTestDeps(t)
+			rec := newDeadlineRecorder()
+
+			tt.handler(deps).ServeHTTP(rec, httptest.NewRequest(tt.method, tt.path, nil))
+
+			if len(rec.deadlines) != 2 {
+				t.Fatalf("expected 2 deadline extensions (before and after the flow call), got %d", len(rec.deadlines))
+			}
+			if got := time.Until(rec.deadlines[0]); got > githubDeadline || got < githubDeadline-2*time.Second {
+				t.Errorf("first deadline in %s, want about %s: it has to cover the GitHub call", got, githubDeadline)
+			}
+			assertDeadlineAbout(t, rec, deadlineSlack)
+		})
+	}
+}
+
 func TestExtendWriteDeadline_OutlivesServerWriteTimeout(t *testing.T) {
 	// The real chain: net/http response -> loggingMiddleware's statusWriter ->
 	// handler. WriteTimeout is 200 ms and the handler answers after 600 ms;
@@ -142,8 +176,11 @@ func TestLongOpHandlers_ExtendWriteDeadline(t *testing.T) {
 		{"delete exclude ip", "DELETE", "/api/excludes/ips?ip=1.2.3.4", "", handleDeleteExcludeIP, applyDeadline},
 		{"select server", "POST", "/api/servers/active", `{"index":0}`, handleSelectServer, applyDeadline},
 		{"import (rejected before download)", "POST", "/api/servers/import", `{"url":"http://insecure.example"}`, handleImportServers, importDeadline},
-		{"update check", "GET", "/api/update/check", "", handleUpdateCheck, githubDeadline},
-		{"update start", "POST", "/api/update", "", handleUpdateStart, githubDeadline},
+		// The two update routes extend twice: githubDeadline before the flow
+		// call and deadlineSlack after it. This table sees the last one;
+		// TestUpdateHandlers_ReArmTheDeadlineAfterTheFlowCall pins both.
+		{"update check", "GET", "/api/update/check", "", handleUpdateCheck, deadlineSlack},
+		{"update start", "POST", "/api/update", "", handleUpdateStart, deadlineSlack},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

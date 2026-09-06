@@ -18,6 +18,11 @@ func handleUpdateCheck(deps *Deps) http.HandlerFunc {
 		extendWriteDeadline(w, githubDeadline)
 
 		res, err := deps.Update.Check(r.Context(), r.URL.Query().Get("force") == "1")
+		// Re-arm: the flow serializes callers on one mutex, so the wait plus
+		// the GitHub call can consume githubDeadline entirely and leave the
+		// response no margin. Past the call only the write is left, and it
+		// gets its own slack - the same shape as lockLongOp's second extend.
+		extendWriteDeadline(w, deadlineSlack)
 		if err == nil {
 			jsonOK(w, res)
 			return
@@ -46,6 +51,10 @@ func handleUpdateStart(deps *Deps) http.HandlerFunc {
 		res, err := deps.Update.Start(r.Context(), "webui", 0, func(line string) {
 			slog.Info("self-update", "status", line)
 		})
+		// Re-arm before answering: Start has already spawned the download, so
+		// a 202 lost to the deadline leaves the page on the old screen while
+		// the router updates underneath it. See handleUpdateCheck.
+		extendWriteDeadline(w, deadlineSlack)
 		if err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
