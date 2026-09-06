@@ -316,6 +316,9 @@ func TestGenerateScript_NotifyFormat(t *testing.T) {
 	}
 }
 
+// Note: this test is only as strict as the developer's /bin/sh. On a box where
+// /bin/sh is dash (a good ash proxy) it catches bashisms; where /bin/sh is bash
+// it does not. The golden test is the real contract; this one is a cheap extra.
 func TestGenerateScript_IsValidShell(t *testing.T) {
 	sh, err := exec.LookPath("sh")
 	if err != nil {

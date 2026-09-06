@@ -194,6 +194,9 @@ func (s *Service) CreateLock() error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(lockFile)
+	// 0755 root-owned: the update directory holds a script this process then
+	// runs as root. On Asuswrt-Merlin there is no unprivileged local user to
+	// defend against, which is why this is a comment and not a mechanism.
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create lock directory: %w", err)
 	}

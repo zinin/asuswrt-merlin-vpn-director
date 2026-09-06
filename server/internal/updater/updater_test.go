@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -233,5 +234,32 @@ func TestGetters_Custom(t *testing.T) {
 	}
 	if got := s.getScriptFile(); got != "/custom/script.sh" {
 		t.Errorf("getScriptFile() = %q, want %q", got, "/custom/script.sh")
+	}
+}
+
+// TestDaemons_CarryNoShellMetacharacters pins the assumption update_script.sh
+// makes about this table: the entries are pasted into one space-separated
+// DAEMONS string and iterated with word splitting, so a space would split an
+// entry in two and a glob character would expand against the router's
+// filesystem. The script cannot defend itself with `set -f`, because steps 4
+// and 5 copy and chmod through globs of their own, so the invariant is pinned
+// here, where the table is written.
+func TestDaemons_CarryNoShellMetacharacters(t *testing.T) {
+	const forbidden = " \t\n|*?[]$`\"'\\"
+	for _, d := range Daemons {
+		fields := []struct{ name, value string }{
+			{"Name", d.Name},
+			{"Binary", d.Binary},
+			{"InitScript", d.InitScript},
+		}
+		for _, f := range fields {
+			if strings.ContainsAny(f.value, forbidden) {
+				t.Errorf("Daemon %q field %s = %q contains a character the update script's word splitting cannot survive",
+					d.Name, f.name, f.value)
+			}
+			if f.value == "" {
+				t.Errorf("Daemon %q field %s is empty", d.Name, f.name)
+			}
+		}
 	}
 }

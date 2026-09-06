@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -297,6 +299,39 @@ func TestScriptFiles_IncludesWebUIInitScript(t *testing.T) {
 	t.Errorf("scriptFiles must ship %s, otherwise an update leaves the old init script", want)
 }
 
+// TestScriptFiles_MatchInstallSh closes the last hole in the single-source-of-
+// truth claim. TestScriptFiles_ExistInRepo catches a file renamed in the tree;
+// nothing catches a file added to one of the two lists and not the other, and
+// the two lists are what decide whether an update leaves a stale script behind.
+func TestScriptFiles_MatchInstallSh(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+
+	// Every path install.sh fetches appears as a router/... literal: eighteen
+	// in download_scripts' loop plus the xray template right after it. The
+	// trailing + excludes the bare "router/" of `target="/${script#router/}"`.
+	re := regexp.MustCompile(`router/[A-Za-z0-9._/-]+`)
+	inInstaller := make(map[string]bool)
+	for _, m := range re.FindAllString(string(data), -1) {
+		inInstaller[m] = true
+	}
+
+	inGo := make(map[string]bool, len(scriptFiles))
+	for _, f := range scriptFiles {
+		inGo[f] = true
+		if !inInstaller[f] {
+			t.Errorf("scriptFiles ships %q but install.sh does not download it: a fresh install would miss the file", f)
+		}
+	}
+	for f := range inInstaller {
+		if !inGo[f] {
+			t.Errorf("install.sh downloads %q but scriptFiles does not: an update would leave the old one in place", f)
+		}
+	}
+}
+
 func TestArchAssetSuffix(t *testing.T) {
 	tests := []struct {
 		goarch  string
@@ -324,6 +359,28 @@ func TestArchAssetSuffix(t *testing.T) {
 				t.Errorf("archAssetSuffix(%q) = %q, want %q", tt.goarch, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestGetArchSuffix_ProductionBranchMatchesRuntime pins the one line no CI
+// machine executes on the target architecture: a typo there breaks self-update
+// for every router at once. Comparing error strings and not merely "both
+// failed" is the point - on an amd64 box both branches error either way, so a
+// weaker assertion would pass even if the production branch asked about
+// runtime.GOOS.
+func TestGetArchSuffix_ProductionBranchMatchesRuntime(t *testing.T) {
+	got, gotErr := (&Service{}).getArchSuffix()
+	want, wantErr := archAssetSuffix(runtime.GOARCH)
+
+	if got != want {
+		t.Errorf("getArchSuffix() = %q, want %q", got, want)
+	}
+	switch {
+	case gotErr == nil && wantErr == nil:
+	case gotErr == nil || wantErr == nil:
+		t.Fatalf("getArchSuffix() error = %v, archAssetSuffix error = %v", gotErr, wantErr)
+	case gotErr.Error() != wantErr.Error():
+		t.Errorf("getArchSuffix() error = %q, want %q", gotErr, wantErr)
 	}
 }
 
