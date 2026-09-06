@@ -1,6 +1,10 @@
 # Build output
 bin/
 
+# Local builds at the module root (`go build ./cmd/bot`, `go build ./cmd/webui`)
+/bot
+/webui
+
 # Dev mode secrets and generated files
 testdata/dev/telegram-bot.json
 testdata/dev/xray.json
