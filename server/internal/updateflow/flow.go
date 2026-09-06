@@ -58,6 +58,7 @@ type Flow struct {
 	cachedRelease *updater.Release
 	cachedAt      time.Time
 	lastForce     time.Time
+	lastErr       error
 }
 
 // New creates a Flow for the given updater and running version.
@@ -83,21 +84,31 @@ func (f *Flow) Check(ctx context.Context, force bool) (CheckResult, error) {
 	defer f.mu.Unlock()
 
 	now := time.Now()
-	if !f.cachedAt.IsZero() {
-		if force && now.Sub(f.lastForce) < forceCooldown {
+	// The cooldown guards GitHub's 60 requests an hour for unauthenticated
+	// callers, so a failed check has to count as well: a user clicking the
+	// refresh button at a failing check is exactly the traffic it exists for.
+	// A throttled force is answered from whatever the last attempt produced -
+	// the cached result, or the error it failed with.
+	if force && !f.lastForce.IsZero() && now.Sub(f.lastForce) < forceCooldown {
+		if !f.cachedAt.IsZero() {
 			return f.cached, nil
 		}
-		if !force && now.Sub(f.cachedAt) < cacheTTL {
-			return f.cached, nil
+		if f.lastErr != nil {
+			return CheckResult{}, f.lastErr
 		}
 	}
-	release, err := f.upd.GetLatestRelease(ctx)
-	if err != nil {
-		return CheckResult{}, &GitHubError{Err: err}
+	if !force && !f.cachedAt.IsZero() && now.Sub(f.cachedAt) < cacheTTL {
+		return f.cached, nil
 	}
 	if force {
 		f.lastForce = now
 	}
+	release, err := f.upd.GetLatestRelease(ctx)
+	if err != nil {
+		f.lastErr = &GitHubError{Err: err}
+		return CheckResult{}, f.lastErr
+	}
+	f.lastErr = nil
 
 	available, err := f.upd.ShouldUpdate(f.currentVersion, release.TagName)
 	if err != nil {

@@ -321,7 +321,11 @@ func TestCheck_DevModeAndDevVersion(t *testing.T) {
 	}
 }
 
-func TestCheck_FailedForceDoesNotStartCooldown(t *testing.T) {
+// A failed request spends the same GitHub budget as a successful one, so the
+// cooldown has to start either way: a user clicking refresh at a failing check
+// is the traffic the 60-per-hour limit exists for. Inside the cooldown the
+// answer is whatever the last attempt produced.
+func TestCheck_FailedForceStartsCooldown(t *testing.T) {
 	upd := newMockUpdater()
 	upd.setReleaseErr(errors.New("connection refused"))
 	f := New(upd, "v1.2.0", false)
@@ -329,12 +333,23 @@ func TestCheck_FailedForceDoesNotStartCooldown(t *testing.T) {
 	if _, err := f.Check(context.Background(), true); err == nil {
 		t.Fatal("forced Check must fail")
 	}
+
 	upd.setReleaseErr(nil)
+	_, err := f.Check(context.Background(), true)
+	var ghErr *GitHubError
+	if !errors.As(err, &ghErr) {
+		t.Fatalf("a throttled force must repeat the last error, got %v", err)
+	}
+	if upd.calls() != 1 {
+		t.Errorf("a throttled force must not reach GitHub, got %d calls", upd.calls())
+	}
+
+	f.lastForce = time.Now().Add(-2 * time.Minute)
 	if _, err := f.Check(context.Background(), true); err != nil {
-		t.Fatalf("retry after a failed force: %v", err)
+		t.Fatalf("force past the cooldown: %v", err)
 	}
 	if upd.calls() != 2 {
-		t.Errorf("failed force must not burn the cooldown, got %d GitHub calls", upd.calls())
+		t.Errorf("force past the cooldown must reach GitHub, got %d calls", upd.calls())
 	}
 }
 
