@@ -331,9 +331,15 @@ generate_tls_cert() {
 
 setup_webui_config() {
     local config_path="$VPD_DIR/vpn-director.json"
+    local template_path="$VPD_DIR/vpn-director.json.template"
 
     if [[ ! -f "$config_path" ]]; then
-        return 0
+        if [[ ! -f "$template_path" ]]; then
+            return 0
+        fi
+        cp "$template_path" "$config_path"
+        chmod 600 "$config_path"
+        print_success "Created $config_path from template"
     fi
 
     # Check if webui section already exists

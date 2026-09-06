@@ -102,3 +102,25 @@ EOF
 
     assert_equal "$WEBUI_URL" "https://192.168.50.1:8444"
 }
+
+@test "setup_webui_config: copies the template when vpn-director.json is missing" {
+    load_installer
+    printf '%s\n' '{"webui":{"port":8444}}' > "$VPD_DIR/vpn-director.json.template"
+
+    run setup_webui_config
+
+    assert_success
+    assert_output --partial "Created"
+    [ -f "$VPD_DIR/vpn-director.json" ]
+    run stat -c %a "$VPD_DIR/vpn-director.json"
+    assert_output "600"
+}
+
+@test "setup_webui_config: does nothing when neither json nor template exist" {
+    load_installer
+
+    run setup_webui_config
+
+    assert_success
+    [ ! -f "$VPD_DIR/vpn-director.json" ]
+}
