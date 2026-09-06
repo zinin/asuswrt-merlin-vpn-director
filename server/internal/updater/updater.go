@@ -34,10 +34,11 @@ type Asset struct {
 	DownloadURL string
 }
 
-// Daemon describes an updatable daemon. Name is both the release asset prefix
-// (<Name>-<arch>) and the file name under files/; Binary is where the update
-// script installs it and what `pgrep -f` matches on; InitScript is the Entware
-// script that starts and stops it.
+// Daemon describes an updatable daemon. Name is the release asset prefix
+// (<Name>-<arch>), the file name under files/ and the monit service name the
+// update script unmonitors and re-monitors; Binary is where the update script
+// installs it and what `pgrep -f` matches on; InitScript is the Entware script
+// that starts and stops it.
 type Daemon struct {
 	Name       string
 	Binary     string
@@ -89,6 +90,7 @@ type Service struct {
 	updateDir  string // Configurable for testing
 	scriptFile string // Configurable for testing
 	archSuffix string // Injectable for testing, empty = derived from runtime.GOARCH
+	shell      string // Injectable for testing, empty = /bin/sh
 }
 
 // Verify Service implements Updater interface.
@@ -137,6 +139,16 @@ func (s *Service) getScriptFile() string {
 		return s.scriptFile
 	}
 	return ScriptFile
+}
+
+// getShell returns the interpreter that runs the update script. Tests point
+// it at a path that does not exist, so the unit suite never launches the real
+// script against the machine running go test.
+func (s *Service) getShell() string {
+	if s.shell != "" {
+		return s.shell
+	}
+	return "/bin/sh"
 }
 
 // IsUpdateInProgress checks if a lock file exists and the process is still alive.

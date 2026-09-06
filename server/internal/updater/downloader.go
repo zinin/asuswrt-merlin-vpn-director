@@ -21,7 +21,8 @@ const (
 
 // scriptFiles lists all files to download from the repository.
 // NOTE: Keep in sync with install.sh file list.
-// See: install.sh (search for "download_file" calls)
+// See: download_scripts() in install.sh - the loop over the same paths, plus
+// the xray config template it fetches right after it.
 var scriptFiles = []string{
 	"router/opt/vpn-director/vpn-director.sh",
 	"router/opt/vpn-director/configure.sh",

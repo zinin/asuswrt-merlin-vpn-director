@@ -83,7 +83,7 @@ func (s *Service) RunUpdateScript(opts RunOptions) error {
 	// Run script directly with Setsid for proper detachment.
 	// Setsid creates a new session, so script survives bot termination.
 	// Unlike "nohup ... &", this gives us proper error detection at exec level.
-	cmd := exec.Command("/bin/sh", scriptPath)
+	cmd := exec.Command(s.getShell(), scriptPath)
 	cmd.Dir = updateDir
 	cmd.Stdout = f
 	cmd.Stderr = f

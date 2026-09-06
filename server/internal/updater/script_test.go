@@ -14,6 +14,46 @@ func validOpts() RunOptions {
 	return RunOptions{OldVersion: "v1.0.0", NewVersion: "v1.1.0", ChatID: 123, Initiator: "bot"}
 }
 
+// noExecService returns a Service whose interpreter path does not exist, so
+// RunUpdateScript writes the script and then fails at exec. Without the seam
+// these tests launch the real update script - pgrep and pkill -9 over the
+// whole process table, cp over /opt - on the machine running go test.
+func noExecService(t *testing.T) *Service {
+	t.Helper()
+
+	dir := t.TempDir()
+	return &Service{
+		updateDir:  dir,
+		scriptFile: filepath.Join(dir, "update.sh"),
+		shell:      filepath.Join(dir, "no-such-interpreter"),
+	}
+}
+
+// assertExecRefused checks that RunUpdateScript got as far as launching the
+// script and no further. A nil error would mean a real shell took the
+// generated script and ran it.
+func assertExecRefused(t *testing.T, s *Service, err error) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("RunUpdateScript() succeeded, so a real shell just ran the update script")
+	}
+	if !strings.Contains(err.Error(), s.shell) {
+		t.Fatalf("RunUpdateScript() error = %v, want the exec of %s to fail", err, s.shell)
+	}
+}
+
+func TestService_ShellDefaultsToBinSh(t *testing.T) {
+	// The seam must not change what ships: a router has /bin/sh and nothing
+	// else is guaranteed.
+	if got := (&Service{}).getShell(); got != "/bin/sh" {
+		t.Errorf("getShell() = %q, want /bin/sh", got)
+	}
+	if got := (&Service{shell: "/bin/busybox"}).getShell(); got != "/bin/busybox" {
+		t.Errorf("getShell() = %q, want the injected interpreter", got)
+	}
+}
+
 func TestGenerateScript(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -333,12 +373,7 @@ func TestGenerateScript_Golden(t *testing.T) {
 }
 
 func TestRunUpdateScript_InvalidVersion(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	s := &Service{
-		updateDir:  tmpDir,
-		scriptFile: filepath.Join(tmpDir, "update.sh"),
-	}
+	s := noExecService(t)
 
 	tests := []struct {
 		name    string
@@ -397,8 +432,7 @@ func TestRunUpdateScript_InvalidVersion(t *testing.T) {
 func TestRunUpdateScript_InvalidInitiator(t *testing.T) {
 	// Initiator is interpolated into the shell script the same way versions
 	// are, so it gets the same allow-list treatment.
-	tmpDir := t.TempDir()
-	s := &Service{updateDir: tmpDir, scriptFile: filepath.Join(tmpDir, "update.sh")}
+	s := noExecService(t)
 
 	for _, initiator := range []string{"", "cron", `bot";rm -rf /;"`} {
 		t.Run(initiator, func(t *testing.T) {
@@ -413,44 +447,32 @@ func TestRunUpdateScript_InvalidInitiator(t *testing.T) {
 }
 
 func TestRunUpdateScript_ValidVersion(t *testing.T) {
-	tmpDir := t.TempDir()
+	s := noExecService(t)
 
-	s := &Service{
-		updateDir:  tmpDir,
-		scriptFile: filepath.Join(tmpDir, "update.sh"),
-	}
-
-	// This will fail at cmd.Start() because nohup/sh may not exist in test env
-	// but the important part is that it passes validation
+	// The exec is expected to fail - the interpreter does not exist. A
+	// validation error is not: it would mean valid versions were rejected.
 	err := s.RunUpdateScript(validOpts())
 
-	// If we get "start script" error, validation passed
-	// If we get "invalid version", validation failed
 	if err != nil && strings.Contains(err.Error(), "invalid") {
 		t.Errorf("Valid versions should pass validation: %v", err)
 	}
+	assertExecRefused(t, s, err)
 
 	// Check that script file was created
-	scriptPath := filepath.Join(tmpDir, "update.sh")
-	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+	if _, err := os.Stat(s.getScriptFile()); os.IsNotExist(err) {
 		t.Error("Script file should be created")
 	}
 }
 
 func TestRunUpdateScript_ScriptContent(t *testing.T) {
-	tmpDir := t.TempDir()
+	s := noExecService(t)
 
-	s := &Service{
-		updateDir:  tmpDir,
-		scriptFile: filepath.Join(tmpDir, "update.sh"),
-	}
-
-	// Run will likely fail, but script should be written
-	_ = s.RunUpdateScript(RunOptions{ChatID: 42, OldVersion: "v1.2.3", NewVersion: "v2.0.0", Initiator: "bot"})
+	// The exec fails, but the script is written before it is launched
+	err := s.RunUpdateScript(RunOptions{ChatID: 42, OldVersion: "v1.2.3", NewVersion: "v2.0.0", Initiator: "bot"})
+	assertExecRefused(t, s, err)
 
 	// Read the generated script
-	scriptPath := filepath.Join(tmpDir, "update.sh")
-	content, err := os.ReadFile(scriptPath)
+	content, err := os.ReadFile(s.getScriptFile())
 	if err != nil {
 		t.Fatalf("Failed to read script: %v", err)
 	}
