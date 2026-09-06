@@ -13,6 +13,30 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
+// --config names the file. Deriving the directory from it and appending
+// vpn-director.json reads a different file, or none at all.
+func TestConfigService_ConfigPathOverride(t *testing.T) {
+	s := NewConfigService("/opt/vpn-director", "/opt/vpn-director/data", "/tmp/custom.json")
+
+	if got, want := s.ConfigPath(), "/tmp/custom.json"; got != want {
+		t.Errorf("ConfigPath() = %q, want %q", got, want)
+	}
+	if got, want := s.LockPath(), "/tmp/.custom.json.lock"; got != want {
+		t.Errorf("LockPath() = %q, want %q", got, want)
+	}
+}
+
+func TestConfigService_DefaultConfigPath(t *testing.T) {
+	s := NewConfigService("/opt/vpn-director", "/opt/vpn-director/data")
+
+	if got, want := s.ConfigPath(), "/opt/vpn-director/vpn-director.json"; got != want {
+		t.Errorf("ConfigPath() = %q, want %q", got, want)
+	}
+	if got, want := s.LockPath(), "/opt/vpn-director/.vpn-director.json.lock"; got != want {
+		t.Errorf("LockPath() = %q, want %q", got, want)
+	}
+}
+
 func TestConfigService_DataDir(t *testing.T) {
 	tmpDir := t.TempDir()
 

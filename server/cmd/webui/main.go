@@ -74,7 +74,9 @@ func main() {
 	// honour the flag instead of hardcoding /opt/vpn-director.
 	scriptsDir := filepath.Dir(*configPath)
 	defaultDataDir := filepath.Join(scriptsDir, "data")
-	configSvc := service.NewConfigService(scriptsDir, defaultDataDir)
+	// The flag names the file, not its directory: --config /tmp/custom.json
+	// must read that file, not /tmp/vpn-director.json.
+	configSvc := service.NewConfigService(scriptsDir, defaultDataDir, *configPath)
 
 	// Load config
 	vpnCfg, err := configSvc.LoadVPNConfig()

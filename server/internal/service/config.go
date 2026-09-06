@@ -21,6 +21,7 @@ const (
 type ConfigService struct {
 	scriptsDir     string
 	defaultDataDir string
+	configPath     string
 	lockTimeout    time.Duration // how long UpdateVPNConfig waits for the lock
 	lockPoll       time.Duration // interval between LOCK_NB attempts
 }
@@ -28,26 +29,34 @@ type ConfigService struct {
 // Compile-time check that ConfigService implements ConfigStore
 var _ ConfigStore = (*ConfigService)(nil)
 
-// NewConfigService creates a new ConfigService
-func NewConfigService(scriptsDir, defaultDataDir string) *ConfigService {
-	return &ConfigService{
+// NewConfigService creates a new ConfigService. The optional configPath names
+// the config file itself, for callers that take one from a --config flag; by
+// default it is vpn-director.json inside scriptsDir.
+func NewConfigService(scriptsDir, defaultDataDir string, configPath ...string) *ConfigService {
+	s := &ConfigService{
 		scriptsDir:     scriptsDir,
 		defaultDataDir: defaultDataDir,
+		configPath:     filepath.Join(scriptsDir, "vpn-director.json"),
 		lockTimeout:    configLockTimeout,
 		lockPoll:       configLockPoll,
 	}
+	if len(configPath) > 0 && configPath[0] != "" {
+		s.configPath = configPath[0]
+	}
+	return s
 }
 
 // LockPath returns the lock file guarding vpn-director.json. It lives next to
 // the config, so dev mode locks inside testdata/dev. /var/lock/vpn-director.lock
 // remains the shell script's own lock and Go never touches it.
 func (s *ConfigService) LockPath() string {
-	return filepath.Join(s.scriptsDir, ".vpn-director.json.lock")
+	dir, base := filepath.Split(s.configPath)
+	return filepath.Join(dir, "."+base+".lock")
 }
 
 // ConfigPath returns the path to vpn-director.json
 func (s *ConfigService) ConfigPath() string {
-	return filepath.Join(s.scriptsDir, "vpn-director.json")
+	return s.configPath
 }
 
 // ScriptsDir returns the scripts directory
