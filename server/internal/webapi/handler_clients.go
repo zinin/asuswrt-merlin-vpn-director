@@ -72,7 +72,10 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, applyDeadline)
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
@@ -113,7 +116,10 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, applyDeadline)
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
@@ -141,7 +147,10 @@ func handleResumeClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, applyDeadline)
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
@@ -163,7 +172,10 @@ func handleDeleteClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, applyDeadline)
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {

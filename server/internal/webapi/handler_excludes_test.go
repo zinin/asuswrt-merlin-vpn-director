@@ -476,19 +476,32 @@ func TestHandleDeleteExcludeIP_MatchesStoredForm(t *testing.T) {
 }
 
 func TestNormalizeExcludeSets(t *testing.T) {
-	got, err := normalizeExcludeSets([]string{"RU", " ua ", "ru", "By"})
+	got, err := normalizeExcludeSets([]string{"RU", " ua ", "ru", "By"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Join(got, ",") != "ru,ua,by" {
 		t.Errorf("normalizeExcludeSets = %v, want [ru ua by]", got)
 	}
-	if got, err := normalizeExcludeSets(nil); err != nil || len(got) != 0 {
+	if got, err := normalizeExcludeSets(nil, nil); err != nil || len(got) != 0 {
 		t.Errorf("nil input: got %v, %v; want empty, nil", got, err)
 	}
 	for _, bad := range []string{"", "x", "xxx", "r1", "ru " + "\n" + "ua"} {
-		if _, err := normalizeExcludeSets([]string{bad}); err == nil {
+		if _, err := normalizeExcludeSets([]string{bad}, nil); err == nil {
 			t.Errorf("expected error for %q", bad)
 		}
+	}
+}
+
+func TestNormalizeExcludeSets_DropsStoredJunk(t *testing.T) {
+	got, err := normalizeExcludeSets([]string{"USA", "us"}, []string{"USA", "us"})
+	if err != nil {
+		t.Fatalf("stored junk must not fail the replace: %v", err)
+	}
+	if strings.Join(got, ",") != "us" {
+		t.Errorf("got %v, want [us] with USA dropped", got)
+	}
+	if _, err := normalizeExcludeSets([]string{"xxx"}, nil); err == nil {
+		t.Fatal("a newly added invalid code must still 400")
 	}
 }

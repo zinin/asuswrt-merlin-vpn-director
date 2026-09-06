@@ -20,8 +20,11 @@ func handleStatus(deps *Deps) http.HandlerFunc {
 
 // handleApply returns a handler that applies the VPN Director configuration.
 func handleApply(deps *Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
+	return func(w http.ResponseWriter, r *http.Request) {
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		if err := deps.VPN.Apply(); err != nil {
@@ -34,8 +37,11 @@ func handleApply(deps *Deps) http.HandlerFunc {
 
 // handleRestart returns a handler that restarts the VPN Director.
 func handleRestart(deps *Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
+	return func(w http.ResponseWriter, r *http.Request) {
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		if err := deps.VPN.Restart(); err != nil {
@@ -48,8 +54,11 @@ func handleRestart(deps *Deps) http.HandlerFunc {
 
 // handleStop returns a handler that stops the VPN Director.
 func handleStop(deps *Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		unlock := lockLongOp(w, deps, applyDeadline)
+	return func(w http.ResponseWriter, r *http.Request) {
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		if err := deps.VPN.Stop(); err != nil {
@@ -63,8 +72,11 @@ func handleStop(deps *Deps) http.HandlerFunc {
 // handleUpdateIPsets returns a handler that downloads fresh ipsets and
 // reapplies the configuration via `vpn-director.sh update`.
 func handleUpdateIPsets(deps *Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		unlock := lockLongOp(w, deps, updateDeadline)
+	return func(w http.ResponseWriter, r *http.Request) {
+		unlock, ok := lockLongOp(w, r, deps, updateDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		if err := deps.VPN.Update(); err != nil {

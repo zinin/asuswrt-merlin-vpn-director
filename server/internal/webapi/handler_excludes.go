@@ -33,12 +33,23 @@ type updateExcludeSetsRequest struct {
 // normalizeExcludeSets trims, lowercases, validates and de-duplicates country
 // codes, keeping first-occurrence order. Unknown codes (e.g. "xx") pass here;
 // lib/tproxy.sh drops them at apply time with a WARN in the VPN Director log.
-func normalizeExcludeSets(sets []string) ([]string, error) {
+// Junk already stored in previous (hand-edited configs) is skipped rather than
+// rejecting the whole replace — otherwise deleting a valid country fails with
+// 400 because the leftover invalid entry is sent back.
+func normalizeExcludeSets(sets, previous []string) ([]string, error) {
+	stored := make(map[string]bool, len(previous))
+	for _, p := range previous {
+		stored[p] = true
+		stored[strings.ToLower(strings.TrimSpace(p))] = true
+	}
 	out := make([]string, 0, len(sets))
 	seen := make(map[string]bool, len(sets))
 	for _, raw := range sets {
 		code := strings.ToLower(strings.TrimSpace(raw))
 		if !countryCodeRe.MatchString(code) {
+			if stored[raw] || stored[strings.TrimSpace(raw)] || stored[code] {
+				continue
+			}
 			return nil, fmt.Errorf("invalid country code: %q", raw)
 		}
 		if seen[code] {
@@ -65,16 +76,17 @@ func handleUpdateExcludeSets(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		sets, err := normalizeExcludeSets(*req.Sets)
-		if err != nil {
-			jsonError(w, http.StatusBadRequest, err.Error())
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
 			return
 		}
-
-		unlock := lockLongOp(w, deps, applyDeadline)
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
+			sets, err := normalizeExcludeSets(*req.Sets, cfg.Xray.ExcludeSets)
+			if err != nil {
+				return &httpError{status: http.StatusBadRequest, msg: err.Error()}
+			}
 			cfg.Xray.ExcludeSets = sets
 			return nil
 		}))
@@ -118,7 +130,10 @@ func handleAddExcludeIP(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, applyDeadline)
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
@@ -139,7 +154,10 @@ func handleDeleteExcludeIP(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, applyDeadline)
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {

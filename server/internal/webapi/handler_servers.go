@@ -48,6 +48,14 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
+		defer unlock()
+
+		// Load the list after the lock so a concurrent import cannot change
+		// which server this index names between the bounds check and the write.
 		servers, err := deps.Config.LoadServers()
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to load servers")
@@ -59,19 +67,11 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, applyDeadline)
-		defer unlock()
-
 		server := servers[*req.Index]
 
-		if err := deps.Xray.GenerateConfig(server); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
-			return
-		}
-
-		// Set xray.servers to ALL servers' IPs, not just the selected one
-		// (parity with the import path). xray.servers feeds the TPROXY bypass
-		// set; dropping the other endpoints on a switch can cause a routing loop.
+		// Persist xray.servers before rewriting config.json. Generating first
+		// left a new outbound on disk if the save then failed, and the next
+		// xray restart would pick it up against the old vpn-director.json.
 		err = deps.Config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
 			cfg.Xray.Servers = collectServerIPs(servers)
 			return nil
@@ -82,6 +82,11 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			} else {
 				jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
 			}
+			return
+		}
+
+		if err := deps.Xray.GenerateConfig(server); err != nil {
+			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
 			return
 		}
 
@@ -180,7 +185,10 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		unlock := lockLongOp(w, deps, importDeadline)
+		unlock, ok := lockLongOp(w, r, deps, importDeadline)
+		if !ok {
+			return
+		}
 		defer unlock()
 
 		if err := deps.Config.SaveServers(resolved); err != nil {

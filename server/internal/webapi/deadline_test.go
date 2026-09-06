@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,10 @@ func TestLockLongOp_ExtendsBeforeAndAfterTheWait(t *testing.T) {
 	deps := newTestDeps(t)
 	rec := newDeadlineRecorder()
 
-	unlock := lockLongOp(rec, deps, updateDeadline)
+	unlock, ok := lockLongOp(rec, httptest.NewRequest("GET", "/", nil), deps, updateDeadline)
+	if !ok {
+		t.Fatal("lockLongOp dropped a live request")
+	}
 	unlock()
 
 	if len(rec.deadlines) != 2 {
@@ -71,6 +75,28 @@ func TestLockLongOp_ExtendsBeforeAndAfterTheWait(t *testing.T) {
 	case <-locked:
 	case <-time.After(time.Second):
 		t.Fatal("OpMutex still held after unlock()")
+	}
+}
+
+func TestLockLongOp_DropsAbandonedClient(t *testing.T) {
+	deps := newTestDeps(t)
+	rec := newDeadlineRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest("POST", "/", nil).WithContext(ctx)
+
+	unlock, ok := lockLongOp(rec, req, deps, applyDeadline)
+	if ok {
+		t.Fatal("lockLongOp must drop a request whose client is already gone")
+	}
+	unlock()
+
+	locked := make(chan struct{})
+	go func() { deps.OpMutex.Lock(); deps.OpMutex.Unlock(); close(locked) }()
+	select {
+	case <-locked:
+	case <-time.After(time.Second):
+		t.Fatal("OpMutex still held after dropping an abandoned request")
 	}
 }
 

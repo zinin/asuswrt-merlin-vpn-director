@@ -65,11 +65,16 @@ func extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
 
 // lockLongOp serializes a shell-running handler on deps.OpMutex and extends
 // the write deadline both before and after the wait, so the deadline covers
-// the command itself and not the time spent queued behind another one. The
-// returned func releases the mutex.
-func lockLongOp(w http.ResponseWriter, deps *Deps, d time.Duration) func() {
+// the command itself and not the time spent queued behind another one.
+// ok is false when the client went away while queued: the mutex is already
+// released and the handler must return without starting the mutation.
+func lockLongOp(w http.ResponseWriter, r *http.Request, deps *Deps, d time.Duration) (unlock func(), ok bool) {
 	extendWriteDeadline(w, d)
 	deps.OpMutex.Lock()
+	if r != nil && r.Context().Err() != nil {
+		deps.OpMutex.Unlock()
+		return func() {}, false
+	}
 	extendWriteDeadline(w, d)
-	return deps.OpMutex.Unlock
+	return deps.OpMutex.Unlock, true
 }
