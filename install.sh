@@ -294,10 +294,15 @@ generate_tls_cert() {
 
     mkdir -p "$cert_dir"
 
+    # `nvram get` exits 0 and prints nothing for an unset variable, so `|| echo`
+    # never fires: an empty value would leave subjectAltName with an empty IP,
+    # openssl would reject -addext and fall through to a certificate with no SAN.
     local lan_ip
-    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || echo "192.168.1.1")
+    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || true)
+    [[ -n "$lan_ip" ]] || lan_ip="192.168.1.1"
     local hostname
-    hostname=$(nvram get lan_hostname 2>/dev/null || echo "router")
+    hostname=$(nvram get lan_hostname 2>/dev/null || true)
+    [[ -n "$hostname" ]] || hostname="router"
 
     openssl req -x509 -newkey rsa:2048 \
         -keyout "$cert_dir/server.key" \

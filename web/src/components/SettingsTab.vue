@@ -109,6 +109,10 @@ async function runPolling() {
     updateMessage.value = 'The new version did not come up within 5 minutes. Check the logs.'
   } finally {
     updating.value = false
+    // Both producers write the target before calling this, so clearing it here
+    // - not in doUpdate - keeps a timed-out attempt from leaving a stale
+    // version behind for the next attempt or for the onMounted rejoin to poll.
+    updateTarget.value = ''
     releasePolling()
   }
 }

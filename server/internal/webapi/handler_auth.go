@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -44,10 +45,13 @@ func handleLogin(deps *Deps) http.HandlerFunc {
 
 		// Bind the token to the password it was issued under: authMiddleware
 		// re-checks this fingerprint on every request. Verify has just
-		// succeeded, so ErrUserNotFound is unreachable here and any error means
-		// the shadow file went away between the two reads.
+		// succeeded, so an error here means the file changed under us between
+		// the two reads - it became unreadable, or the account was locked. Log
+		// it as the middleware does: a 500 with no log line leaves the operator
+		// nothing to read.
 		fingerprint, err := deps.Shadow.Fingerprint(req.Username)
 		if err != nil {
+			slog.Error("cannot read the password fingerprint", "error", err)
 			jsonError(w, http.StatusInternalServerError, "authentication error")
 			return
 		}

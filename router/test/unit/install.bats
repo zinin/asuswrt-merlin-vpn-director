@@ -32,7 +32,7 @@ EOF
     run start_webui
 
     assert_success
-    [ ! -f "$BATS_TEST_TMPDIR/init.calls" ]
+    [[ ! -f "$BATS_TEST_TMPDIR/init.calls" ]]
 }
 
 @test "start_webui: starts the daemon and reports the LAN address" {

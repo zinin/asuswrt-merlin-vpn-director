@@ -28,8 +28,9 @@ const (
 	// equals WriteTimeout: without the extension the connection is torn down
 	// exactly when the router is slow enough to need diagnostics.
 	statusDeadline = service.StatusTimeout + deadlineSlack
-	// ipDeadline covers `curl ifconfig.me`. It fits inside the 30 s
-	// WriteTimeout today with five seconds to spare; the extension means
+	// ipDeadline covers `curl ifconfig.me`. The route's own worst case -
+	// ExternalIPTimeout (15 s) plus shell.waitDelay (10 s) - fits inside the
+	// 30 s WriteTimeout with five seconds to spare; the extension means
 	// raising ExternalIPTimeout cannot silently put the route back over.
 	ipDeadline = service.ExternalIPTimeout + deadlineSlack
 	// importDeadline covers the 10-second subscription download plus one DNS

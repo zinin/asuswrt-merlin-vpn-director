@@ -56,9 +56,10 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 Client and exclusion mutations go through `updateAndApply`: the change is
 written under the config lock and `vpn-director.sh apply` runs immediately
 after, as the bot does. The two server routes are the exception —
-`/api/servers/active` regenerates `config.json` and restarts Xray instead, and
-`/api/servers/import` only writes `servers.json` and `xray.servers`. All of
-them serialize on `Deps.OpMutex`.
+`/api/servers/active` regenerates `config.json`, rewrites `xray.servers` under
+the lock and restarts Xray instead of applying, and `/api/servers/import` only
+writes `servers.json` and `xray.servers`. All of them serialize on
+`Deps.OpMutex`.
 
 ## Authentication
 

@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   go:
     name: Go
@@ -16,6 +19,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: server/go.mod
+          # setup-go caches by default and looks for go.sum at the repository
+          # root, where there is none: without this the cache never hits.
+          cache-dependency-path: server/go.sum
 
       - uses: actions/setup-node@v4
         with:

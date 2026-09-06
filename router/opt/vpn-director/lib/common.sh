@@ -434,6 +434,9 @@ log_error_trace() {
 #     `flock -n` once a second for up to <sec> seconds, because BusyBox flock
 #     has no -w, then logs an ERROR and exits with code 1 so the caller learns
 #     that nothing was applied.
+#   * VPD_LOCK_WAIT set to a non-numeric value: logs a WARN and falls back to
+#     120 seconds, so a hand-exported garbage value cannot abort the script
+#     with an arithmetic error while the lock is free.
 #   * The lock persists until the script exits, automatically releasing it.
 ###################################################################################################
 acquire_lock() {
