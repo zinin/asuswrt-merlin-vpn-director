@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -142,15 +143,28 @@ func (m *mockUpdateFlow) Start(_ context.Context, initiator string, chatID int64
 
 func (m *mockUpdateFlow) InProgress() bool { return m.inProgress }
 
+// testSHA256Hash is a known SHA-256 shadow hash for password "testpass".
+const testSHA256Hash = "$5$testsalt$GR6PqdknD2fHavVjM//Q.4Qni8EXZKnxS838p5GC9r5"
+
+// writeShadowFixture creates a temporary shadow file and returns its path.
+func writeShadowFixture(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shadow")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // newTestDeps creates a Deps instance wired with test mocks.
 func newTestDeps(t *testing.T) *Deps {
 	t.Helper()
 
-	// Create a real shadow file for testing is complex,
-	// so we use a ShadowAuth that points to a non-existent file.
-	// Tests that need login verification should use the full router
-	// with a real shadow file fixture, or test at the handler level directly.
-	shadow := auth.NewShadowAuth("/dev/null")
+	// authMiddleware compares every request's pwh claim against this file, so
+	// the test deps need a real one. Handler tests that exercise login
+	// override deps.Shadow with a fixture of their own.
+	shadow := auth.NewShadowAuth(writeShadowFixture(t, "admin:"+testSHA256Hash+":19000:0:99999:7:::\n"))
 
 	jwt := auth.NewJWTService("test-secret-key-32bytes!!!!!!!!", 1*time.Hour)
 
@@ -174,4 +188,19 @@ func newTestDeps(t *testing.T) *Deps {
 		OpMutex:      &sync.Mutex{},
 		loginLimiter: newRateLimiter(5, 1*time.Minute, 30*time.Second),
 	}
+}
+
+// newTestToken mints a token the middleware accepts for these deps: the
+// subject is the fixture's only user and the fingerprint is the current one.
+func newTestToken(t *testing.T, deps *Deps) string {
+	t.Helper()
+	fp, err := deps.Shadow.Fingerprint("admin")
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	token, err := deps.JWT.Create("admin", fp)
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	return token
 }

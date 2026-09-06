@@ -2,6 +2,7 @@ package webapi
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -11,10 +12,13 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
 )
 
-// authMiddleware returns HTTP middleware that validates JWT tokens.
-// It checks the "token" cookie first, then the Authorization: Bearer header.
-// Returns 401 if no valid token is found.
-func authMiddleware(jwt *auth.JWTService) func(http.Handler) http.Handler {
+// authMiddleware returns HTTP middleware that validates JWT tokens and binds
+// them to the current router password. It checks the "token" cookie first,
+// then the Authorization: Bearer header. The pwh claim is compared against
+// ShadowAuth.Fingerprint on every request — deliberately without a cache, so
+// changing the password logs every session out at once; /etc/shadow is a few
+// hundred bytes on tmpfs.
+func authMiddleware(jwt *auth.JWTService, shadow *auth.ShadowAuth) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := extractToken(r)
@@ -23,9 +27,29 @@ func authMiddleware(jwt *auth.JWTService) func(http.Handler) http.Handler {
 				return
 			}
 
-			_, err := jwt.Validate(token)
+			claims, err := jwt.Validate(token)
 			if err != nil {
 				jsonError(w, http.StatusUnauthorized, "invalid or expired token")
+				return
+			}
+
+			fingerprint, err := shadow.Fingerprint(claims.Subject)
+			if err != nil {
+				if errors.Is(err, auth.ErrUserNotFound) {
+					jsonError(w, http.StatusUnauthorized, "invalid or expired token")
+					return
+				}
+				// The shadow file itself is unreadable. 401 would send the SPA
+				// to the login page, where login fails the same way; 500 says
+				// which half is broken.
+				slog.Error("cannot read the password fingerprint", "error", err)
+				jsonError(w, http.StatusInternalServerError, "authentication error")
+				return
+			}
+
+			// An empty pwh (a token issued before this release) never matches.
+			if claims.PasswordHash != fingerprint {
+				jsonError(w, http.StatusUnauthorized, "password changed, log in again")
 				return
 			}
 

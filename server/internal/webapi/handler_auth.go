@@ -42,8 +42,18 @@ func handleLogin(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		// Bind the token to the password it was issued under: authMiddleware
+		// re-checks this fingerprint on every request. Verify has just
+		// succeeded, so ErrUserNotFound is unreachable here and any error means
+		// the shadow file went away between the two reads.
+		fingerprint, err := deps.Shadow.Fingerprint(req.Username)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "authentication error")
+			return
+		}
+
 		// Create JWT.
-		token, err := deps.JWT.Create(req.Username)
+		token, err := deps.JWT.Create(req.Username, fingerprint)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "create token")
 			return

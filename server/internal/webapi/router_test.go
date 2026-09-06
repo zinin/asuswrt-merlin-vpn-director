@@ -20,10 +20,7 @@ func TestRouter_UnknownAPIPathIsJSON404(t *testing.T) {
 	deps := newTestDeps(t)
 	router := NewRouter(deps, testStaticFS())
 
-	token, err := deps.JWT.Create("admin")
-	if err != nil {
-		t.Fatalf("create token: %v", err)
-	}
+	token := newTestToken(t, deps)
 	req := httptest.NewRequest("GET", "/api/nope", nil)
 	req.AddCookie(&http.Cookie{Name: "token", Value: token})
 	rec := httptest.NewRecorder()
@@ -66,10 +63,7 @@ func TestRouter_KnownAPIPathSurvivesFallback(t *testing.T) {
 	deps := newTestDeps(t)
 	router := NewRouter(deps, testStaticFS())
 
-	token, err := deps.JWT.Create("admin")
-	if err != nil {
-		t.Fatalf("create token: %v", err)
-	}
+	token := newTestToken(t, deps)
 	req := httptest.NewRequest("GET", "/api/version", nil)
 	req.AddCookie(&http.Cookie{Name: "token", Value: token})
 	rec := httptest.NewRecorder()

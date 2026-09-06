@@ -52,7 +52,7 @@ func NewRouter(deps *Deps, staticFS fs.FS) http.Handler {
 	protectedMux := http.NewServeMux()
 	registerProtectedRoutes(protectedMux, deps)
 
-	authMW := authMiddleware(deps.JWT)
+	authMW := authMiddleware(deps.JWT, deps.Shadow)
 	mux.Handle("/api/", authMW(protectedMux))
 
 	// SPA fallback: serve static files and fall back to index.html.

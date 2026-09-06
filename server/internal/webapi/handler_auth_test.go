@@ -4,28 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
 )
-
-// sha256Hash is a known SHA-256 shadow hash for password "testpass".
-const testSHA256Hash = "$5$testsalt$GR6PqdknD2fHavVjM//Q.4Qni8EXZKnxS838p5GC9r5"
-
-// writeShadowFixture creates a temporary shadow file and returns its path.
-func writeShadowFixture(t *testing.T, content string) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "shadow")
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
 
 func TestHandleLogin_ValidCredentials(t *testing.T) {
 	shadowPath := writeShadowFixture(t, "admin:"+testSHA256Hash+":19000:0:99999:7:::\n")
@@ -202,5 +186,48 @@ func TestRemoteIP(t *testing.T) {
 				t.Errorf("remoteIP() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestHandleLogin_TokenCarriesTheCurrentFingerprint pins the other half of the
+// contract: the middleware compares pwh against the live shadow file, so login
+// must put the live value in, not an empty string.
+func TestHandleLogin_TokenCarriesTheCurrentFingerprint(t *testing.T) {
+	shadowPath := writeShadowFixture(t, "admin:"+testSHA256Hash+":19000:0:99999:7:::\n")
+
+	deps := newTestDeps(t)
+	deps.Shadow = auth.NewShadowAuth(shadowPath)
+
+	body := `{"username":"admin","password":"testpass"}`
+	req := httptest.NewRequest("POST", "/api/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleLogin(deps).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var token string
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "token" {
+			token = c.Value
+		}
+	}
+	if token == "" {
+		t.Fatal("no token cookie")
+	}
+
+	claims, err := deps.JWT.Validate(token)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	want, err := deps.Shadow.Fingerprint("admin")
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	if claims.PasswordHash != want {
+		t.Errorf("pwh = %q, want %q", claims.PasswordHash, want)
 	}
 }
