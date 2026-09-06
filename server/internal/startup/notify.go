@@ -100,8 +100,16 @@ func recipientsFor(n UpdateNotification, store ChatStore) ([]int64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get active users: %w", err)
 	}
+	// chatstore keys by lowercased username, so one person who renamed their
+	// Telegram handle is two records with one ChatID. Telling them twice about
+	// the same update is a bug the store cannot see.
+	seen := make(map[int64]struct{}, len(users))
 	chats := make([]int64, 0, len(users))
 	for _, u := range users {
+		if _, dup := seen[u.ChatID]; dup {
+			continue
+		}
+		seen[u.ChatID] = struct{}{}
 		chats = append(chats, u.ChatID)
 	}
 	if len(chats) == 0 {

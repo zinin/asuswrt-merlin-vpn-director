@@ -378,6 +378,37 @@ func TestCheckAndSendNotify_StoreErrorKeepsTheFile(t *testing.T) {
 	}
 }
 
+// TestCheckAndSendNotify_DeduplicatesByChatID: chatstore keys users by
+// lowercased username, so a user who changed their Telegram handle appears
+// twice with the same ChatID and used to get the same message twice.
+func TestCheckAndSendNotify_DeduplicatesByChatID(t *testing.T) {
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	writeNotify(t, notifyFile, `{"chat_id":0,"old_version":"v1.2.0","new_version":"v1.3.0","status":"ok","initiator":"webui"}`)
+
+	sender := &mockSender{}
+	store := &mockStore{users: []chatstore.UserChat{
+		{Username: "oldhandle", ChatID: 42},
+		{Username: "newhandle", ChatID: 42},
+		{Username: "someone", ChatID: 43},
+	}}
+
+	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if len(sender.sentMessages) != 2 {
+		t.Fatalf("sent %d messages, want 2 (one per chat): %+v", len(sender.sentMessages), sender.sentMessages)
+	}
+	perChat := map[int64]int{}
+	for _, msg := range sender.sentMessages {
+		perChat[msg.chatID]++
+	}
+	if perChat[42] != 1 || perChat[43] != 1 {
+		t.Errorf("messages per chat = %v, want one each for 42 and 43", perChat)
+	}
+}
+
 func writeNotify(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {

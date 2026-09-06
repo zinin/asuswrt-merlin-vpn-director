@@ -274,6 +274,29 @@ func TestChecker_NotifiesMultipleUsers(t *testing.T) {
 	}
 }
 
+// TestNotifyUsers_OneMessagePerChat: two usernames sharing a ChatID are one
+// person with a renamed handle. Both records still have to be marked notified,
+// or the second one asks again on the next tick.
+func TestNotifyUsers_OneMessagePerChat(t *testing.T) {
+	store := chatstore.New(t.TempDir() + "/chats.json")
+	_ = store.RecordInteraction("oldhandle", 42)
+	_ = store.RecordInteraction("newhandle", 42)
+
+	sender := &mockSender{}
+	c := New(&mockUpdater{}, store, sender, &mockAuth{}, "v1.2.0")
+
+	c.notifyUsers(context.Background(), &updater.Release{TagName: "v1.3.0", Body: "notes"})
+
+	if got := sender.getMessages(); len(got) != 1 {
+		t.Fatalf("sent %d messages to one chat, want 1: %+v", len(got), got)
+	}
+	for _, u := range []string{"oldhandle", "newhandle"} {
+		if !store.IsNotified(u, "v1.3.0") {
+			t.Errorf("%s was not marked notified, so the next tick would ask again", u)
+		}
+	}
+}
+
 func TestChecker_TruncatesLongChangelog(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := chatstore.New(tmpDir + "/chats.json")

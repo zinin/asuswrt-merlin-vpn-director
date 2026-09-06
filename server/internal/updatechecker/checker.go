@@ -118,6 +118,11 @@ func (c *Checker) notifyUsers(ctx context.Context, release *updater.Release) {
 		return
 	}
 
+	// One ChatID can carry several usernames (a renamed handle), and the store
+	// tracks "notified" per username. Send once per chat, but mark every
+	// record, or the duplicate asks again on the next tick.
+	notifiedChats := make(map[int64]struct{}, len(users))
+
 	for _, user := range users {
 		// Check for context cancellation (graceful shutdown)
 		select {
@@ -137,6 +142,12 @@ func (c *Checker) notifyUsers(ctx context.Context, release *updater.Release) {
 			continue
 		}
 
+		// Same chat, different handle: mark this record and move on.
+		if _, dup := notifiedChats[user.ChatID]; dup {
+			_ = c.store.MarkNotified(user.Username, release.TagName)
+			continue
+		}
+
 		// Send notification with keyboard (MarkdownV2 via SendWithKeyboard)
 		msg, keyboard := c.formatNotification(release)
 		err := c.sender.SendWithKeyboard(user.ChatID, msg, keyboard)
@@ -153,6 +164,7 @@ func (c *Checker) notifyUsers(ctx context.Context, release *updater.Release) {
 
 		// Mark as notified
 		_ = c.store.MarkNotified(user.Username, release.TagName)
+		notifiedChats[user.ChatID] = struct{}{}
 		slog.Info("Sent update notification", "username", user.Username, "version", release.TagName)
 	}
 }
