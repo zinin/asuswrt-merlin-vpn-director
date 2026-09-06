@@ -122,8 +122,10 @@ on_exit() {
     # a running process - the failure would stay unreported until the next
     # restart.
     write_notify failed
-    remonitor_running
     start_running
+    # monit last: it starts a stopped daemon on its own check interval, and a
+    # bot started before notify.json exists never reports the result.
+    remonitor_running
     rm -f "$LOCK_FILE"
     exit "$code"
 }
@@ -256,10 +258,7 @@ for entry in $DAEMONS; do
     fi
 done
 
-# 6. Re-monitor only the daemons that were running
-remonitor_running
-
-# 7. Start everyone except the notify reader, then commit the status, then
+# 6. Start everyone except the notify reader, then commit the status, then
 #    start the bot. A failed Web UI start must rewrite notify.json before the
 #    bot can send "Update complete" and delete the directory.
 if ! start_except "$NOTIFY_INIT"; then
@@ -268,6 +267,7 @@ if ! start_except "$NOTIFY_INIT"; then
     log "ERROR: a daemon failed to start, the update is not complete"
     write_notify failed
     start_if_listed "$NOTIFY_INIT" || true
+    remonitor_running
     rm -f "$LOCK_FILE"
     exit 1
 fi
@@ -280,9 +280,16 @@ if ! start_if_listed "$NOTIFY_INIT"; then
     set +e
     log "ERROR: a daemon failed to start, the update is not complete"
     write_notify failed
+    remonitor_running
     rm -f "$LOCK_FILE"
     exit 1
 fi
+
+# 7. Hand the daemons back to monit only now. Re-monitoring a daemon that is
+#    still stopped lets monit start it on its own check interval, and a bot
+#    started before notify.json exists reads no result: CheckAndSendNotify
+#    runs at startup only, so the outcome would wait for the next restart.
+remonitor_running
 
 # 8. Drop the lock only after every start attempt. While it names this
 #    script, the other daemon will not treat the update as finished.

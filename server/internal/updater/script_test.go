@@ -303,6 +303,39 @@ func TestGenerateScript_CommitsTheFailedStatusBeforeRestarting(t *testing.T) {
 	}
 }
 
+// monit starts a stopped daemon on its own check interval. Handing the
+// daemons back before the status is committed lets it put the bot up without
+// a notify.json to read, and CheckAndSendNotify runs at startup only.
+func TestGenerateScript_RestoresMonitLast(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	paths := []struct {
+		name   string
+		body   string
+		starts string
+	}{
+		{"happy path", afterOnExit(t, script), "start_except"},
+		{"recovery", onExitBody(t, script), "start_running"},
+	}
+	for _, p := range paths {
+		remonitor := strings.Index(p.body, "remonitor_running")
+		if remonitor < 0 {
+			t.Errorf("%s never hands the daemons back to monit", p.name)
+			continue
+		}
+		if start := strings.Index(p.body, p.starts); start < 0 || remonitor < start {
+			t.Errorf("%s restores monit before it starts the daemons itself", p.name)
+		}
+		if notify := strings.Index(p.body, "write_notify"); notify < 0 || remonitor < notify {
+			t.Errorf("%s restores monit before it commits the status", p.name)
+		}
+	}
+}
+
 func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
 	s := &Service{}
 	script, err := s.generateScript(validOpts())
