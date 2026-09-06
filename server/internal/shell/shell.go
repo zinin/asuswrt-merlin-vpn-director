@@ -54,5 +54,14 @@ func ExecContext(ctx context.Context, command string, args ...string) (*Result, 
 		result.ExitCode = exitErr.ExitCode()
 		err = nil // non-zero exit is not an error
 	}
+
+	// The command exited by itself, but something it left behind still held
+	// the output pipe when waitDelay ran out. exec reports ErrWaitDelay for
+	// that even though the exit status was fine, and Output carries whatever
+	// was read up to then. An apply that completed must not reach the user as
+	// "apply failed".
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
 	return result, err
 }

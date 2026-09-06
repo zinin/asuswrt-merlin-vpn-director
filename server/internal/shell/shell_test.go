@@ -108,6 +108,28 @@ func TestExecContext_TimeoutTerminatesProcess(t *testing.T) {
 	}
 }
 
+// A command that exits by itself while something it started keeps the output
+// pipe open ends in exec.ErrWaitDelay. The command succeeded, so ExecContext
+// must not turn that into an error: the Web UI would report "apply failed"
+// for an apply that finished.
+func TestExecContext_ChildHoldingThePipeIsNotAFailure(t *testing.T) {
+	old := waitDelay
+	waitDelay = 100 * time.Millisecond
+	t.Cleanup(func() { waitDelay = old })
+
+	// The shell exits at once; the background sleep inherits its stdout.
+	result, err := ExecContext(context.Background(), "sh", "-c", "sleep 1 & echo done")
+	if err != nil {
+		t.Fatalf("ExecContext() error = %v, want nil", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
+	}
+	if !strings.Contains(result.Output, "done") {
+		t.Errorf("Output = %q, want what the command printed", result.Output)
+	}
+}
+
 func TestExecContext_TimeoutKillsChildThatIgnoresTerm(t *testing.T) {
 	old := waitDelay
 	waitDelay = 300 * time.Millisecond
