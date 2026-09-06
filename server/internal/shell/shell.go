@@ -25,8 +25,9 @@ type Result struct {
 // A non-zero exit is reported through Result.ExitCode, not as an error.
 // When ctx expires the process receives SIGTERM, so vpn-director.sh's EXIT
 // trap can remove its temp files, and is killed after waitDelay if it has
-// not exited; the returned error then reads "command timed out after <d>",
-// where d is the context's timeout.
+// not exited; the returned error then starts with "command timed out after
+// <d>", where d is the context's timeout, and unwraps to
+// context.DeadlineExceeded.
 func ExecContext(ctx context.Context, command string, args ...string) (*Result, error) {
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, command, args...)
@@ -42,7 +43,9 @@ func ExecContext(ctx context.Context, command string, args ...string) (*Result, 
 			if deadline, ok := ctx.Deadline(); ok {
 				d = deadline.Sub(start)
 			}
-			return result, fmt.Errorf("command timed out after %s", d.Round(time.Millisecond))
+			// The message is spec 5.2's wording; wrapping ctx.Err() keeps
+			// errors.Is usable without anyone matching on the string.
+			return result, fmt.Errorf("command timed out after %s: %w", d.Round(time.Millisecond), ctx.Err())
 		}
 		return result, fmt.Errorf("command cancelled: %w", ctx.Err())
 	}

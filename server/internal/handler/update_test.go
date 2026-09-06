@@ -73,6 +73,12 @@ func (m *mockUpdateSender) all() string {
 	return strings.Join(m.messages, "\n")
 }
 
+func (m *mockUpdateSender) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.messages)
+}
+
 func testMessage() *tgbotapi.Message {
 	return &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 42}}
 }
@@ -130,6 +136,14 @@ func TestUpdateHandler_MessagePerOutcome(t *testing.T) {
 
 			h.HandleUpdate(testMessage())
 
+			// Contains alone lets a spurious extra message through. HandleUpdate
+			// takes exactly one branch of its switch and no row of this table
+			// feeds mockFlow any progress lines, so every outcome is one
+			// message - which is what the pre-block tests asserted with exact
+			// equality before the table replaced them.
+			if n := sender.count(); n != 1 {
+				t.Fatalf("sent %d messages for this outcome, want exactly 1: %q", n, sender.all())
+			}
 			if got := sender.all(); !strings.Contains(got, tt.want) {
 				t.Errorf("messages = %q, want to contain %q", got, tt.want)
 			}

@@ -2,12 +2,13 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestExec_EchoHello(t *testing.T) {
+func TestExecContext_EchoHello(t *testing.T) {
 	result, err := ExecContext(context.Background(), "echo", "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -23,7 +24,7 @@ func TestExec_EchoHello(t *testing.T) {
 	}
 }
 
-func TestExec_NonZeroExitCode(t *testing.T) {
+func TestExecContext_NonZeroExitCode(t *testing.T) {
 	result, err := ExecContext(context.Background(), "sh", "-c", "exit 42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -34,7 +35,7 @@ func TestExec_NonZeroExitCode(t *testing.T) {
 	}
 }
 
-func TestExec_CommandWithOutput(t *testing.T) {
+func TestExecContext_CommandWithOutput(t *testing.T) {
 	result, err := ExecContext(context.Background(), "sh", "-c", "echo first; echo second")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -49,7 +50,7 @@ func TestExec_CommandWithOutput(t *testing.T) {
 	}
 }
 
-func TestExec_StderrCaptured(t *testing.T) {
+func TestExecContext_StderrCaptured(t *testing.T) {
 	result, err := ExecContext(context.Background(), "sh", "-c", "echo error >&2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -64,14 +65,14 @@ func TestExec_StderrCaptured(t *testing.T) {
 	}
 }
 
-func TestExec_CommandNotFound(t *testing.T) {
+func TestExecContext_CommandNotFound(t *testing.T) {
 	_, err := ExecContext(context.Background(), "/nonexistent/command/that/does/not/exist")
 	if err == nil {
 		t.Fatal("expected error for non-existent command")
 	}
 }
 
-func TestExec_ExitCodeWithOutput(t *testing.T) {
+func TestExecContext_ExitCodeWithOutput(t *testing.T) {
 	result, err := ExecContext(context.Background(), "sh", "-c", "echo output; exit 5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -126,5 +127,25 @@ func TestExecContext_TimeoutKillsChildThatIgnoresTerm(t *testing.T) {
 	}
 	if elapsed > 2*time.Second {
 		t.Errorf("ExecContext took %s; WaitDelay did not kill the process", elapsed)
+	}
+}
+
+// TestExecContext_TimeoutErrorUnwrapsToDeadlineExceeded: the message is pinned
+// by spec 5.2 and stays exactly as it is, but a caller that asks
+// errors.Is(err, context.DeadlineExceeded) has to get true - otherwise every
+// future caller has to match on the string.
+func TestExecContext_TimeoutErrorUnwrapsToDeadlineExceeded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := ExecContext(ctx, "sleep", "5")
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if !strings.HasPrefix(err.Error(), "command timed out after ") {
+		t.Errorf("error = %q, want it to start with %q", err, "command timed out after ")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("errors.Is(err, context.DeadlineExceeded) = false for %v", err)
 	}
 }
