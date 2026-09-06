@@ -80,6 +80,7 @@ func TestHandleUpdateCheck_GitHubDown(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
 	}
+	assertGitHubErrorBody(t, rec)
 }
 
 func TestHandleUpdateStart_Accepted(t *testing.T) {
@@ -149,18 +150,59 @@ func TestHandleUpdateStart_UpToDateBody(t *testing.T) {
 	}
 }
 
-func TestHandleUpdateStatus(t *testing.T) {
+func TestHandleUpdateStart_GitHubDownBody(t *testing.T) {
 	deps := newTestDeps(t)
-	deps.Update.(*mockUpdateFlow).inProgress = true
+	deps.Update.(*mockUpdateFlow).startErr = &updateflow.GitHubError{Err: errors.New("connection refused")}
 
 	rec := httptest.NewRecorder()
-	handleUpdateStatus(deps)(rec, httptest.NewRequest("GET", "/api/update/status", nil))
+	handleUpdateStart(deps)(rec, httptest.NewRequest("POST", "/api/update", nil))
 
-	var resp map[string]bool
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	assertGitHubErrorBody(t, rec)
+}
+
+// assertGitHubErrorBody pins the wording of a 502: the handler must print the
+// cause the GitHubError wraps, never the wrapper itself. GitHubError.Error()
+// already prefixes "check for updates: ", so printing it doubles the sentence
+// into "failed to check for updates: check for updates: connection refused".
+func assertGitHubErrorBody(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+
+	var resp map[string]string
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !resp["in_progress"] {
-		t.Error("in_progress must follow the flow")
+	if resp["error"] != "failed to check for updates: connection refused" {
+		t.Errorf("502 body %q: the GitHubError wrapper must not be printed, it doubles the sentence", resp["error"])
+	}
+}
+
+func TestHandleUpdateStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		inProgress bool
+	}{
+		{name: "script running", inProgress: true},
+		{name: "idle", inProgress: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := newTestDeps(t)
+			deps.Update.(*mockUpdateFlow).inProgress = tt.inProgress
+
+			rec := httptest.NewRecorder()
+			handleUpdateStatus(deps)(rec, httptest.NewRequest("GET", "/api/update/status", nil))
+
+			var resp map[string]bool
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if resp["in_progress"] != tt.inProgress {
+				t.Errorf("in_progress = %t, want %t: the body must follow the flow, not a constant",
+					resp["in_progress"], tt.inProgress)
+			}
+		})
 	}
 }
