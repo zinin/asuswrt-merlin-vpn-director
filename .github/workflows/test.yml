@@ -17,6 +17,16 @@ jobs:
         with:
           go-version-file: server/go.mod
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # cmd/webui/embed.go embeds web/dist, which is generated and gitignored,
+      # so a fresh checkout cannot compile the package without it. web-embed
+      # depends on web, which runs npm ci and the Vite build.
+      - name: Prepare embed
+        run: make web-embed
+
       - name: Vet
         run: go vet ./...
         working-directory: server
