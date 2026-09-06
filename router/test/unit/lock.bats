@@ -102,3 +102,39 @@ hold_lock() {
     assert_success
     refute_output --partial "Ignoring invalid VPD_LOCK_WAIT"
 }
+
+@test "acquire_lock: a second call keeps the lock it already holds" {
+    load_common
+    acquire_lock "$LOCK_NAME"
+    # Reopening FD 200 truncates the file, so a surviving sentinel proves the
+    # second call did not drop and retake the lock.
+    printf 'sentinel\n' >&200
+
+    acquire_lock "$LOCK_NAME"
+
+    run cat "$LOCK_FILE"
+    assert_output --partial "sentinel"
+}
+
+@test "tproxy_restart_process: the restarted Xray does not inherit the lock" {
+    load_tproxy_module
+    local init_dir="$BATS_TEST_TMPDIR/init.d"
+    mkdir -p "$init_dir"
+    # Stand-in for Entware rc.func: backgrounds the daemon with its output
+    # redirected, which leaves every other descriptor inherited.
+    cat > "$init_dir/S24xray" <<EOF
+#!/bin/sh
+sleep 30 >/dev/null 2>&1 &
+echo \$! > "$BATS_TEST_TMPDIR/child.pid"
+EOF
+    chmod +x "$init_dir/S24xray"
+
+    acquire_lock "$LOCK_NAME"
+    XRAY_INIT_DIR="$init_dir" tproxy_restart_process
+    # Drop our own hold: from here only an inherited descriptor can keep it.
+    exec 200>&-
+
+    run flock -n "$LOCK_FILE" true
+    kill "$(cat "$BATS_TEST_TMPDIR/child.pid")" 2>/dev/null || true
+    assert_success
+}

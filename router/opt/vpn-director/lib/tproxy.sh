@@ -441,15 +441,21 @@ _tproxy_teardown_iptables() {
 # This is needed when xray/config.json is changed and Xray needs to reload its configuration.
 # -------------------------------------------------------------------------------------------------
 tproxy_restart_process() {
+    local init_dir="${XRAY_INIT_DIR:-/opt/etc/init.d}"
     local xray_init
-    xray_init=$(find /opt/etc/init.d -maxdepth 1 -name 'S*xray' 2>/dev/null | head -1)
+    xray_init=$(find "$init_dir" -maxdepth 1 -name 'S*xray' 2>/dev/null | head -1)
 
     if [[ -n $xray_init ]] && [[ -x $xray_init ]]; then
         log "Restarting Xray process..."
-        "$xray_init" restart
+        # 200>&- keeps the caller's lock out of the daemon this starts. rc.func
+        # backgrounds Xray, descriptors are not close-on-exec, and a flock lives
+        # on the open file description: an inherited FD 200 would hold
+        # /var/lock/vpn-director.lock for as long as Xray runs, so every later
+        # acquire_lock would skip silently or time out.
+        "$xray_init" restart 200>&-
         log "Xray process restarted"
     else
-        log -l WARN "Xray init script not found in /opt/etc/init.d/"
+        log -l WARN "Xray init script not found in $init_dir"
     fi
 }
 

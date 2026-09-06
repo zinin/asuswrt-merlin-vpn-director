@@ -126,6 +126,13 @@ exec 9>&-
 Both the success path and the recovery path need it; `update_script.sh.tmpl`
 does this in `release_apply_lock`.
 
+When the lock has to stay held, close the descriptor for the child instead:
+`tproxy_restart_process` runs the Xray init script as `"$xray_init" restart
+200>&-`, so the daemon rc.func backgrounds cannot inherit the lock
+`vpn-director.sh` is holding on FD 200. For the same reason `acquire_lock`
+returns early when this process already holds the lock: reopening FD 200 drops
+it and takes it again, and another waiter can step into that window.
+
 **Related**: POSIX allows a single digit in a redirection. `exec 201>` is a
 bash/ksh extension that dash rejects, and generated scripts run under
 `/bin/sh`.

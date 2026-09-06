@@ -444,6 +444,13 @@ acquire_lock() {
     local file="/var/lock/${name}.lock"
     local waited=0
 
+    # Already ours: `exec 200>` would close the descriptor, dropping the lock,
+    # and take it again - a window another waiter can step into. cmd_restart
+    # holds the lock and calls cmd_stop and cmd_apply, which both ask for it.
+    if [[ ${_VPD_LOCK_FILE:-} == "$file" ]]; then
+        return 0
+    fi
+
     # Ensure /var/lock exists (tmpfs on most routers)
     [ -d /var/lock ] || mkdir -p /var/lock 2>/dev/null
 
@@ -476,6 +483,7 @@ acquire_lock() {
         done
     fi
     printf '%s\n' "$$" 1>&200  # store our PID for clarity
+    _VPD_LOCK_FILE="$file"
 }
 
 ###################################################################################################
