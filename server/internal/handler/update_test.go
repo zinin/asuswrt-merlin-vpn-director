@@ -166,6 +166,32 @@ func TestUpdateHandler_ForwardsProgressToTheChat(t *testing.T) {
 	}
 }
 
+// Start returns once the download goroutine is scheduled, and that goroutine
+// reports through the same callback. A chat that reads "Files downloaded..."
+// before "Starting update v1.2.0 → v1.3.0..." looks like a second update.
+func TestUpdateHandler_AnnouncesTheStartBeforeProgress(t *testing.T) {
+	sender := &mockUpdateSender{}
+	flow := &mockFlow{
+		res:      updateflow.StartResult{From: "v1.2.0", To: "v1.3.0"},
+		progress: []string{"Files downloaded, starting update..."},
+	}
+	h := NewUpdateHandler(sender, flow, "v1.2.0")
+
+	h.HandleUpdate(testMessage())
+
+	all := sender.all()
+	start := strings.Index(all, "Starting update v1.2.0 → v1.3.0...")
+	progress := strings.Index(all, "Files downloaded, starting update...")
+	switch {
+	case start < 0:
+		t.Fatalf("no start announcement in %q", all)
+	case progress < 0:
+		t.Fatalf("progress never reached the chat: %q", all)
+	case start > progress:
+		t.Errorf("progress came first:\n%s", all)
+	}
+}
+
 func TestUpdateHandler_StartsAsBotWithTheChatID(t *testing.T) {
 	sender := &mockUpdateSender{}
 	flow := &mockFlow{res: updateflow.StartResult{From: "v1.2.0", To: "v1.3.0"}}

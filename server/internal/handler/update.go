@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -36,9 +37,39 @@ func NewUpdateHandler(sender telegram.MessageSender, flow UpdateFlow, version st
 func (h *UpdateHandler) HandleUpdate(msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 
+	// Start returns as soon as the download goroutine is scheduled, and that
+	// goroutine reports progress through this callback. On a fast link its
+	// first line can beat the "Starting update" message below, which reads
+	// like a second update starting, so hold progress until that message is
+	// out.
+	var (
+		mu      sync.Mutex
+		queued  []string
+		started bool
+	)
 	res, err := h.flow.Start(context.Background(), "bot", chatID, func(line string) {
+		mu.Lock()
+		if !started {
+			queued = append(queued, line)
+			mu.Unlock()
+			return
+		}
+		mu.Unlock()
 		h.send(chatID, line)
 	})
+
+	// release lets progress through and flushes what arrived meanwhile.
+	release := func() {
+		mu.Lock()
+		started = true
+		lines := queued
+		queued = nil
+		mu.Unlock()
+		for _, line := range lines {
+			h.send(chatID, line)
+		}
+	}
+	defer release()
 
 	current := res.From
 	if current == "" {
@@ -49,6 +80,7 @@ func (h *UpdateHandler) HandleUpdate(msg *tgbotapi.Message) {
 	switch {
 	case err == nil:
 		h.send(chatID, fmt.Sprintf("Starting update %s → %s...", res.From, res.To))
+		release()
 	case errors.Is(err, updateflow.ErrDevMode):
 		h.send(chatID, "Command /update is not available in dev mode")
 	case errors.Is(err, updateflow.ErrDevVersion):
