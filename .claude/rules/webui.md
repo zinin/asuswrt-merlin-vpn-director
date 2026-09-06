@@ -7,6 +7,11 @@ paths: "server/internal/webapi/**/*, server/internal/auth/**/*, server/cmd/webui
 HTTPS interface for VPN Director, served by the `webui` daemon. Shares the
 `internal/service` layer with the Telegram bot; both write `vpn-director.json`
 only through `ConfigService.UpdateVPNConfig`, which holds a `flock`.
+`configure.sh` is the third writer of that file and takes the same lock
+(`.vpn-director.json.lock`) around its read-modify-write; it rebuilds the
+config from the existing one merged under the template, so the fields the
+daemons own — `jwt_secret`, `exclude_ips`, `paused_clients` — survive a wizard
+run.
 
 ## Architecture
 
@@ -115,9 +120,13 @@ belong to the Web UI half:
   mutex and a queued caller could otherwise consume the whole deadline.
 - The front end polls `/api/version` every 3 seconds with `skipAuthRedirect`,
   so the 401s and connection errors of a restarting server do not bounce the
-  user to the login page. It reloads as soon as the new version answers; after
-  five minutes without one it stops and says so instead of reloading.
-  `/api/update/status` lets a reloaded page rejoin an update it did not start.
+  user to the login page. It reloads as soon as the new version answers. Five
+  minutes is the restart window; past it the loop continues only while
+  `/api/update/status` still reports the script running, up to twenty minutes.
+  `/api/update/status` also lets a reloaded page rejoin an update it did not
+  start — and such a rejoin has no target version, so it records the running
+  version first: the script's `EXIT` trap restarts the old binaries, and
+  without that baseline a failed update looks exactly like a finished one.
 - The login session survives an update because nothing in the flow rewrites
   `jwt_secret`. The exception is the release that introduced the `pwh` claim:
   every token issued before it needs one repeat login.

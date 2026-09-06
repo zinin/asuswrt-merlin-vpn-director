@@ -108,3 +108,24 @@ echo ${#my_array[@]}  # Error: my_array: unbound variable
 local -a my_array=()
 echo ${#my_array[@]}  # Works: outputs 0
 ```
+
+### A `flock` outlives the script through inherited descriptors
+
+**Problem**: `exec 9>lock; flock -n 9` holds the lock on the open file
+description, and descriptors a shell opens are not close-on-exec. Any process
+started while the descriptor is open inherits it — a daemon launched with
+`nohup … &` then holds the lock for its whole lifetime, long after the script
+that took it has exited. Every later `acquire_lock` sees the file locked: with
+no `--wait` it exits 0 without doing anything, with `--wait` it times out.
+
+**Solution**: release and close before starting anything, not at script exit:
+```bash
+flock -u 9
+exec 9>&-
+```
+Both the success path and the recovery path need it; `update_script.sh.tmpl`
+does this in `release_apply_lock`.
+
+**Related**: POSIX allows a single digit in a redirection. `exec 201>` is a
+bash/ksh extension that dash rejects, and generated scripts run under
+`/bin/sh`.
