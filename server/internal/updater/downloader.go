@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,7 +15,8 @@ import (
 
 // Download constants.
 const (
-	repoRawURL      = "https://raw.githubusercontent.com/%s/%s/refs/tags/%s/%s"
+	defaultRawURL   = "https://raw.githubusercontent.com"
+	repoRawPath     = "/%s/%s/refs/tags/%s/%s"
 	downloadTimeout = 2 * time.Minute
 	maxFileSize     = 50 * 1024 * 1024 // 50MB
 )
@@ -73,8 +75,18 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 	return nil
 }
 
+// getRawBaseURL returns the host that serves repository files at a tag. Tests
+// point it at an httptest server, so the unit suite never reaches GitHub - the
+// same seam baseURL provides for the API.
+func (s *Service) getRawBaseURL() string {
+	if s.rawBaseURL != "" {
+		return s.rawBaseURL
+	}
+	return defaultRawURL
+}
+
 func (s *Service) downloadScriptFile(ctx context.Context, tag, file string) error {
-	url := fmt.Sprintf(repoRawURL, repoOwner, repoName, tag, file)
+	url := s.getRawBaseURL() + fmt.Sprintf(repoRawPath, repoOwner, repoName, tag, file)
 
 	// Target: "router/opt/vpn-director/lib/common.sh" → "files/opt/vpn-director/lib/common.sh"
 	target := filepath.Join(s.getFilesDir(), strings.TrimPrefix(file, "router"))
@@ -117,6 +129,9 @@ func (s *Service) downloadBinaries(ctx context.Context, release *Release) error 
 		if url == "" {
 			return fmt.Errorf("asset %s not found in release", assetName)
 		}
+		if err := requireHTTPS(url); err != nil {
+			return fmt.Errorf("asset %s: %w", assetName, err)
+		}
 		target := filepath.Join(s.getFilesDir(), d.Name)
 		if err := s.downloadFile(ctx, url, target); err != nil {
 			return fmt.Errorf("download %s: %w", assetName, err)
@@ -134,6 +149,21 @@ func assetURL(release *Release, name string) string {
 		}
 	}
 	return ""
+}
+
+// requireHTTPS rejects an asset URL that is not https. The URL comes verbatim
+// from the GitHub API response and the file it names is written to /opt and
+// executed as root, so the one scheme downgrade that would hand a network
+// attacker that file is refused here rather than trusted away.
+func requireHTTPS(rawURL string) error {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse download url: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("refusing a non-https download url (scheme %q)", u.Scheme)
+	}
+	return nil
 }
 
 func (s *Service) downloadFile(ctx context.Context, url, target string) error {

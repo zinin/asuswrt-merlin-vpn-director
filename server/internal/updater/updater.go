@@ -86,6 +86,7 @@ type Updater interface {
 type Service struct {
 	httpClient *http.Client
 	baseURL    string // Injectable for testing, empty = default GitHub API
+	rawBaseURL string // Injectable for testing, empty = raw.githubusercontent.com
 	lockFile   string // Configurable for testing
 	updateDir  string // Configurable for testing
 	scriptFile string // Configurable for testing
