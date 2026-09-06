@@ -46,8 +46,11 @@ server/
 │   │   └── sender.go         # Message sending, escaping
 │   ├── updatechecker/        # Automatic update notifications
 │   │   └── checker.go        # Background goroutine, per-user tracking
+│   ├── updateflow/           # Update orchestration shared by the bot and the Web UI
+│   │   ├── flow.go           # Check with a 30-minute cache, typed errors
+│   │   └── start.go          # Pre-flight, lock, background download and script
 │   ├── updater/              # Self-update logic
-│   │   ├── updater.go        # GitHub API, lock file, downloads
+│   │   ├── updater.go        # Daemon table (asset names, binaries, init scripts), GitHub API, lock file
 │   │   ├── github.go         # GitHub release fetching
 │   │   ├── downloader.go     # Asset downloading
 │   │   └── script.go         # Update script generation
@@ -95,15 +98,35 @@ On apply:
 
 ## Self-Update (`/update`)
 
-Downloads latest release from GitHub and applies it:
+Both daemons — `telegram-bot` and `webui` — are updated together, from the bot
+or from the Web UI. The orchestration lives in `internal/updateflow`; the bot
+command and the Web UI handlers are adapters over it.
 
-1. Checks for newer version via GitHub API
-2. Creates lock file (`/tmp/vpn-director-update/lock`)
-3. Downloads release assets to `/tmp/vpn-director-update/files/`
-4. Generates and runs `update.sh` script
-5. Script copies files, restarts bot, sends notification
+1. `Flow.Check` asks the GitHub API for the latest release (result cached for
+   30 minutes; a forced check pierces the cache at most once a minute)
+2. `Flow.Start` creates the lock file (`/tmp/vpn-director-update/lock`)
+3. Release assets go to `/tmp/vpn-director-update/files/`: every script from
+   `scriptFiles` plus one binary per daemon (`telegram-bot-<arch>`,
+   `webui-<arch>`). A release missing either binary is a download error.
+4. `update.sh` is generated from the daemon table and run detached
+5. The script remembers which daemons were running, stops them, copies
+   everything, writes `notify.json` and starts back exactly those daemons
+6. On failure an `EXIT` trap restarts the daemons that were running and writes
+   `notify.json` with `"status": "failed"`
 
-**Dev mode**: Command disabled when `DEV=true` environment variable is set.
+`notify.json`:
+
+```json
+{"chat_id": 0, "old_version": "v1.2.0", "new_version": "v1.3.0",
+ "status": "ok", "initiator": "webui"}
+```
+
+`chat_id` 0 marks an update started from the Web UI: on its next start the bot
+notifies every active chat. A successful notification clears
+`/tmp/vpn-director-update`; a failed one keeps `update.log`, because the
+message points at it.
+
+**Dev mode**: `/update` is disabled with `--dev` and for a `dev` build.
 
 ## Config File
 

@@ -115,7 +115,7 @@ A self-signed TLS certificate is generated automatically during installation. Yo
 | **Clients** | LAN client routing assignment (pause/resume/delete) |
 | **Exclusions** | Country and IP/CIDR exclusion lists |
 | **Logs** | Log viewer (bot, vpn, xray, webui) |
-| **Settings** | Configuration and system settings |
+| **Settings** | Version, self-update, configuration |
 
 ### Configuration
 
@@ -142,6 +142,21 @@ Web UI settings are in `/opt/vpn-director/vpn-director.json` under the `webui` s
 /opt/etc/init.d/S98vpn-director-webui stop
 /opt/etc/init.d/S98vpn-director-webui restart
 ```
+
+### Updates
+
+The **Settings** tab shows the running version, the latest GitHub release and
+its changelog. «Update to vX» downloads the release and restarts both the Web
+UI and the Telegram bot; the page polls for the new version and reloads itself
+when it comes up. The login session survives the update.
+
+An update started from the Web UI is announced in Telegram to every chat the
+bot has talked to. `/update` in the bot does the same thing from the other
+side — both paths update both daemons.
+
+> Upgrading **to** the first release with the unified updater is still done by
+> the old bot-only updater, which does not know about the Web UI. Run
+> `install.sh` once after that upgrade; every later update handles both.
 
 ## Telegram Bot
 
