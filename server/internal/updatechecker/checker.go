@@ -123,6 +123,18 @@ func (c *Checker) notifyUsers(ctx context.Context, release *updater.Release) {
 	// record, or the duplicate asks again on the next tick.
 	notifiedChats := make(map[int64]struct{}, len(users))
 
+	// A chat told on an earlier tick stays told, even though the record that
+	// heard about it is not the one being renamed into existence now. Seed from
+	// the store before sending anything: GetActiveUsers iterates a map, so the
+	// already notified record is not necessarily visited first. Authorisation is
+	// deliberately not consulted here - the question is whether this chat has
+	// already been told about this version, and it has, whoever heard it.
+	for _, user := range users {
+		if c.store.IsNotified(user.Username, release.TagName) {
+			notifiedChats[user.ChatID] = struct{}{}
+		}
+	}
+
 	for _, user := range users {
 		// Check for context cancellation (graceful shutdown)
 		select {
