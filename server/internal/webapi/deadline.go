@@ -16,16 +16,22 @@ import (
 // server-wide WriteTimeout (30 s, server.go) stays in force for every other
 // route.
 const (
-	deadlineSlack  = 30 * time.Second
+	// deadlineSlack is the margin on top of a command's own timeout. Spec 5.3
+	// says 30 s, which turned out to be negative margin in two places: a shell
+	// command can hold its pipes for another shell.waitDelay (10 s) after the
+	// timeout fires, and a mutation waits up to service.configLockTimeout
+	// (30 s) for the config lock before the command even starts.
+	deadlineSlack  = 60 * time.Second
 	applyDeadline  = service.ApplyTimeout + deadlineSlack
 	updateDeadline = service.UpdateTimeout + deadlineSlack
 	// statusDeadline covers `vpn-director.sh status`, whose own StatusTimeout
 	// equals WriteTimeout: without the extension the connection is torn down
 	// exactly when the router is slow enough to need diagnostics.
 	statusDeadline = service.StatusTimeout + deadlineSlack
-	// logsDeadline covers the all-sources branch of /api/logs, which tails the
-	// four log files sequentially, each under TailTimeout.
-	logsDeadline = 4*service.TailTimeout + deadlineSlack
+	// ipDeadline covers `curl ifconfig.me`. It fits inside the 30 s
+	// WriteTimeout today with five seconds to spare; the extension means
+	// raising ExternalIPTimeout cannot silently put the route back over.
+	ipDeadline = service.ExternalIPTimeout + deadlineSlack
 	// importDeadline covers the 10-second subscription download plus one DNS
 	// lookup per server; the import runs no shell command.
 	importDeadline = 2 * time.Minute
@@ -35,6 +41,14 @@ const (
 	// minutes never sit on the connection.
 	githubDeadline = updater.APITimeout + deadlineSlack
 )
+
+// logsDeadline covers the all-sources branch of /api/logs, which tails every
+// file in deps.LogPaths sequentially under TailTimeout each. The count comes
+// from the map rather than a literal, so wiring a fifth source in
+// cmd/webui/main.go cannot leave the deadline behind.
+func logsDeadline(deps *Deps) time.Duration {
+	return time.Duration(len(deps.LogPaths))*service.TailTimeout + deadlineSlack
+}
 
 // extendWriteDeadline pushes the response deadline past the server-wide
 // WriteTimeout for handlers that run long shell commands. Writers that do

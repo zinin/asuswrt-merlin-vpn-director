@@ -12,7 +12,7 @@ import (
 // If source is specified, returns that single log. Otherwise returns all.
 func handleLogs(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		extendWriteDeadline(w, logsDeadline)
+		extendWriteDeadline(w, logsDeadline(deps))
 
 		source := r.URL.Query().Get("source")
 		linesStr := r.URL.Query().Get("lines")

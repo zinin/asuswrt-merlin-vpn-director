@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -161,8 +162,7 @@ func TestLongOpHandlers_ExtendWriteDeadline(t *testing.T) {
 		want    time.Duration
 	}{
 		{"status", "GET", "/api/status", "", handleStatus, statusDeadline},
-		{"logs (all sources)", "GET", "/api/logs", "", handleLogs, logsDeadline},
-		{"logs (single source)", "GET", "/api/logs?source=vpn", "", handleLogs, logsDeadline},
+		{"external ip", "GET", "/api/ip", "", handleIP, ipDeadline},
 		{"apply", "POST", "/api/apply", "", handleApply, applyDeadline},
 		{"restart", "POST", "/api/restart", "", handleRestart, applyDeadline},
 		{"stop", "POST", "/api/stop", "", handleStop, applyDeadline},
@@ -196,5 +196,58 @@ func TestLongOpHandlers_ExtendWriteDeadline(t *testing.T) {
 			tt.handler(deps).ServeHTTP(rec, req)
 			assertDeadlineAbout(t, rec, tt.want)
 		})
+	}
+}
+
+func TestLogsHandler_ExtendsWriteDeadline(t *testing.T) {
+	for _, path := range []string{"/api/logs", "/api/logs?source=vpn"} {
+		t.Run(path, func(t *testing.T) {
+			deps := newTestDeps(t)
+			rec := newDeadlineRecorder()
+			handleLogs(deps).ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+			assertDeadlineAbout(t, rec, logsDeadline(deps))
+		})
+	}
+}
+
+// TestLogsDeadline_TracksTheNumberOfSources: /api/logs without a source tails
+// every file in deps.LogPaths sequentially. A literal 4 in the deadline stops
+// being true the moment a fifth source is wired in cmd/webui/main.go, and the
+// symptom is a torn connection on the diagnostics page.
+func TestLogsDeadline_TracksTheNumberOfSources(t *testing.T) {
+	deps := newTestDeps(t)
+	four := logsDeadline(deps)
+
+	deps.LogPaths["extra"] = "/tmp/test-extra.log"
+	five := logsDeadline(deps)
+
+	if five-four != service.TailTimeout {
+		t.Errorf("adding a log source moved the deadline by %s, want %s", five-four, service.TailTimeout)
+	}
+}
+
+// TestDeadlines_CoverTheirWorstCase states the arithmetic the constants exist
+// for. Each shell command can also hold its pipes for shell.waitDelay after
+// the timeout fires, and a mutation waits for the config lock first.
+func TestDeadlines_CoverTheirWorstCase(t *testing.T) {
+	const waitDelay = 10 * time.Second  // shell.waitDelay
+	const configLock = 30 * time.Second // service.configLockTimeout
+
+	deps := newTestDeps(t)
+	cases := []struct {
+		name      string
+		deadline  time.Duration
+		worstCase time.Duration
+	}{
+		{"apply", applyDeadline, configLock + service.ApplyTimeout + waitDelay},
+		{"ipsets update", updateDeadline, configLock + service.UpdateTimeout + waitDelay},
+		{"status", statusDeadline, service.StatusTimeout + waitDelay},
+		{"logs", logsDeadline(deps), time.Duration(len(deps.LogPaths)) * (service.TailTimeout + waitDelay)},
+		{"external ip", ipDeadline, service.ExternalIPTimeout + waitDelay},
+	}
+	for _, c := range cases {
+		if c.deadline <= c.worstCase {
+			t.Errorf("%s: deadline %s does not cover the worst case %s", c.name, c.deadline, c.worstCase)
+		}
 	}
 }

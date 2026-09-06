@@ -78,6 +78,8 @@ func handleUpdateIPsets(deps *Deps) http.HandlerFunc {
 // handleIP returns a handler that reports the router's external IP address.
 func handleIP(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
+		extendWriteDeadline(w, ipDeadline)
+
 		ip, err := deps.Network.GetExternalIP()
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to get external IP")
