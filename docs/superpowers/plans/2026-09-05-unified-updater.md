@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-05-webui-hardening-design.md`, секция 6 «Блок 3. Единое самообновление». Секции 1–3 — контекст и принятые решения; секция 5 (блок 2) выполнена и служит источником уже существующих API (`extendWriteDeadline`, `UpdateVPNConfig`, `WebUILogPath`).
 
-**Status:** Tasks 1–7 done on `feature/webui-behavior`, HEAD `fcaf94e`; execution paused at the context threshold. Tasks 8–10 and «Проверка блока» remain. Task bodies above were trimmed after execution; the full text stays in git history. The SDD ledger with every ruling, deferred minor and review verdict is `.superpowers/sdd/2026-09-05-unified-updater/progress.md`.
+**Status:** Complete. All ten tasks are done on `feature/webui-behavior`, HEAD `f0d30e9`; «Проверка блока» Steps 1–5 are green and Step 6, the manual router checklist, is the author's and is still outstanding. The final whole-block review over `3830d7b..a493654` returned 0 Critical / 4 Important / 15 Minor and «merge with fixes»; the four Important findings were answered by one fix wave (`bec9a29`, `27cca41`, `f0d30e9`) and its re-review found them all addressed. Task bodies 1–7 were trimmed after execution; the full text stays in git history. The SDD ledger with every ruling, deferred minor and review verdict is `.superpowers/sdd/2026-09-05-unified-updater/progress.md`, and the deferred-minor triage that block 4 starts from is in `final-review.md` beside it.
 
 ---
 
