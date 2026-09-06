@@ -4,7 +4,8 @@
     "port": 8444,
     "cert_file": "/opt/vpn-director/certs/server.crt",
     "key_file": "/opt/vpn-director/certs/server.key",
-    "jwt_secret": ""
+    "jwt_secret": "",
+    "log_level": "info"
   },
   "tunnel_director": {
     "tunnels": {}

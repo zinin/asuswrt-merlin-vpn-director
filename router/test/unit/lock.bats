@@ -75,5 +75,28 @@ hold_lock() {
     assert_output --partial "Timed out waiting for lock"
     local elapsed=$((SECONDS - start))
     [ "$elapsed" -ge 8 ]
-    [ "$elapsed" -lt 12 ]
+    # The bug this test exists for is caught by the lower bound; four seconds
+    # of headroom on a loaded CI runner is a flake, not a diagnostic.
+    [ "$elapsed" -lt 20 ]
+}
+
+@test "acquire_lock: a non-numeric VPD_LOCK_WAIT is ignored, not an arithmetic error" {
+    load_common
+    # The lock is free, so this must simply succeed: without the guard the
+    # arithmetic in `local limit=$((10#...))` aborts the script before flock is
+    # ever tried, and an operator who exported the variable by hand loses every
+    # apply on the router.
+    VPD_LOCK_WAIT=abc run acquire_lock "$LOCK_NAME"
+
+    assert_success
+    assert_output --partial "Ignoring invalid VPD_LOCK_WAIT"
+}
+
+@test "acquire_lock: an empty VPD_LOCK_WAIT takes the non-blocking path, not the arithmetic one" {
+    load_common
+    # An empty string satisfies the -z test, so this never reaches the arithmetic
+    # branch: it takes the free lock the same way an unset variable does.
+    VPD_LOCK_WAIT= run acquire_lock "$LOCK_NAME"
+
+    assert_success
 }

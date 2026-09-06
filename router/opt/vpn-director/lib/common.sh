@@ -451,6 +451,13 @@ acquire_lock() {
             exit 0
         fi
     else
+        # parse_option validates the value that comes from --wait, but
+        # VPD_LOCK_WAIT can also be exported by hand: garbage there must not
+        # abort the script with an arithmetic error while the lock is free.
+        if [[ ! ${VPD_LOCK_WAIT} =~ ^[0-9]+$ ]]; then
+            log -l WARN "Ignoring invalid VPD_LOCK_WAIT '${VPD_LOCK_WAIT}', using 120s"
+            VPD_LOCK_WAIT=120
+        fi
         # A leading zero makes (( )) read the value as octal, so 08/09 are not valid
         # numbers and the timeout check would never fire, leaving an unbounded wait.
         # Force base 10 once, then use that bound everywhere.
