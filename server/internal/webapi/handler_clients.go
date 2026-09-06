@@ -3,6 +3,7 @@ package webapi
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -212,18 +213,23 @@ func findClient(cfg *vpnconfig.VPNDirectorConfig, addr string) (clientMatch, boo
 
 // clientAddrFromQuery reads and normalizes the ip query parameter. It writes
 // the error response itself and returns ok=false when the handler must stop.
+//
+// An address that fails normalization is passed through verbatim instead of
+// being rejected: older builds accepted IPv6 and a hand-edited config can hold
+// anything, GET /api/clients still lists such an entry, and a 400 here would
+// leave it impossible to pause or delete from the UI. findClient compares
+// unparseable entries verbatim, so a value matching nothing still ends as
+// 404 client not found rather than touching the config.
 func clientAddrFromQuery(w http.ResponseWriter, r *http.Request) (string, bool) {
-	raw := r.URL.Query().Get("ip")
+	raw := strings.TrimSpace(r.URL.Query().Get("ip"))
 	if raw == "" {
 		jsonError(w, http.StatusBadRequest, "ip query parameter is required")
 		return "", false
 	}
-	ip, err := vpnconfig.NormalizeClientAddr(raw)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, err.Error())
-		return "", false
+	if ip, err := vpnconfig.NormalizeClientAddr(raw); err == nil {
+		return ip, true
 	}
-	return ip, true
+	return raw, true
 }
 
 // sameAddr reports whether stored denotes the same address as the normalized

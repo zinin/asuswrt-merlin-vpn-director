@@ -347,6 +347,63 @@ func TestHandlePauseClient_AlreadyPaused(t *testing.T) {
 	}
 }
 
+// master's Web UI accepted IPv6, and a hand-edited config can hold anything.
+// GET /api/clients still lists such an entry, so rejecting it here would leave
+// it visible and undeletable.
+func TestHandleDeleteClient_RemovesAnEntryThatFailsNormalization(t *testing.T) {
+	mc := &mockConfig{
+		cfg: &vpnconfig.VPNDirectorConfig{
+			Xray: vpnconfig.XrayConfig{Clients: []string{"2001:db8::1", "192.168.50.10"}},
+		},
+	}
+	deps := newTestDeps(t)
+	deps.Config = mc
+	deps.VPN = &mockVPN{}
+
+	req := httptest.NewRequest("DELETE", "/api/clients?ip=2001:db8::1", nil)
+	rec := httptest.NewRecorder()
+	handleDeleteClient(deps).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if mc.savedCfg == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(mc.savedCfg.Xray.Clients) != 1 || mc.savedCfg.Xray.Clients[0] != "192.168.50.10" {
+		t.Errorf("clients = %v, want only the remaining IPv4 entry", mc.savedCfg.Xray.Clients)
+	}
+}
+
+// The pass-through only exists for entries that are actually configured;
+// anything else must still stop before the config is touched.
+func TestHandlePauseClient_UnparseableAddressThatIsNotConfigured(t *testing.T) {
+	// 404, not 400: the address is looked up now instead of validated, so an
+	// entry an older build stored stays reachable and a typo still stops here.
+	for _, ip := range []string{"::1", "not-an-address"} {
+		t.Run(ip, func(t *testing.T) {
+			mc := &mockConfig{
+				cfg: &vpnconfig.VPNDirectorConfig{
+					Xray: vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}},
+				},
+			}
+			deps := newTestDeps(t)
+			deps.Config = mc
+
+			req := httptest.NewRequest("POST", "/api/clients/pause?ip="+ip, nil)
+			rec := httptest.NewRecorder()
+			handlePauseClient(deps).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if mc.savedCfg != nil {
+				t.Error("a miss must not write the config")
+			}
+		})
+	}
+}
+
 func TestHandlePauseClient_MissingIP(t *testing.T) {
 	deps := newTestDeps(t)
 
@@ -634,21 +691,6 @@ func TestHandlePauseClient_NotFound(t *testing.T) {
 	}
 	if mc.savedCfg != nil {
 		t.Error("config must not be saved for an unknown client")
-	}
-}
-
-func TestHandlePauseClient_InvalidIP(t *testing.T) {
-	deps := newTestDeps(t)
-
-	handler := handlePauseClient(deps)
-
-	req := httptest.NewRequest("POST", "/api/clients/pause?ip=::1", nil)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
