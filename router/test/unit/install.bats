@@ -59,6 +59,9 @@ EOF
 
     assert_success
     assert_output --partial "Failed to start Web UI"
+    # Without the early return the installer would report the failure and then
+    # go on to announce a URL for a daemon that is not running.
+    refute_output --partial "Web UI started"
 }
 
 @test "start_webui: falls back to a default address when nvram has no lan_ipaddr" {
@@ -72,4 +75,17 @@ EOF
 
     assert_success
     assert_output --partial "https://192.168.1.1:8444"
+}
+
+@test "start_webui: records the LAN URL in WEBUI_URL for print_next_steps" {
+    load_installer
+    touch "$VPD_DIR/webui"
+    chmod +x "$VPD_DIR/webui"
+    fake_init 0
+
+    # Deliberately not `run`: it forks a subshell, so an assignment to the
+    # global would be lost and print_next_steps would take the wrong branch.
+    start_webui
+
+    assert_equal "$WEBUI_URL" "https://192.168.50.1:8444"
 }
