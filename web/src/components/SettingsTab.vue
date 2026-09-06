@@ -19,7 +19,10 @@ const loading = ref(false)
 const checking = ref(false)
 const error = ref('')
 
-const canUpdate = computed(() => !!updateInfo.value?.update_available && !updating.value)
+// checking is part of the guard: during a forced check updateInfo still holds
+// the previous answer, so the button would offer to install a version the
+// server is at that moment re-checking.
+const canUpdate = computed(() => !!updateInfo.value?.update_available && !updating.value && !checking.value)
 
 async function loadVersion() {
   error.value = ''
@@ -191,7 +194,7 @@ onMounted(async () => {
         {{ checking ? '...' : '⟳ Check for updates' }}
       </button>
       <button class="btn btn-primary" :disabled="!canUpdate" @click="doUpdate">
-        {{ updating ? 'Updating...' : `⬆ Update to ${updateInfo?.latest || ''}` }}
+        {{ updating ? 'Updating...' : (updateInfo?.latest ? `⬆ Update to ${updateInfo.latest}` : '⬆ Update') }}
       </button>
       <button
         v-if="updateInfo?.changelog"

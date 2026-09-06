@@ -69,9 +69,14 @@ onMounted(() => {
     <div class="topbar">
       <div class="topbar-title">VPN Director</div>
       <div class="topbar-info">
-        <span v-if="updateBanner" class="update-banner" @click="activeTab = 'settings'">
+        <button
+          v-if="updateBanner"
+          type="button"
+          class="update-banner"
+          @click="activeTab = 'settings'"
+        >
           {{ updateBanner }}
-        </span>
+        </button>
         <span v-if="version">{{ version }}</span>
         <button class="btn btn-red" @click="logout">Logout</button>
       </div>
