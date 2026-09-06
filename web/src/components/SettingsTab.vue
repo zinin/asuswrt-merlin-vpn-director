@@ -2,6 +2,13 @@
 import { ref, computed, onMounted } from 'vue'
 import api from '../api'
 import type { VersionResponse, UpdateCheckResponse } from '../types'
+import {
+  claimPolling,
+  releasePolling,
+  updateMessage,
+  updateTarget,
+  updating,
+} from '../updateState'
 
 const versionInfo = ref<VersionResponse | null>(null)
 const updateInfo = ref<UpdateCheckResponse | null>(null)
@@ -10,8 +17,6 @@ const showConfig = ref(false)
 const showChangelog = ref(false)
 const loading = ref(false)
 const checking = ref(false)
-const updating = ref(false)
-const updateMessage = ref('')
 const error = ref('')
 
 const canUpdate = computed(() => !!updateInfo.value?.update_available && !updating.value)
@@ -80,6 +85,26 @@ async function waitForVersion(target: string) {
   return false
 }
 
+// runPolling owns the waiting screen. It survives this component: if the user
+// leaves the tab the loop keeps going against the module state, and a remount
+// re-renders the same screen instead of starting a second loop.
+async function runPolling() {
+  if (!claimPolling()) return
+  try {
+    updateMessage.value = 'Updating, the server is restarting...'
+    const arrived = await waitForVersion(updateTarget.value)
+    if (arrived) {
+      // Reload so the browser picks up the new bundle.
+      window.location.reload()
+      return
+    }
+    updateMessage.value = 'The new version did not come up within 5 minutes. Check the logs.'
+  } finally {
+    updating.value = false
+    releasePolling()
+  }
+}
+
 async function doUpdate() {
   const target = updateInfo.value?.latest
   if (!target) return
@@ -90,31 +115,50 @@ async function doUpdate() {
   updateMessage.value = 'Starting update...'
   try {
     const resp = await api.update()
-    const data = resp.data
-    if (data.update_available === false) {
+    if (resp.data.update_available === false) {
       await loadUpdate()
       updateMessage.value = 'Already running the latest version.'
       updating.value = false
       return
     }
-    updateMessage.value = 'Updating, the server is restarting...'
-    const arrived = await waitForVersion(data.to || target)
-    if (arrived) {
-      // Reload so the browser picks up the new bundle.
-      window.location.reload()
-      return
-    }
-    updateMessage.value = 'The new version did not come up within 5 minutes. Check the logs.'
+    updateTarget.value = resp.data.to || target
   } catch (e: any) {
     updateMessage.value = 'Error: ' + (e.response?.data?.error || e.message)
-  } finally {
     updating.value = false
+    return
   }
+  await runPolling()
+}
+
+// resumeFromServer covers the case the module state cannot: a page reload, or a
+// second browser, meeting an update it never started. /api/update/status is the
+// only way to tell "still updating" from "done".
+async function resumeFromServer() {
+  try {
+    const resp = await api.updateStatus()
+    if (!resp.data.in_progress) return
+  } catch {
+    // The server is unreachable; the normal error paths already say so.
+    return
+  }
+  if (!updateTarget.value) {
+    updateTarget.value = updateInfo.value?.latest || ''
+  }
+  if (!updateTarget.value) return
+  updating.value = true
+  void runPolling()
 }
 
 onMounted(async () => {
+  if (updating.value) {
+    // An update started before the tab was left. Rejoin its screen instead of
+    // asking a restarting server for a version and a release list.
+    void runPolling()
+    return
+  }
   await loadVersion()
   await loadUpdate()
+  await resumeFromServer()
 })
 </script>
 
