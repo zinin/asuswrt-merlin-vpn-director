@@ -11,5 +11,6 @@ case "$*" in
     "get vpn_client3_addr") echo "example.com" ;;
     "get vpn_client4_addr") echo "" ;;
     "get vpn_client5_addr") echo "" ;;
+    "get lan_ipaddr")   [ "${NVRAM_NO_LAN_IP:-0}" = "1" ] && echo "" || echo "192.168.50.1" ;;
     *) echo "" ;;
 esac

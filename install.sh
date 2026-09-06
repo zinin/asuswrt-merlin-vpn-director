@@ -23,6 +23,8 @@ VPD_DIR="/opt/vpn-director"
 JFFS_HOOKS_DIR="/jffs/scripts"
 XRAY_CONFIG_DIR="/opt/etc/xray"
 GITHUB_REPO="zinin/asuswrt-merlin-vpn-director"
+INIT_DIR="/opt/etc/init.d"
+WEBUI_URL=""   # set by start_webui once the daemon answers; read by print_next_steps
 
 ###############################################################################
 # Helper functions
@@ -119,7 +121,7 @@ create_directories() {
     mkdir -p "$VPD_DIR/lib"
     mkdir -p "$VPD_DIR/data"
     mkdir -p "$XRAY_CONFIG_DIR"
-    mkdir -p "/opt/etc/init.d"
+    mkdir -p "$INIT_DIR"
     mkdir -p "$JFFS_HOOKS_DIR"
 
     print_success "Directories created"
@@ -337,12 +339,44 @@ setup_webui_config() {
         fi
 
         local tmp="${config_path}.tmp.$$"
-        jq '. + {"webui": {"port": 8444, "cert_file": "/opt/vpn-director/certs/server.crt", "key_file": "/opt/vpn-director/certs/server.key", "jwt_secret": ""}}' "$config_path" > "$tmp" && mv "$tmp" "$config_path"
+        jq '. + {"webui": {"port": 8444, "cert_file": "/opt/vpn-director/certs/server.crt", "key_file": "/opt/vpn-director/certs/server.key", "jwt_secret": "", "log_level": "info"}}' "$config_path" > "$tmp" && mv "$tmp" "$config_path"
         print_success "Added webui section to config"
     else
         print_info "Install jq for automatic webui config setup: opkg install jq"
         print_info "Or the webui server will auto-configure on first start"
     fi
+}
+
+###############################################################################
+# Start Web UI
+###############################################################################
+
+start_webui() {
+    local webui_path="$VPD_DIR/webui"
+    local init_script="$INIT_DIR/S98vpn-director-webui"
+    local lan_ip
+
+    # download_webui skips unsupported architectures and tolerates a failed
+    # download, so there is not always something to start.
+    if [[ ! -x "$webui_path" ]]; then
+        return 0
+    fi
+    if [[ ! -x "$init_script" ]]; then
+        print_info "Web UI init script not found, skipping start"
+        return 0
+    fi
+
+    # An upgrade may already have restarted it (see download_webui); the init
+    # script's start is a no-op when the daemon is up.
+    if ! "$init_script" start >/dev/null 2>&1; then
+        print_error "Failed to start Web UI - see /tmp/vpn-director-webui.log"
+        return 0
+    fi
+
+    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || true)
+    [[ -n "$lan_ip" ]] || lan_ip="192.168.1.1"
+    WEBUI_URL="https://${lan_ip}:8444"
+    print_success "Web UI started: $WEBUI_URL"
 }
 
 ###############################################################################
@@ -359,9 +393,15 @@ print_next_steps() {
     printf "     ${GREEN}/opt/vpn-director/configure.sh${NC}\n\n"
     printf "  3. (Optional) Setup Telegram bot:\n"
     printf "     ${GREEN}/opt/vpn-director/setup_telegram_bot.sh${NC}\n\n"
-    printf "  4. (Optional) Start Web UI:\n"
-    printf "     ${GREEN}/opt/etc/init.d/S98vpn-director-webui start${NC}\n"
-    printf "     Then open https://<router-ip>:8444\n\n"
+    if [[ -n "$WEBUI_URL" ]]; then
+        printf "  4. Open the Web UI (already running):\n"
+        printf "     ${GREEN}%s${NC}\n" "$WEBUI_URL"
+        printf "     Log in with the router admin username and password\n\n"
+    else
+        printf "  4. Web UI is not running. Start it with:\n"
+        printf "     ${GREEN}%s/S98vpn-director-webui start${NC}\n" "$INIT_DIR"
+        printf "     Then open https://<router-ip>:8444\n\n"
+    fi
     printf "Or edit configs manually:\n"
     printf "  /opt/vpn-director/vpn-director.json\n"
     printf "  /opt/etc/xray/config.json\n"
@@ -383,7 +423,17 @@ main() {
     download_webui
     generate_tls_cert
     setup_webui_config
+    start_webui
     print_next_steps
 }
+
+###############################################################################
+# Allow sourcing for testing
+###############################################################################
+
+if [[ ${1:-} == "--source-only" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
 
 main "$@"
