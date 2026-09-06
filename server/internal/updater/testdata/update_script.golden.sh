@@ -49,6 +49,36 @@ start_running() {
     return $rc
 }
 
+# The bot reads notify.json on startup and, on status=ok, deletes the whole
+# update directory. Start everyone else first, commit the terminal status,
+# then start the bot so it cannot announce success while Web UI is still down.
+start_except() {
+    skip=$1
+    rc=0
+    for init in $RUNNING_INITS; do
+        [ -n "$skip" ] && [ "$init" = "$skip" ] && continue
+        log "Starting $init"
+        if ! "$INIT_DIR/$init" start; then
+            log "WARNING: $init start failed"
+            rc=1
+        fi
+    done
+    return $rc
+}
+
+start_if_listed() {
+    want=$1
+    [ -n "$want" ] || return 0
+    for init in $RUNNING_INITS; do
+        if [ "$init" = "$want" ]; then
+            log "Starting $init"
+            "$INIT_DIR/$init" start
+            return $?
+        fi
+    done
+    return 0
+}
+
 # ash has no ERR trap, so recovery hangs off EXIT and inspects the code.
 # set +e keeps a failing recovery step from cutting the recovery short.
 on_exit() {
@@ -166,14 +196,18 @@ done
 # to do that, and leaving two binaries in tmpfs until reboot is waste.
 rm -rf "$FILES_DIR"
 
-# 6. Create notify file
-log "Creating notify file"
-write_notify ok
+# Init script of the daemon that reads notify.json. Looked up from the table
+# so the script never names an init file outside DAEMONS.
+NOTIFY_INIT=""
+for entry in $DAEMONS; do
+    name="${entry%%|*}"
+    rest="${entry#*|}"
+    if [ "$name" = "telegram-bot" ]; then
+        NOTIFY_INIT="${rest##*|}"
+    fi
+done
 
-# 7. Remove lock
-rm -f "$LOCK_FILE"
-
-# 8. Re-monitor in monit (if available) - optional, continue on failure
+# 6. Re-monitor in monit (if available) - optional, continue on failure
 if command -v monit >/dev/null 2>&1; then
     for entry in $DAEMONS; do
         log "Re-monitoring ${entry%%|*} in monit"
@@ -181,20 +215,35 @@ if command -v monit >/dev/null 2>&1; then
     done
 fi
 
-# 9. Start the daemons that were running before the update. notify.json
-#    already says ok - the step order commits it at step 6 - so a daemon that
-#    fails to come back has to correct it here, or the operator is told the
-#    update succeeded while the Web UI is gone. The trap is disarmed first:
-#    every daemon has just had its start attempt and repeating it would add
-#    nothing. The lock went at step 7, so there is nothing left to release.
-if ! start_running; then
+# 7. Start everyone except the notify reader, then commit the status, then
+#    start the bot. A failed Web UI start must rewrite notify.json before the
+#    bot can send "Update complete" and delete the directory.
+if ! start_except "$NOTIFY_INIT"; then
     trap - EXIT
     set +e
     log "ERROR: a daemon failed to start, the update is not complete"
     write_notify failed
+    start_if_listed "$NOTIFY_INIT" || true
+    rm -f "$LOCK_FILE"
     exit 1
 fi
 
-# 10. Cleanup deferred to the bot after a successful startup notification
+log "Creating notify file"
+write_notify ok
+
+if ! start_if_listed "$NOTIFY_INIT"; then
+    trap - EXIT
+    set +e
+    log "ERROR: a daemon failed to start, the update is not complete"
+    write_notify failed
+    rm -f "$LOCK_FILE"
+    exit 1
+fi
+
+# 8. Drop the lock only after every start attempt. While it names this
+#    script, the other daemon will not treat the update as finished.
+rm -f "$LOCK_FILE"
+
+# 9. Cleanup deferred to the bot after a successful startup notification
 # (leave $UPDATE_DIR for notify.json and update.log)
 log "Update script completed"

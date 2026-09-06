@@ -101,6 +101,11 @@ func TestGenerateScript(t *testing.T) {
 	if !strings.Contains(script, `rm -rf "$FILES_DIR"`) {
 		t.Error("script must drop files/ after the copy so a Web UI-only router does not keep binaries in tmpfs")
 	}
+	okAt := strings.Index(script, "write_notify ok")
+	exceptAt := strings.Index(script, `start_except "$NOTIFY_INIT"`)
+	if okAt < 0 || exceptAt < 0 || exceptAt > okAt {
+		t.Error("write_notify ok must come after the non-bot daemons have started, or the bot can announce success while Web UI is down")
+	}
 
 	// Check that cp commands do NOT have || true (critical commands)
 	for _, line := range strings.Split(script, "\n") {
