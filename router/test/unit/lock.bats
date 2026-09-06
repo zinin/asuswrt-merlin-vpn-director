@@ -75,8 +75,9 @@ hold_lock() {
     assert_output --partial "Timed out waiting for lock"
     local elapsed=$((SECONDS - start))
     [ "$elapsed" -ge 8 ]
-    # The bug this test exists for is caught by the lower bound; four seconds
-    # of headroom on a loaded CI runner is a flake, not a diagnostic.
+    # The lower bound is what catches the bug; the upper one only rules out an
+    # unbounded wait, so it can afford to be generous. The old margin of four
+    # seconds over the 8s wait flaked on a loaded CI runner.
     [ "$elapsed" -lt 20 ]
 }
 
@@ -99,4 +100,5 @@ hold_lock() {
     VPD_LOCK_WAIT= run acquire_lock "$LOCK_NAME"
 
     assert_success
+    refute_output --partial "Ignoring invalid VPD_LOCK_WAIT"
 }
