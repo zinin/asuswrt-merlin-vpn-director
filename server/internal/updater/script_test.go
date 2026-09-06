@@ -87,8 +87,14 @@ func TestGenerateScript(t *testing.T) {
 	if !strings.Contains(script, `monit unmonitor "${entry%%|*}" 2>/dev/null || true`) {
 		t.Error("Script missing || true for monit unmonitor")
 	}
-	if !strings.Contains(script, `monit monitor "${entry%%|*}" 2>/dev/null || true`) {
+	if !strings.Contains(script, `monit monitor "$name" 2>/dev/null || true`) {
 		t.Error("Script missing || true for monit monitor")
+	}
+	if !strings.Contains(script, "remonitor_running") {
+		t.Error("script must remonitor only daemons that were running")
+	}
+	if !strings.Contains(script, "flock -n 201") {
+		t.Error("script must wait for vpn-director.sh before rewriting it")
 	}
 
 	own := strings.Index(script, `echo $$ > "$LOCK_FILE"`)
@@ -208,6 +214,7 @@ func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
 		"set +e":              "recovery must survive its own failing steps",
 		"write_notify failed": "a failed update must leave status failed in notify.json",
 		"start_running":       "recovery must restart the daemons that were running",
+		"remonitor_running":   "recovery must remonitor only daemons that were running",
 		`rm -f "$LOCK_FILE"`:  "a failed update must release the lock",
 	}
 	for needle, why := range checks {
@@ -254,19 +261,18 @@ func TestGenerateScript_ReportsAFailedStart(t *testing.T) {
 		t.Fatalf("generateScript() error = %v", err)
 	}
 
-	// notify.json is committed as ok at step 6, before the daemons are
-	// started at step 9, so step 9 is the only place that can correct it.
-	// Both needles have a copy inside the trap, so this looks below it only.
+	// Non-bot daemons start before notify.json is committed as ok, so a
+	// failed Web UI start can still rewrite it. Both needles have a copy
+	// inside the trap, so this looks below it only.
 	steps := afterOnExit(t, script)
-	if !strings.Contains(steps, "if ! start_running; then") {
-		t.Error("step 9 must notice a failed start instead of reporting the update complete")
+	if !strings.Contains(steps, `if ! start_except "$NOTIFY_INIT"; then`) {
+		t.Error("the happy path must notice a failed start instead of reporting the update complete")
 	}
 	if !strings.Contains(steps, "write_notify failed") {
 		t.Error("a daemon that fails to come back must turn notify.json to failed")
 	}
 
-	// ... which it can only do if start_running answers the question.
-	body := functionBody(t, script, "start_running")
+	body := functionBody(t, script, "start_except")
 	if strings.Contains(body, "start || log") {
 		t.Error("start_running must not swallow a failed start behind || log")
 	}

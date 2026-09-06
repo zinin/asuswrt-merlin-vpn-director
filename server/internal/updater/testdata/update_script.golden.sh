@@ -79,6 +79,24 @@ start_if_listed() {
     return 0
 }
 
+# Restore monit only for daemons that were running. Remonitoring a stopped
+# one would start it, against "a daemon that was stopped stays stopped".
+remonitor_running() {
+    command -v monit >/dev/null 2>&1 || return 0
+    for entry in $DAEMONS; do
+        name="${entry%%|*}"
+        rest="${entry#*|}"
+        init="${rest##*|}"
+        for r in $RUNNING_INITS; do
+            if [ "$r" = "$init" ]; then
+                log "Re-monitoring $name in monit"
+                monit monitor "$name" 2>/dev/null || true
+                break
+            fi
+        done
+    done
+}
+
 # ash has no ERR trap, so recovery hangs off EXIT and inspects the code.
 # set +e keeps a failing recovery step from cutting the recovery short.
 on_exit() {
@@ -89,11 +107,7 @@ on_exit() {
         exit 0
     fi
     log "ERROR: update failed with exit code $code"
-    if command -v monit >/dev/null 2>&1; then
-        for entry in $DAEMONS; do
-            monit monitor "${entry%%|*}" 2>/dev/null || true
-        done
-    fi
+    remonitor_running
     start_running
     write_notify failed
     rm -f "$LOCK_FILE"
@@ -166,6 +180,22 @@ for entry in $DAEMONS; do
     fi
 done
 
+# 3b. vpn-director.sh may still be applying after we stopped the daemon that
+# launched it. Do not rewrite its scripts from under it; hold the lock so a
+# new apply cannot start mid-copy. BusyBox flock has no -w.
+mkdir -p /var/lock
+exec 201>/var/lock/vpn-director.lock
+waited=0
+until flock -n 201; do
+    if [ "$waited" -ge 300 ]; then
+        log "ERROR: timed out waiting for vpn-director.sh"
+        exit 1
+    fi
+    [ "$waited" -eq 0 ] && log "waiting for vpn-director.sh to finish"
+    sleep 1
+    waited=$((waited + 1))
+done
+
 # 4. Copy files - NO || true, fail on error
 log "Copying files"
 cp -f "$FILES_DIR/opt/vpn-director/"*.sh /opt/vpn-director/
@@ -207,13 +237,8 @@ for entry in $DAEMONS; do
     fi
 done
 
-# 6. Re-monitor in monit (if available) - optional, continue on failure
-if command -v monit >/dev/null 2>&1; then
-    for entry in $DAEMONS; do
-        log "Re-monitoring ${entry%%|*} in monit"
-        monit monitor "${entry%%|*}" 2>/dev/null || true
-    done
-fi
+# 6. Re-monitor only the daemons that were running
+remonitor_running
 
 # 7. Start everyone except the notify reader, then commit the status, then
 #    start the bot. A failed Web UI start must rewrite notify.json before the
