@@ -5,6 +5,7 @@ import type { VersionResponse, UpdateCheckResponse } from '../types'
 import {
   claimPolling,
   releasePolling,
+  updateBaseline,
   updateMessage,
   updateTarget,
   updating,
@@ -88,23 +89,30 @@ async function updateStillRunning(): Promise<boolean | 'unknown'> {
   }
 }
 
+type PollOutcome = 'updated' | 'unchanged' | 'timeout'
+
 // waitForVersion polls /api/version until the new build answers. Five minutes
 // is the spec's restart window; past that we keep going while
 // /api/update/status says the script is still running (a slow download), up
 // to twenty minutes so a hung router cannot pin the tab forever.
-async function waitForVersion(target: string) {
+async function waitForVersion(target: string, baseline: string): Promise<PollOutcome> {
   const started = Date.now()
   while (Date.now() - started < hardWaitMs) {
     await sleep(pollIntervalMs)
     try {
       const resp = await api.pollVersion()
-      if (target && resp.data?.version === target) {
-        return true
+      const version = resp.data?.version
+      if (target && version === target) {
+        return 'updated'
       }
-      if (!target && resp.data?.version) {
+      if (!target && version) {
         const running = await updateStillRunning()
         if (running === false) {
-          return true
+          // Without a target the version changing is the only evidence of a
+          // new build: a failed update looks exactly the same from here, since
+          // the script's EXIT trap restarts the old binaries and drops the
+          // lock. Reloading on that would present the old build as updated.
+          return baseline && version === baseline ? 'unchanged' : 'updated'
         }
       }
     } catch {
@@ -117,9 +125,9 @@ async function waitForVersion(target: string) {
     if (running === true || running === 'unknown') {
       continue
     }
-    return false
+    return 'timeout'
   }
-  return false
+  return 'timeout'
 }
 
 // runPolling owns the waiting screen. It survives this component: if the user
@@ -129,19 +137,23 @@ async function runPolling() {
   if (!claimPolling()) return
   try {
     updateMessage.value = 'Updating, the server is restarting...'
-    const arrived = await waitForVersion(updateTarget.value)
-    if (arrived) {
+    const outcome = await waitForVersion(updateTarget.value, updateBaseline.value)
+    if (outcome === 'updated') {
       // Reload so the browser picks up the new bundle.
       window.location.reload()
       return
     }
-    updateMessage.value = 'The new version did not come up within 5 minutes. Check the logs.'
+    updateMessage.value =
+      outcome === 'unchanged'
+        ? 'The update finished without installing a new version. Check the logs.'
+        : 'The new version did not come up within 20 minutes. Check the logs.'
   } finally {
     updating.value = false
     // Both producers write the target before calling this, so clearing it here
     // - not in doUpdate - keeps a timed-out attempt from leaving a stale
     // version behind for the next attempt or for the onMounted rejoin to poll.
     updateTarget.value = ''
+    updateBaseline.value = ''
     releasePolling()
   }
 }
@@ -184,6 +196,16 @@ async function resumeFromServer() {
   }
   if (!updateTarget.value) {
     updateTarget.value = updateInfo.value?.latest || ''
+  }
+  if (!updateTarget.value && !updateBaseline.value) {
+    // No target to wait for, so record what is running now: that is the only
+    // thing a later answer can be compared against.
+    try {
+      const cur = await api.pollVersion()
+      updateBaseline.value = cur.data?.version || ''
+    } catch {
+      // Mid-restart. Without a baseline the loop keeps its old behaviour.
+    }
   }
   updating.value = true
   void runPolling()

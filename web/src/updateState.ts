@@ -9,6 +9,12 @@ export const updating = ref(false)
 export const updateMessage = ref('')
 export const updateTarget = ref('')
 
+// The version the router was running when the poller joined an update whose
+// target is unknown. Without it "some version answers and the script is gone"
+// cannot be told apart from the update script's EXIT trap restarting the old
+// binaries.
+export const updateBaseline = ref('')
+
 // Only one poller may run. Without this a remount would start a second loop
 // and the page would reload twice, the second time over a half-loaded first.
 let polling = false
