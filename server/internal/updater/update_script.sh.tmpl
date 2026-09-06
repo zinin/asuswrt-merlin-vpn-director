@@ -117,9 +117,13 @@ on_exit() {
     fi
     log "ERROR: update failed with exit code $code"
     release_apply_lock
+    # Before the daemons come back: the bot reads notify.json once, on
+    # startup. Started first, it finds no file, and there is no second look in
+    # a running process - the failure would stay unreported until the next
+    # restart.
+    write_notify failed
     remonitor_running
     start_running
-    write_notify failed
     rm -f "$LOCK_FILE"
     exit "$code"
 }

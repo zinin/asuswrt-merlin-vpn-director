@@ -280,6 +280,29 @@ func TestGenerateScript_UsesPOSIXFileDescriptors(t *testing.T) {
 	}
 }
 
+// The bot reads notify.json once, on startup. Restarted before the file
+// exists it finds nothing, and a running process never looks again, so the
+// failure would stay unreported until the next restart.
+func TestGenerateScript_CommitsTheFailedStatusBeforeRestarting(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	body := onExitBody(t, script)
+	notify := strings.Index(body, "write_notify failed")
+	start := strings.Index(body, "start_running")
+	switch {
+	case notify < 0:
+		t.Fatal("recovery never writes the failed status")
+	case start < 0:
+		t.Fatal("recovery never restarts the daemons")
+	case notify > start:
+		t.Error("recovery restarts the daemons before it writes notify.json")
+	}
+}
+
 func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
 	s := &Service{}
 	script, err := s.generateScript(validOpts())
