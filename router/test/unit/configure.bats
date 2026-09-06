@@ -105,6 +105,63 @@ write_daemon_config() {
     assert_output "600"
 }
 
+@test "step_generate_configs: keeps data_dir and the advanced section" {
+    load_wizard
+    write_daemon_config
+    jq '.data_dir = "/tmp/moved-storage" | .advanced.xray.tproxy_port = 23456' \
+        "$VPD_DIR/vpn-director.json" > "$VPD_DIR/vpn-director.json.new"
+    mv "$VPD_DIR/vpn-director.json.new" "$VPD_DIR/vpn-director.json"
+
+    run step_generate_configs
+
+    assert_success
+    run jq -r '[.data_dir, (.advanced.xray.tproxy_port | tostring)] | join("|")' \
+        "$VPD_DIR/vpn-director.json"
+    assert_output "/tmp/moved-storage|23456"
+}
+
+@test "step_generate_configs: picks up a key an update added to the template" {
+    load_wizard
+    write_daemon_config
+    jq '. + {"new_setting": "from-the-template"}' \
+        "$VPD_DIR/vpn-director.json.template" > "$VPD_DIR/tpl.new"
+    mv "$VPD_DIR/tpl.new" "$VPD_DIR/vpn-director.json.template"
+
+    run step_generate_configs
+
+    assert_success
+    run jq -r '.new_setting' "$VPD_DIR/vpn-director.json"
+    assert_output "from-the-template"
+}
+
+@test "step_generate_configs: refuses while another writer holds the config lock" {
+    load_wizard
+    write_daemon_config
+    flock "$VPD_DIR/.vpn-director.json.lock" sleep 30 &
+    local holder=$!
+    sleep 0.5
+
+    VPD_CONFIG_LOCK_WAIT=1
+    run step_generate_configs
+    kill "$holder" 2>/dev/null || true
+
+    assert_failure
+    assert_output --partial "Config is locked"
+    run jq -r '.xray.clients[0]' "$VPD_DIR/vpn-director.json"
+    assert_output "10.0.0.9"
+}
+
+@test "step_generate_configs: releases the config lock when it is done" {
+    load_wizard
+    write_daemon_config
+
+    run step_generate_configs
+
+    assert_success
+    run flock -n "$VPD_DIR/.vpn-director.json.lock" true
+    assert_success
+}
+
 @test "step_generate_configs: a broken template leaves the existing config alone" {
     load_wizard
     write_daemon_config

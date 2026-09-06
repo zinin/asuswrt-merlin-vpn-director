@@ -466,45 +466,63 @@ step_generate_configs() {
         xray_servers_json=$(jq '[.[].ips[]] | unique' "$SERVERS_FILE")
     fi
 
-    # The wizard owns clients, country exclusions, servers and tunnels; the
-    # daemons own the rest of the file. The Web UI stores the jwt_secret it
-    # generates on first start, and both daemons write exclude_ips and
-    # paused_clients. Rebuilding from the template alone would drop all of that,
-    # and a lost jwt_secret invalidates every session on the next Web UI restart.
-    carry_over='{}'
+    # The Web UI and the bot serialise their writes on this lock
+    # (service.ConfigService.LockPath). The wizard is the third writer over the
+    # same file: without the lock a daemon write landing between the read and
+    # the rename below is lost. Thirty seconds matches the Go side's timeout.
+    # BusyBox flock has no -w, hence the loop.
+    exec 9>"$VPD_DIR/.vpn-director.json.lock"
+    _cfg_lock_waited=0
+    until flock -n 9; do
+        if [[ $_cfg_lock_waited -ge ${VPD_CONFIG_LOCK_WAIT:-30} ]]; then
+            print_error "Config is locked by the Web UI or the bot; try again"
+            exec 9>&-
+            exit 1
+        fi
+        [[ $_cfg_lock_waited -eq 0 ]] && print_info "Waiting for the config lock..."
+        sleep 1
+        _cfg_lock_waited=$((_cfg_lock_waited + 1))
+    done
+
+    # The wizard owns four fields; everything else in the file belongs to the
+    # daemons and to the user: the jwt_secret the Web UI generates on its first
+    # start, exclude_ips and paused_clients written by both daemons, data_dir
+    # and the advanced section. So build on the existing config rather than on
+    # the template, and merge the template underneath it so keys added by an
+    # update still arrive. A first run has no config and takes the template as
+    # it is.
+    base_json=$(cat "$VPD_DIR/vpn-director.json.template")
     if [[ -f $VPD_DIR/vpn-director.json ]]; then
-        carry_over=$(jq -c '{webui, paused_clients, exclude_ips: .xray.exclude_ips}
-                            | with_entries(select(.value != null))' \
-            "$VPD_DIR/vpn-director.json" 2>/dev/null) || carry_over='{}'
-        [[ -n $carry_over ]] || carry_over='{}'
+        if _merged=$(jq -s '.[0] * .[1]' \
+            "$VPD_DIR/vpn-director.json.template" "$VPD_DIR/vpn-director.json"); then
+            base_json="$_merged"
+        else
+            print_warning "Existing config is not valid JSON, falling back to the template"
+        fi
     fi
 
-    # Read template and update with jq. Write to a temp file first: a '>'
-    # redirect truncates the live config before jq runs, so a generator failure
-    # would take the carried-over jwt_secret with it.
+    # Write to a temp file first: a '>' redirect truncates the live config
+    # before jq runs, so a generator failure would take the jwt_secret with it.
     _vpd_cfg_tmp=$(mktemp "$VPD_DIR/vpn-director.json.XXXXXX")
-    if jq \
+    if printf '%s' "$base_json" | jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
         --argjson servers "$xray_servers_json" \
-        --argjson carry "$carry_over" \
         '.xray.clients = $clients |
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
-         .tunnel_director.tunnels = $tunnels |
-         (if ($carry | has("webui")) then .webui = $carry.webui else . end) |
-         (if ($carry | has("paused_clients"))
-          then .paused_clients = $carry.paused_clients else . end) |
-         (if ($carry | has("exclude_ips"))
-          then .xray.exclude_ips = $carry.exclude_ips else . end)' \
-        "$VPD_DIR/vpn-director.json.template" \
+         .tunnel_director.tunnels = $tunnels' \
         > "$_vpd_cfg_tmp"; then
         chmod 600 "$_vpd_cfg_tmp"
         mv -f "$_vpd_cfg_tmp" "$VPD_DIR/vpn-director.json"
+        flock -u 9
+        exec 9>&-
         print_success "Generated $VPD_DIR/vpn-director.json"
     else
         rm -f "$_vpd_cfg_tmp"
+        flock -u 9
+        exec 9>&-
         print_error "Failed to generate vpn-director.json; kept the existing config"
         exit 1
     fi
