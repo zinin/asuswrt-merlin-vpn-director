@@ -116,9 +116,20 @@ EOF
 ###################################################################################################
 # Load modules (deferred until after help check)
 ###################################################################################################
+# common.sh alone: a command that mutates state has to take the lock before
+# lib/config.sh reads the JSON. Reading first applies the file as it was when
+# the process started, and a --wait apply that waited out another one would
+# then commit a snapshot its writer has already superseded - with two queued
+# applies, in either order.
+_load_common() {
+    [[ ${_COMMON_LOADED:-0} -eq 1 ]] && return 0
+    . "$SCRIPT_DIR/lib/common.sh"
+    _COMMON_LOADED=1
+}
+
 _load_modules() {
     [[ ${_MODULES_LOADED:-0} -eq 1 ]] && return 0
-    . "$SCRIPT_DIR/lib/common.sh"
+    _load_common
     . "$SCRIPT_DIR/lib/firewall.sh"
     . "$SCRIPT_DIR/lib/config.sh"
     . "$SCRIPT_DIR/lib/ipset.sh" --source-only
@@ -169,8 +180,9 @@ cmd_status() {
 }
 
 cmd_apply() {
-    _load_modules
+    _load_common
     acquire_lock "vpn-director"
+    _load_modules
 
     # Handle --dry-run: show plan without applying (skip boot wait and lock)
     if [[ $DRY_RUN -eq 1 ]]; then
@@ -242,8 +254,9 @@ cmd_apply() {
 }
 
 cmd_stop() {
-    _load_modules
+    _load_common
     acquire_lock "vpn-director"
+    _load_modules
 
     case "$COMPONENT" in
         ""|all)
@@ -264,6 +277,10 @@ cmd_stop() {
 }
 
 cmd_restart() {
+    # Lock first for the same reason: cmd_stop and cmd_apply below would find
+    # the modules already loaded and reuse the config read before the wait.
+    _load_common
+    acquire_lock "vpn-director"
     _load_modules
     case "$COMPONENT" in
         ""|all)
@@ -288,8 +305,9 @@ cmd_restart() {
 }
 
 cmd_update() {
-    _load_modules
+    _load_common
     acquire_lock "vpn-director"
+    _load_modules
 
     # Wait for network if system just booted (before any downloads)
     _ipset_boot_wait

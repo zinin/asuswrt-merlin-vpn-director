@@ -251,6 +251,35 @@ setup() {
 # --wait option
 # ============================================================================
 
+# A queued apply must work from the config as it is when the lock is granted.
+# Reading it first applies a snapshot the waiting time has already made stale,
+# and two queued applies can then commit in either order while both report
+# success. The test holds the lock on FD 201, edits the config while the apply
+# waits, and asserts the plan reflects the edit.
+@test "vpn-director: a waiting apply reads the config it was granted" {
+    local cfg="$BATS_TEST_TMPDIR/vpn-director.json"
+    jq '.tunnel_director.tunnels.wgc1.exclude = ["de"]' \
+        "$TEST_ROOT/fixtures/vpn-director.json" > "$cfg"
+
+    exec 201>"/var/lock/vpn-director.lock"
+    flock -n 201
+
+    VPD_CONFIG_FILE="$cfg" "$SCRIPTS_DIR/vpn-director.sh" --wait=20 apply tunnel --dry-run \
+        > "$BATS_TEST_TMPDIR/out" 2>&1 &
+    local waiter=$!
+
+    # Let it reach the lock, then supersede the config it would have read.
+    sleep 2
+    jq '.tunnel_director.tunnels.wgc1.exclude = ["fr"]' "$cfg" > "$cfg.new"
+    mv "$cfg.new" "$cfg"
+    flock -u 201
+    wait "$waiter"
+
+    run cat "$BATS_TEST_TMPDIR/out"
+    assert_output --partial "ipsets needed: fr"
+    refute_output --partial "ipsets needed: de"
+}
+
 @test "vpn-director: --wait exports VPD_LOCK_WAIT=120 by default" {
     run bash -c 'source "$1" --source-only --wait apply && echo "wait=$VPD_LOCK_WAIT cmd=$COMMAND"' -- "$SCRIPTS_DIR/vpn-director.sh"
     assert_success
