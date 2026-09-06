@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -93,7 +94,7 @@ func TestGenerateScript(t *testing.T) {
 	if !strings.Contains(script, "remonitor_running") {
 		t.Error("script must remonitor only daemons that were running")
 	}
-	if !strings.Contains(script, "flock -n 201") {
+	if !strings.Contains(script, "flock -n 9") {
 		t.Error("script must wait for vpn-director.sh before rewriting it")
 	}
 
@@ -221,6 +222,61 @@ func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
 		if !strings.Contains(body, needle) {
 			t.Errorf("on_exit missing %q: %s", needle, why)
 		}
+	}
+}
+
+// The lock taken in step 3b lives on the open file description, and a daemon
+// started while fd 9 is still open inherits it: /var/lock/vpn-director.lock
+// would stay held for as long as that daemon runs, turning every later
+// vpn-director.sh into a silent skip (no --wait) or a lock timeout (--wait).
+// Both the happy path and the recovery path must release before they start
+// anything.
+func TestGenerateScript_ReleasesApplyLockBeforeStartingDaemons(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	if body := functionBody(t, script, "release_apply_lock"); !strings.Contains(body, "exec 9>&-") {
+		t.Error("release_apply_lock must close the descriptor, not just drop the lock")
+	}
+
+	paths := []struct {
+		name  string
+		body  string
+		start string
+	}{
+		{"happy path", afterOnExit(t, script), "start_except"},
+		{"recovery", onExitBody(t, script), "start_running"},
+	}
+	for _, p := range paths {
+		release := strings.Index(p.body, "release_apply_lock")
+		start := strings.Index(p.body, p.start)
+		switch {
+		case release < 0:
+			t.Errorf("%s never releases the apply lock", p.name)
+		case start < 0:
+			t.Errorf("%s never starts a daemon through %s", p.name, p.start)
+		case release > start:
+			t.Errorf("%s releases the apply lock after %s, so the started daemon inherits fd 9", p.name, p.start)
+		}
+	}
+}
+
+// POSIX allows exactly one digit in a redirection; a multi-digit descriptor is
+// a bash/ksh extension. getShell() runs the generated script with /bin/sh, and
+// dash rejects "exec 201>" outright.
+func TestGenerateScript_UsesPOSIXFileDescriptors(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	multiDigit := regexp.MustCompile(`exec\s+[0-9]{2,}[<>]|flock\s+(?:-[a-z]+\s+)*[0-9]{2,}\b`)
+	if m := multiDigit.FindString(script); m != "" {
+		t.Errorf("script uses the multi-digit file descriptor %q; /bin/sh may be dash, which rejects it", m)
 	}
 }
 

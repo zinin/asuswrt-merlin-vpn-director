@@ -23,6 +23,10 @@ DAEMONS="telegram-bot|/opt/vpn-director/telegram-bot|S98telegram-bot webui|/opt/
 # EXIT trap reads it, so it must exist before anything can fail.
 RUNNING_INITS=""
 
+# Whether fd 9 (the vpn-director lock) is open. Read by release_apply_lock,
+# which the EXIT trap calls, so it must exist before anything can fail.
+APPLY_LOCK_FD_OPEN=0
+
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
 }
@@ -38,15 +42,7 @@ EOF
 # was stopped beforehand stays stopped. Returns non-zero when any start
 # failed, so the caller can tell a complete restart from a partial one.
 start_running() {
-    rc=0
-    for init in $RUNNING_INITS; do
-        log "Starting $init"
-        if ! "$INIT_DIR/$init" start; then
-            log "WARNING: $init start failed"
-            rc=1
-        fi
-    done
-    return $rc
+    start_except ""
 }
 
 # The bot reads notify.json on startup and, on status=ok, deletes the whole
@@ -97,6 +93,19 @@ remonitor_running() {
     done
 }
 
+# Drop the vpn-director lock taken in step 3b and close its descriptor.
+# Must run before any daemon start: a started daemon inherits the open
+# descriptor, and the lock lives on the open file description, so an inherited
+# one would be held for the daemon's whole lifetime. Every later
+# vpn-director.sh run would then either skip silently (no --wait) or time out
+# (--wait), until the router reboots.
+release_apply_lock() {
+    [ "$APPLY_LOCK_FD_OPEN" = "1" ] || return 0
+    APPLY_LOCK_FD_OPEN=0
+    flock -u 9 2>/dev/null || true
+    exec 9>&-
+}
+
 # ash has no ERR trap, so recovery hangs off EXIT and inspects the code.
 # set +e keeps a failing recovery step from cutting the recovery short.
 on_exit() {
@@ -107,6 +116,7 @@ on_exit() {
         exit 0
     fi
     log "ERROR: update failed with exit code $code"
+    release_apply_lock
     remonitor_running
     start_running
     write_notify failed
@@ -184,9 +194,10 @@ done
 # launched it. Do not rewrite its scripts from under it; hold the lock so a
 # new apply cannot start mid-copy. BusyBox flock has no -w.
 mkdir -p /var/lock
-exec 201>/var/lock/vpn-director.lock
+exec 9>/var/lock/vpn-director.lock
+APPLY_LOCK_FD_OPEN=1
 waited=0
-until flock -n 201; do
+until flock -n 9; do
     if [ "$waited" -ge 300 ]; then
         log "ERROR: timed out waiting for vpn-director.sh"
         exit 1
@@ -225,6 +236,10 @@ done
 # the directory after a successful notify. A Web UI-only router has no bot
 # to do that, and leaving two binaries in tmpfs until reboot is waste.
 rm -rf "$FILES_DIR"
+
+# The scripts are in place, so nothing needs the lock any more. Release it
+# here, before step 6 starts a daemon that would inherit the descriptor.
+release_apply_lock
 
 # Init script of the daemon that reads notify.json. Looked up from the table
 # so the script never names an init file outside DAEMONS.
