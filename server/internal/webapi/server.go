@@ -23,7 +23,7 @@ type ServerConfig struct {
 // otherwise it requires TLS certificates. On context cancellation it performs a
 // graceful shutdown with a 5-second deadline.
 func ListenAndServe(ctx context.Context, cfg ServerConfig, deps *Deps, staticFS fs.FS) error {
-	router := NewRouter(deps, staticFS)
+	router := NewRouter(deps, staticFS, ctx)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

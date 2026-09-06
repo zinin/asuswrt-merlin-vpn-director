@@ -40,10 +40,12 @@ type Deps struct {
 
 // NewRouter creates the top-level HTTP handler with all routes registered.
 // staticFS provides the embedded Vue SPA assets; pass nil to disable SPA serving.
-func NewRouter(deps *Deps, staticFS fs.FS) http.Handler {
+// The variadic ctx stops the login limiter's cleanup goroutine; tests that do
+// not care leave it out, as newRateLimiter does.
+func NewRouter(deps *Deps, staticFS fs.FS, ctx ...context.Context) http.Handler {
 	mux := http.NewServeMux()
 
-	deps.loginLimiter = newRateLimiter(5, 1*time.Minute, 30*time.Second)
+	deps.loginLimiter = newRateLimiter(5, 1*time.Minute, 30*time.Second, ctx...)
 
 	// Public routes (no auth required).
 	mux.HandleFunc("POST /api/login", handleLogin(deps))
