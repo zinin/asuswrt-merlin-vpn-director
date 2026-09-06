@@ -1,0 +1,65 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+
+      - name: Vet
+        run: go vet ./...
+        working-directory: server
+
+      - name: Test
+        run: go test ./... -count=1
+        working-directory: server
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      # npm run build is `vue-tsc -b && vite build`: this is the type check too.
+      - name: Build
+        run: npm run build
+        working-directory: web
+
+  bats:
+    name: Bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # test_helper.bash loads the helper libraries from absolute paths under
+      # /usr/lib/bats, so they are installed exactly there. Same step as
+      # ipset-sources.yml.
+      - name: Install Bats and helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+          sudo mkdir -p /usr/lib/bats
+          sudo git clone https://github.com/bats-core/bats-support.git /usr/lib/bats/bats-support
+          sudo git clone https://github.com/bats-core/bats-assert.git /usr/lib/bats/bats-assert
+
+      - name: Unit tests
+        run: bats router/test/unit
