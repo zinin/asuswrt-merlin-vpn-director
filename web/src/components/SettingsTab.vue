@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import api from '../api'
-import type { VersionResponse, UpdateCheckResponse, UpdateStartResponse } from '../types'
+import type { VersionResponse, UpdateCheckResponse } from '../types'
 
 const versionInfo = ref<VersionResponse | null>(null)
 const updateInfo = ref<UpdateCheckResponse | null>(null)
@@ -90,7 +90,7 @@ async function doUpdate() {
   updateMessage.value = 'Starting update...'
   try {
     const resp = await api.update()
-    const data = resp.data as UpdateStartResponse
+    const data = resp.data
     if (data.update_available === false) {
       await loadUpdate()
       updateMessage.value = 'Already running the latest version.'

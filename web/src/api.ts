@@ -1,4 +1,21 @@
 import axios from 'axios'
+import type {
+  AllLogsResponse,
+  ClientsResponse,
+  ConfigResponse,
+  ExcludeIPsResponse,
+  ExcludeSetsResponse,
+  ImportResponse,
+  IPResponse,
+  LogResponse,
+  OkResponse,
+  ServersResponse,
+  StatusResponse,
+  UpdateCheckResponse,
+  UpdateStartResponse,
+  UpdateStatusResponse,
+  VersionResponse,
+} from './types'
 
 const api = axios.create({
   withCredentials: true,
@@ -23,77 +40,81 @@ api.interceptors.response.use(
 export default {
   // Auth
   checkAuth: () =>
-    api.get('/api/version', { skipAuthRedirect: true } as any),
+    api.get<VersionResponse>('/api/version', { skipAuthRedirect: true } as any),
   login: (username: string, password: string) =>
-    api.post('/api/login', { username, password }),
+    api.post<OkResponse>('/api/login', { username, password }),
   logout: () =>
-    api.post('/api/logout'),
+    api.post<OkResponse>('/api/logout'),
 
   // Status & Control
   getStatus: () =>
-    api.get('/api/status'),
+    api.get<StatusResponse>('/api/status'),
   apply: () =>
-    api.post('/api/apply'),
+    api.post<OkResponse>('/api/apply'),
   restart: () =>
-    api.post('/api/restart'),
+    api.post<OkResponse>('/api/restart'),
   stop: () =>
-    api.post('/api/stop'),
+    api.post<OkResponse>('/api/stop'),
   updateIPsets: () =>
-    api.post('/api/ipsets/update'),
+    api.post<OkResponse>('/api/ipsets/update'),
 
   // Info
   getIP: () =>
-    api.get('/api/ip'),
+    api.get<IPResponse>('/api/ip'),
   getVersion: () =>
-    api.get('/api/version'),
+    api.get<VersionResponse>('/api/version'),
 
   // Servers
   getServers: () =>
-    api.get('/api/servers'),
+    api.get<ServersResponse>('/api/servers'),
   selectServer: (index: number) =>
-    api.post('/api/servers/active', { index }),
+    api.post<OkResponse>('/api/servers/active', { index }),
   importServers: (url: string) =>
-    api.post('/api/servers/import', { url }),
+    api.post<ImportResponse>('/api/servers/import', { url }),
 
   // Clients
   getClients: () =>
-    api.get('/api/clients'),
+    api.get<ClientsResponse>('/api/clients'),
   addClient: (ip: string, route: string) =>
-    api.post('/api/clients', { ip, route }),
+    api.post<OkResponse>('/api/clients', { ip, route }),
   pauseClient: (ip: string) =>
-    api.post('/api/clients/pause', null, { params: { ip } }),
+    api.post<OkResponse>('/api/clients/pause', null, { params: { ip } }),
   resumeClient: (ip: string) =>
-    api.post('/api/clients/resume', null, { params: { ip } }),
+    api.post<OkResponse>('/api/clients/resume', null, { params: { ip } }),
   deleteClient: (ip: string) =>
-    api.delete('/api/clients', { params: { ip } }),
+    api.delete<OkResponse>('/api/clients', { params: { ip } }),
 
   // Exclusions
   getExcludeSets: () =>
-    api.get('/api/excludes/sets'),
+    api.get<ExcludeSetsResponse>('/api/excludes/sets'),
   updateExcludeSets: (sets: string[]) =>
-    api.post('/api/excludes/sets', { sets }),
+    api.post<OkResponse>('/api/excludes/sets', { sets }),
   getExcludeIPs: () =>
-    api.get('/api/excludes/ips'),
+    api.get<ExcludeIPsResponse>('/api/excludes/ips'),
   addExcludeIP: (ip: string) =>
-    api.post('/api/excludes/ips', { ip }),
+    api.post<OkResponse>('/api/excludes/ips', { ip }),
   deleteExcludeIP: (ip: string) =>
-    api.delete('/api/excludes/ips', { params: { ip } }),
+    api.delete<OkResponse>('/api/excludes/ips', { params: { ip } }),
 
   // Logs & Config
-  getLogs: (source?: string, lines?: number) =>
-    api.get('/api/logs', { params: { ...(source ? { source } : {}), ...(lines ? { lines } : {}) } }),
+  // /api/logs answers with two different shapes, so it gets two methods: one
+  // file with its name, or every configured source at once.
+  getLog: (source: string, lines?: number) =>
+    api.get<LogResponse>('/api/logs', { params: { source, ...(lines ? { lines } : {}) } }),
+  getAllLogs: (lines?: number) =>
+    api.get<AllLogsResponse>('/api/logs', { params: { ...(lines ? { lines } : {}) } }),
   getConfig: () =>
-    api.get('/api/config'),
+    api.get<ConfigResponse>('/api/config'),
 
   // Self-update
   checkUpdate: (force = false) =>
-    api.get('/api/update/check', { params: force ? { force: 1 } : {} }),
+    api.get<UpdateCheckResponse>('/api/update/check', { params: force ? { force: 1 } : {} }),
   update: () =>
-    api.post('/api/update'),
+    api.post<UpdateStartResponse>('/api/update'),
   updateStatus: () =>
-    api.get('/api/update/status'),
+    api.get<UpdateStatusResponse>('/api/update/status'),
   // pollVersion is used while the server restarts: connection errors and a
   // brief 401 must not bounce the user to the login page.
   pollVersion: () =>
-    api.get('/api/version', { skipAuthRedirect: true } as any),
+    api.get<VersionResponse>('/api/version', { skipAuthRedirect: true } as any),
 }

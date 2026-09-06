@@ -36,3 +36,50 @@ export interface UpdateStartResponse {
   to?: string
   update_available?: boolean
 }
+
+/** Every mutation answers {"ok": true}. */
+export interface OkResponse {
+  ok: boolean
+}
+
+export interface ImportResponse {
+  ok: boolean
+  count: number
+}
+
+export interface IPResponse {
+  ip: string
+}
+
+export interface ServersResponse {
+  servers: Server[]
+}
+
+export interface ClientsResponse {
+  clients: ClientInfo[]
+}
+
+export interface ExcludeSetsResponse {
+  sets: string[]
+}
+
+export interface ExcludeIPsResponse {
+  ips: string[]
+}
+
+/** GET /api/logs?source=... — one file. */
+export interface LogResponse {
+  output: string
+  source: string
+}
+
+/** GET /api/logs — source name to contents, for every configured source. */
+export type AllLogsResponse = Record<string, string>
+
+export interface UpdateStatusResponse {
+  in_progress: boolean
+}
+
+/** GET /api/config returns the whole vpn-director.json with jwt_secret blanked;
+ *  the Settings tab only ever re-serialises it. */
+export type ConfigResponse = Record<string, unknown>

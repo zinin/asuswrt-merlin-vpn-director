@@ -14,10 +14,10 @@ async function loadLogs() {
   error.value = ''
   try {
     if (source.value) {
-      const resp = await api.getLogs(source.value, lines.value)
+      const resp = await api.getLog(source.value, lines.value)
       logData.value = { [resp.data.source]: resp.data.output ?? '' }
     } else {
-      const resp = await api.getLogs(undefined, lines.value)
+      const resp = await api.getAllLogs(lines.value)
       logData.value = resp.data
     }
   } catch (e: any) {
