@@ -102,7 +102,7 @@ Both daemons — `telegram-bot` and `webui` — are updated together, from the b
 
 1. `Flow.Check` asks the GitHub API for the latest release (result cached for 30 minutes; a forced check pierces the cache at most once a minute)
 2. `Flow.Start` creates the lock file (`/tmp/vpn-director-update/lock`)
-3. Release assets go to `/tmp/vpn-director-update/files/`: every script from `scriptFiles` plus one binary per daemon (`telegram-bot-<arch>`, `webui-<arch>`). A release missing either binary is a download error.
+3. Downloads go to `/tmp/vpn-director-update/files/`: every script from `scriptFiles`, taken from the repository at the release tag, plus one binary per daemon (`telegram-bot-<arch>`, `webui-<arch>`) from the release assets. A release missing either binary is a download error.
 4. `update.sh` is generated from the daemon table and run detached
 5. The script remembers which daemons were running, stops them, copies everything, writes `notify.json` and starts back exactly those daemons
 6. On failure an `EXIT` trap restarts the daemons that were running and writes `notify.json` with `"status": "failed"`
@@ -114,7 +114,7 @@ Both daemons — `telegram-bot` and `webui` — are updated together, from the b
  "status": "ok", "initiator": "webui"}
 ```
 
-`chat_id` 0 marks an update started from the Web UI: on its next start the bot notifies every active chat. A successful notification clears `/tmp/vpn-director-update`; a failed one keeps `update.log`, because the message points at it.
+`chat_id` 0 marks an update started from the Web UI: on its next start the bot notifies every active chat. A successful update clears `/tmp/vpn-director-update`; a failed one keeps `update.log`, because the message points at it.
 
 **Dev mode**: `/update` is disabled with `--dev` and for a `dev` build.
 

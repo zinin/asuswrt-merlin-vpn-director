@@ -145,11 +145,11 @@ Web UI settings are in `/opt/vpn-director/vpn-director.json` under the `webui` s
 
 ### Updates
 
-The **Settings** tab shows the running version, the latest GitHub release and its changelog. «Update to vX» downloads the release and restarts both the Web UI and the Telegram bot; the page polls for the new version and reloads itself when it comes up. The login session survives the update.
+The **Settings** tab shows the running version, the latest GitHub release and its changelog. «Update to vX» downloads the release and updates both the Web UI and the Telegram bot, restarting the ones that were running; the page polls for the new version and reloads itself when it comes up. The login session survives the update.
 
 An update started from the Web UI is announced in Telegram to every active chat. `/update` in the bot does the same thing from the other side — both paths update both daemons.
 
-> Upgrading **to** the first release with the unified updater is still done by the old bot-only updater, which does not know about the Web UI. Run `install.sh` once after that upgrade; every later update handles both.
+> Upgrading **to** the first release with the unified updater is still done by the old bot-only updater, which does not know about the Web UI. Re-run the [Quick Install](#quick-install) command once after that upgrade; every later update handles both.
 
 ## Telegram Bot
 
