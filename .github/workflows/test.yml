@@ -79,3 +79,8 @@ jobs:
 
       - name: Unit tests
         run: bats router/test/unit
+
+      # vpn_director.bats covers the --wait option every Web UI and bot
+      # mutation depends on, and nothing else in CI runs it.
+      - name: Integration tests
+        run: bats router/test/integration
