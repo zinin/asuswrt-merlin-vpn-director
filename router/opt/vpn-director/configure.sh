@@ -19,9 +19,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Paths
-VPD_DIR="/opt/vpn-director"
-XRAY_CONFIG_DIR="/opt/etc/xray"
+# Paths (overridable so the wizard can be sourced by tests)
+VPD_DIR="${VPD_DIR:-/opt/vpn-director}"
+XRAY_CONFIG_DIR="${XRAY_CONFIG_DIR:-/opt/etc/xray}"
 
 # Library: Xray config generator (self-contained pure-jq; no common.sh needed)
 . "$VPD_DIR/lib/xrayconf.sh"
@@ -466,20 +466,48 @@ step_generate_configs() {
         xray_servers_json=$(jq '[.[].ips[]] | unique' "$SERVERS_FILE")
     fi
 
-    # Read template and update with jq
-    jq \
+    # The wizard owns clients, country exclusions, servers and tunnels; the
+    # daemons own the rest of the file. The Web UI stores the jwt_secret it
+    # generates on first start, and both daemons write exclude_ips and
+    # paused_clients. Rebuilding from the template alone would drop all of that,
+    # and a lost jwt_secret invalidates every session on the next Web UI restart.
+    carry_over='{}'
+    if [[ -f $VPD_DIR/vpn-director.json ]]; then
+        carry_over=$(jq -c '{webui, paused_clients, exclude_ips: .xray.exclude_ips}
+                            | with_entries(select(.value != null))' \
+            "$VPD_DIR/vpn-director.json" 2>/dev/null) || carry_over='{}'
+        [[ -n $carry_over ]] || carry_over='{}'
+    fi
+
+    # Read template and update with jq. Write to a temp file first: a '>'
+    # redirect truncates the live config before jq runs, so a generator failure
+    # would take the carried-over jwt_secret with it.
+    _vpd_cfg_tmp=$(mktemp "$VPD_DIR/vpn-director.json.XXXXXX")
+    if jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
         --argjson servers "$xray_servers_json" \
+        --argjson carry "$carry_over" \
         '.xray.clients = $clients |
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
-         .tunnel_director.tunnels = $tunnels' \
+         .tunnel_director.tunnels = $tunnels |
+         (if ($carry | has("webui")) then .webui = $carry.webui else . end) |
+         (if ($carry | has("paused_clients"))
+          then .paused_clients = $carry.paused_clients else . end) |
+         (if ($carry | has("exclude_ips"))
+          then .xray.exclude_ips = $carry.exclude_ips else . end)' \
         "$VPD_DIR/vpn-director.json.template" \
-        > "$VPD_DIR/vpn-director.json"
-
-    print_success "Generated $VPD_DIR/vpn-director.json"
+        > "$_vpd_cfg_tmp"; then
+        chmod 600 "$_vpd_cfg_tmp"
+        mv -f "$_vpd_cfg_tmp" "$VPD_DIR/vpn-director.json"
+        print_success "Generated $VPD_DIR/vpn-director.json"
+    else
+        rm -f "$_vpd_cfg_tmp"
+        print_error "Failed to generate vpn-director.json; kept the existing config"
+        exit 1
+    fi
 }
 
 ###############################################################################
@@ -521,5 +549,14 @@ main() {
     print_header "Configuration Complete"
     printf "Check status with: /opt/vpn-director/vpn-director.sh status\n"
 }
+
+###############################################################################
+# Allow sourcing for testing
+###############################################################################
+
+if [[ ${1:-} == "--source-only" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
 
 main "$@"
