@@ -20,6 +20,8 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/logging"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/webapi"
 )
@@ -132,6 +134,10 @@ func main() {
 	shadowAuth := auth.NewShadowAuth(*shadowPath)
 	jwtSvc := auth.NewJWTService(vpnCfg.WebUI.JWTSecret, 24*time.Hour)
 
+	// The Web UI updates both daemons through the same flow as the bot; the
+	// progress lines go to the Web UI log, since there is no chat to answer in.
+	updateFlow := updateflow.New(updater.New(), Version, *devFlag)
+
 	deps := &webapi.Deps{
 		Config:  configSvc,
 		VPN:     vpnSvc,
@@ -144,6 +150,7 @@ func main() {
 			"xray":  p.XrayLogPath,
 			"webui": p.WebUILogPath,
 		},
+		Update:  updateFlow,
 		Shadow:  shadowAuth,
 		JWT:     jwtSvc,
 		Version: Version,

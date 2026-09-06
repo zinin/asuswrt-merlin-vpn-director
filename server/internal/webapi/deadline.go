@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 )
 
 // Response deadlines for handlers that run shell commands. Each is the
@@ -28,6 +29,11 @@ const (
 	// importDeadline covers the 10-second subscription download plus one DNS
 	// lookup per server; the import runs no shell command.
 	importDeadline = 2 * time.Minute
+	// githubDeadline covers the synchronous part of an update route: one
+	// GitHub API call under updater.APITimeout. POST /api/update answers 202
+	// as soon as the download goroutine is under way, so the script's own
+	// minutes never sit on the connection.
+	githubDeadline = updater.APITimeout + deadlineSlack
 )
 
 // extendWriteDeadline pushes the response deadline past the server-wide

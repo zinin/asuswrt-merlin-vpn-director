@@ -291,26 +291,3 @@ func TestHandleConfig_Error(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
-
-func TestHandleUpdate_NotImplemented(t *testing.T) {
-	deps := newTestDeps(t)
-
-	handler := handleUpdate(deps)
-
-	req := httptest.NewRequest("POST", "/api/update", nil)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var resp map[string]string
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["error"] != "self-update via Web UI is not supported yet" {
-		t.Errorf("unexpected error text: %q", resp["error"])
-	}
-}

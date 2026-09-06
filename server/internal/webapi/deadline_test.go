@@ -142,6 +142,8 @@ func TestLongOpHandlers_ExtendWriteDeadline(t *testing.T) {
 		{"delete exclude ip", "DELETE", "/api/excludes/ips?ip=1.2.3.4", "", handleDeleteExcludeIP, applyDeadline},
 		{"select server", "POST", "/api/servers/active", `{"index":0}`, handleSelectServer, applyDeadline},
 		{"import (rejected before download)", "POST", "/api/servers/import", `{"url":"http://insecure.example"}`, handleImportServers, importDeadline},
+		{"update check", "GET", "/api/update/check", "", handleUpdateCheck, githubDeadline},
+		{"update start", "POST", "/api/update", "", handleUpdateStart, githubDeadline},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

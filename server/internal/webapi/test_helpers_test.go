@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -113,6 +115,33 @@ func (m *mockShadow) verify(username, password string) (bool, error) {
 	return false, nil
 }
 
+// mockUpdateFlow implements UpdateFlow for testing.
+type mockUpdateFlow struct {
+	checkResult updateflow.CheckResult
+	checkErr    error
+	checkForce  bool
+
+	startResult    updateflow.StartResult
+	startErr       error
+	startInitiator string
+	startChatID    int64
+
+	inProgress bool
+}
+
+func (m *mockUpdateFlow) Check(_ context.Context, force bool) (updateflow.CheckResult, error) {
+	m.checkForce = force
+	return m.checkResult, m.checkErr
+}
+
+func (m *mockUpdateFlow) Start(_ context.Context, initiator string, chatID int64, _ func(string)) (updateflow.StartResult, error) {
+	m.startInitiator = initiator
+	m.startChatID = chatID
+	return m.startResult, m.startErr
+}
+
+func (m *mockUpdateFlow) InProgress() bool { return m.inProgress }
+
 // newTestDeps creates a Deps instance wired with test mocks.
 func newTestDeps(t *testing.T) *Deps {
 	t.Helper()
@@ -137,6 +166,7 @@ func newTestDeps(t *testing.T) *Deps {
 			"xray":  "/tmp/test-xray-error.log",
 			"webui": "/tmp/test-webui.log",
 		},
+		Update:       &mockUpdateFlow{},
 		Shadow:       shadow,
 		JWT:          jwt,
 		Version:      "1.0.0-test",

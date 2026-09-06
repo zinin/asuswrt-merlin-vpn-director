@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"context"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -9,7 +10,16 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
 )
+
+// UpdateFlow is the subset of updateflow.Flow the API handlers use. Declared
+// here so the handler tests can drive every outcome without a fake GitHub.
+type UpdateFlow interface {
+	Check(ctx context.Context, force bool) (updateflow.CheckResult, error)
+	Start(ctx context.Context, initiator string, chatID int64, progress func(string)) (updateflow.StartResult, error)
+	InProgress() bool
+}
 
 // Deps holds all dependencies required by the HTTP API handlers.
 type Deps struct {
@@ -19,6 +29,7 @@ type Deps struct {
 	Network      service.NetworkInfo
 	Logs         service.LogReader
 	LogPaths     map[string]string // log source name -> file path, built by main from paths.Paths
+	Update       UpdateFlow        // self-update orchestration, shared with the bot
 	Shadow       *auth.ShadowAuth
 	JWT          *auth.JWTService
 	Version      string
@@ -96,7 +107,9 @@ func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
 	mux.HandleFunc("GET /api/config", handleConfig(deps))
 
 	// Self-update
-	mux.HandleFunc("POST /api/update", handleUpdate(deps))
+	mux.HandleFunc("GET /api/update/check", handleUpdateCheck(deps))
+	mux.HandleFunc("POST /api/update", handleUpdateStart(deps))
+	mux.HandleFunc("GET /api/update/status", handleUpdateStatus(deps))
 
 	// Fallback for unknown API paths: JSON 404 instead of the mux's text/plain.
 	// Auth still runs first because this mux sits behind authMiddleware.

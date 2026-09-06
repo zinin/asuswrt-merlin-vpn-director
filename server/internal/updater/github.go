@@ -14,7 +14,10 @@ const (
 	repoName         = "asuswrt-merlin-vpn-director"
 	defaultAPIURL    = "https://api.github.com"
 	releasesEndpoint = "/repos/%s/%s/releases/latest"
-	apiTimeout       = 30 * time.Second
+
+	// APITimeout bounds one GitHub API call. Handlers that make such a call
+	// inside an HTTP request size their response deadline from it.
+	APITimeout = 30 * time.Second
 )
 
 // githubRelease represents the GitHub API response for releases/latest.
@@ -32,7 +35,7 @@ type githubAsset struct {
 
 // GetLatestRelease fetches the latest release info from GitHub API.
 func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
-	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
+	ctx, cancel := context.WithTimeout(ctx, APITimeout)
 	defer cancel()
 
 	baseURL := s.baseURL
