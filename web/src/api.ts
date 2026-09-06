@@ -116,5 +116,8 @@ export default {
   // pollVersion is used while the server restarts: connection errors and a
   // brief 401 must not bounce the user to the login page.
   pollVersion: () =>
-    api.get<VersionResponse>('/api/version', { skipAuthRedirect: true } as any),
+    api.get<VersionResponse>('/api/version', {
+      skipAuthRedirect: true,
+      timeout: 8000,
+    } as any),
 }

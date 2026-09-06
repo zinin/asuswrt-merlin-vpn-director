@@ -75,20 +75,49 @@ async function toggleConfig() {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// waitForVersion polls /api/version until the new build answers or five
-// minutes pass. Connection errors are expected: the server is restarting.
+const pollIntervalMs = 3000
+const softWaitMs = 5 * 60 * 1000
+const hardWaitMs = 20 * 60 * 1000
+
+async function updateStillRunning(): Promise<boolean | 'unknown'> {
+  try {
+    const st = await api.updateStatus()
+    return !!st.data?.in_progress
+  } catch {
+    return 'unknown'
+  }
+}
+
+// waitForVersion polls /api/version until the new build answers. Five minutes
+// is the spec's restart window; past that we keep going while
+// /api/update/status says the script is still running (a slow download), up
+// to twenty minutes so a hung router cannot pin the tab forever.
 async function waitForVersion(target: string) {
-  const deadline = Date.now() + 5 * 60 * 1000
-  while (Date.now() < deadline) {
-    await sleep(3000)
+  const started = Date.now()
+  while (Date.now() - started < hardWaitMs) {
+    await sleep(pollIntervalMs)
     try {
       const resp = await api.pollVersion()
-      if (resp.data?.version === target) {
+      if (target && resp.data?.version === target) {
         return true
+      }
+      if (!target && resp.data?.version) {
+        const running = await updateStillRunning()
+        if (running === false) {
+          return true
+        }
       }
     } catch {
       // server is down mid-restart, keep waiting
     }
+    if (Date.now() - started < softWaitMs) {
+      continue
+    }
+    const running = await updateStillRunning()
+    if (running === true || running === 'unknown') {
+      continue
+    }
+    return false
   }
   return false
 }
@@ -156,7 +185,6 @@ async function resumeFromServer() {
   if (!updateTarget.value) {
     updateTarget.value = updateInfo.value?.latest || ''
   }
-  if (!updateTarget.value) return
   updating.value = true
   void runPolling()
 }
