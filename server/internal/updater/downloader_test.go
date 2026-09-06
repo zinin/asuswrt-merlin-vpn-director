@@ -197,9 +197,12 @@ func TestDownloadRelease_CleansBeforeDownload(t *testing.T) {
 }
 
 // TestDownloadRelease_UsesTheInjectedRawHost is why rawBaseURL exists: before
-// it, this package fetched all nineteen script files from the real
-// raw.githubusercontent.com on every `go test`, which is both slow and a
-// network dependency in CI.
+// it, downloadScriptFile always addressed the real raw.githubusercontent.com,
+// so the unit suite reached the network on every `go test` - a dependency CI
+// would inherit. It was not slow about it: the tag these tests ask for does not
+// exist, so the run took one 404 and stopped at the first of the nineteen
+// files. This test is the first to drive all nineteen through a server it
+// controls, which is what lets it assert the count.
 func TestDownloadRelease_UsesTheInjectedRawHost(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
