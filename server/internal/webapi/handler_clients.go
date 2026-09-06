@@ -124,17 +124,18 @@ func handlePauseClient(deps *Deps) http.HandlerFunc {
 		defer unlock()
 
 		writeSaveApplyResult(w, updateAndApply(deps, func(cfg *vpnconfig.VPNDirectorConfig) error {
-			existing, found := findClient(cfg, ip)
-			if !found {
+			stored := storedSpellings(cfg, ip)
+			if len(stored) == 0 {
 				return &httpError{status: http.StatusNotFound, msg: "client not found"}
 			}
-			// Drop any equivalent spelling and write the stored one in its place.
-			// lib/config.sh subtracts paused_clients from the clients arrays by
-			// exact string, and CollectClients reports Paused by exact lookup, so
-			// an entry spelled differently from the client pauses nothing while
-			// reporting success. Replacing rather than skipping keeps this
-			// idempotent and repairs a mismatched legacy entry on the first pause.
-			cfg.PausedClients = append(removeAddr(cfg.PausedClients, ip), existing.stored)
+			// Drop every equivalent spelling and write back the ones actually in
+			// use. lib/config.sh subtracts paused_clients from the clients arrays
+			// by exact string, and CollectClients reports Paused by exact lookup,
+			// so an entry spelled differently from the client pauses nothing while
+			// reporting success. One address can also sit in two routes in two
+			// spellings - 1.2.3.4 in xray, 1.2.3.4/32 in a tunnel - and keeping
+			// only the first would silently resume the other.
+			cfg.PausedClients = append(removeAddr(cfg.PausedClients, ip), stored...)
 			return nil
 		}))
 	}
@@ -209,6 +210,22 @@ func findClient(cfg *vpnconfig.VPNDirectorConfig, addr string) (clientMatch, boo
 		}
 	}
 	return clientMatch{}, false
+}
+
+// storedSpellings returns every stored form of addr, in config order and
+// without repeats. Callers that write paused_clients need all of them: the
+// shell matches those entries literally.
+func storedSpellings(cfg *vpnconfig.VPNDirectorConfig, addr string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, c := range vpnconfig.CollectClients(cfg) {
+		if !sameAddr(c.IP, addr) || seen[c.IP] {
+			continue
+		}
+		seen[c.IP] = true
+		out = append(out, c.IP)
+	}
+	return out
 }
 
 // clientAddrFromQuery reads and normalizes the ip query parameter. It writes

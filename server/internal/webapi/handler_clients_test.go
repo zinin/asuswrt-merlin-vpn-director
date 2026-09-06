@@ -377,6 +377,46 @@ func TestHandleDeleteClient_RemovesAnEntryThatFailsNormalization(t *testing.T) {
 
 // The pass-through only exists for entries that are actually configured;
 // anything else must still stop before the config is touched.
+// An address can sit in two routes in two spellings; the shell subtracts
+// paused_clients literally, so pausing has to name both. Keeping only the
+// first would resume the tunnel client while answering 200.
+func TestHandlePauseClient_KeepsEverySpellingPaused(t *testing.T) {
+	mc := &mockConfig{
+		cfg: &vpnconfig.VPNDirectorConfig{
+			Xray: vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}},
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: map[string]vpnconfig.TunnelConfig{
+					"wgc1": {Clients: []string{"192.168.50.10/32"}},
+				},
+			},
+			PausedClients: []string{"192.168.50.10", "192.168.50.10/32"},
+		},
+	}
+	deps := newTestDeps(t)
+	deps.Config = mc
+	deps.VPN = &mockVPN{}
+
+	req := httptest.NewRequest("POST", "/api/clients/pause?ip=192.168.50.10", nil)
+	rec := httptest.NewRecorder()
+	handlePauseClient(deps).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if mc.savedCfg == nil {
+		t.Fatal("expected config to be saved")
+	}
+	got := make(map[string]int)
+	for _, e := range mc.savedCfg.PausedClients {
+		got[e]++
+	}
+	for _, want := range []string{"192.168.50.10", "192.168.50.10/32"} {
+		if got[want] != 1 {
+			t.Errorf("paused_clients = %v, want %q exactly once", mc.savedCfg.PausedClients, want)
+		}
+	}
+}
+
 func TestHandlePauseClient_UnparseableAddressThatIsNotConfigured(t *testing.T) {
 	// 404, not 400: the address is looked up now instead of validated, so an
 	// entry an older build stored stays reachable and a typo still stops here.
