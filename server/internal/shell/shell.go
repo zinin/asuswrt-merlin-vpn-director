@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -31,9 +32,28 @@ type Result struct {
 func ExecContext(ctx context.Context, command string, args ...string) (*Result, error) {
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, command, args...)
-	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	// Own process group. vpn-director.sh spawns wget and sleep, and they
+	// inherit FD 200 with /var/lock/vpn-director.lock: signalling the shell
+	// alone leaves a child holding that lock until it ends on its own, and
+	// every later run then skips silently or waits out its --wait.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
+		return nil
+	}
 	cmd.WaitDelay = waitDelay
 	output, err := cmd.CombinedOutput()
+	// WaitDelay ends the shell only, so a child that ignored SIGTERM is still
+	// running. Kill the group: its id stays reserved while the group has
+	// members, which keeps this signal off an unrelated process.
+	if ctx.Err() != nil && cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	result := &Result{Output: string(output)}
 
 	if err != nil && ctx.Err() != nil {

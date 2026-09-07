@@ -3,7 +3,11 @@ package shell
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -128,6 +132,45 @@ func TestExecContext_ChildHoldingThePipeIsNotAFailure(t *testing.T) {
 	if !strings.Contains(result.Output, "done") {
 		t.Errorf("Output = %q, want what the command printed", result.Output)
 	}
+}
+
+// A timeout has to end the command's children too. vpn-director.sh's wget and
+// sleep inherit FD 200 with /var/lock/vpn-director.lock, so a survivor keeps
+// the lock and every later run skips silently or waits out its --wait.
+func TestExecContext_TimeoutEndsTheChildrenToo(t *testing.T) {
+	old := waitDelay
+	waitDelay = 300 * time.Millisecond
+	t.Cleanup(func() { waitDelay = old })
+
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	// The inner shell ignores SIGTERM and outlives the one that started it.
+	_, err := ExecContext(ctx, "sh", "-c",
+		`sh -c 'trap "" TERM; echo $$ > `+pidFile+`; sleep 30' & sleep 30`)
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+
+	data, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Fatalf("child never recorded its pid: %v", readErr)
+	}
+	pid, convErr := strconv.Atoi(strings.TrimSpace(string(data)))
+	if convErr != nil {
+		t.Fatalf("child pid %q: %v", data, convErr)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); err != nil {
+			return // gone, as it must be
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL) // do not leak it into the rest of the run
+	t.Error("the child outlived the timeout, still holding what it inherited")
 }
 
 func TestExecContext_TimeoutKillsChildThatIgnoresTerm(t *testing.T) {
