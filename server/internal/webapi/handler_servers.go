@@ -103,16 +103,24 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := deps.Xray.GenerateConfig(server, ports); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
+		// Generation and the record of it go under one lock: a switch from the
+		// bot landing in between would otherwise leave config.json describing
+		// its server while this one's name reaches the UI.
+		generated, err := service.GenerateAndRecordActiveServer(deps.Config, deps.Xray, server, ports)
+		if !generated {
+			// Nothing was written, so nothing is worth restarting Xray for.
+			if errors.Is(err, service.ErrConfigLoad) {
+				jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
+			} else {
+				jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
+			}
 			return
 		}
-
-		// Record what config.json was built from, now that it has been. A
-		// failure here is bookkeeping, not the switch: the server did change,
-		// and answering 500 would send the user back to redo a restart that
-		// worked. The cost is a stale name in the UI until the next selection.
-		if err := service.RecordActiveServer(deps.Config, server); err != nil {
+		if err != nil {
+			// config.json is written and only the record is missing. The
+			// server did change, and answering 500 would send the user back to
+			// redo a switch that worked; the cost is a stale name in the UI
+			// until the next selection.
 			slog.Warn("Failed to record the active server", "server", server.Name, "error", err)
 		}
 

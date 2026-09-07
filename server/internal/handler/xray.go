@@ -92,16 +92,19 @@ func (h *XrayHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 	}
 	ports.TProxy, ports.Socks = vpnconfig.XrayInboundPorts(vpnCfg)
 
-	// Generate Xray config
-	if err := h.deps.Xray.GenerateConfig(server, ports); err != nil {
+	// Generate the Xray config and record which server it came from, both
+	// under the config lock: the Web UI reads that record to name the running
+	// server, and a switch made there at the same moment must not be able to
+	// leave the two disagreeing.
+	generated, err := service.GenerateAndRecordActiveServer(h.deps.Config, h.deps.Xray, server, ports)
+	if !generated {
+		// config.json is untouched, so there is nothing to restart into.
 		h.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2(fmt.Sprintf("Ошибка: %v", err)))
 		return
 	}
-
-	// The Web UI reads this record to name the running server, so a switch
-	// made from Telegram owes it too. Logged rather than reported: the switch
-	// itself succeeded and the user has nothing to do about a lock timeout.
-	if err := service.RecordActiveServer(h.deps.Config, server); err != nil {
+	if err != nil {
+		// The switch itself worked and the user has nothing to do about a
+		// lock timeout, so this stays in the log.
 		slog.Warn("Failed to record the active server", "server", server.Name, "error", err)
 	}
 

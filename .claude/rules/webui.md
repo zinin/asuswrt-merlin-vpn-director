@@ -62,14 +62,27 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 `config.json` carries just the outbound, and a subscription routinely puts many
 names behind one `address:port` - the router this was written on has 62 servers
 across 9 endpoints and one UUID - so the name cannot be recovered from it
-afterwards. Every path that generates `config.json` writes the record
-immediately after the generation succeeds, never before: the Web UI, the bot's
-`/xray`, the wizard (all three via `service.RecordActiveServer`) and
-`configure.sh`. A record naming a server whose config failed to generate would
-be worse than none, and a write failure is logged rather than returned - the
-switch itself worked. The record holds name, address and port only: `/api/config`
-hands this file to the browser, so the UUID and the REALITY material stay out.
-It is absent, and `active` is `null`, until something selects a server.
+afterwards. Every path that generates `config.json` writes the record, and
+writes it **under the same config lock as the generation**: the three Go paths
+— the Web UI, the bot's `/xray`, the wizard — through
+`service.GenerateAndRecordActiveServer`, and `configure.sh` by holding its
+`flock` across both steps. Without one lock a switch from the other daemon can
+land between this one's `config.json` and its record, and the two then name
+different servers with both switches reporting success.
+
+Inside that lock the record follows only a generation that succeeded — an
+error from the closure skips the save — so a server whose parameters Xray
+rejects is never named as the running one. Callers branch on the returned
+`generated`, never on the error: false means `config.json` is untouched and the
+switch did not happen (the server was rejected, or the config could not even be
+loaded to reach the generation), so the caller reports the failure and stops
+short of restarting Xray; true with an error means the opposite — `config.json`
+was written and only the record was not — so the caller logs and carries on
+rather than sending the user back to redo a switch that worked.
+
+The record holds name, address and port only: `/api/config` hands this file to
+the browser, so the UUID and the REALITY material stay out. It is absent, and
+`active` is `null`, until something selects a server.
 
 Client and exclusion mutations go through `updateAndApply`: the change is
 written under the config lock and `vpn-director.sh apply` runs immediately

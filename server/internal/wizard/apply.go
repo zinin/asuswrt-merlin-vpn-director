@@ -158,17 +158,20 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	// Generate Xray config if server index is valid
 	if serverIndex >= 0 && serverIndex < len(servers) {
 		s := servers[serverIndex]
-		if err := a.xray.GenerateConfig(s, ports); err != nil {
+		// Generation and the record of it under one lock, so a switch from the
+		// Web UI or /xray cannot land between them; the record follows only a
+		// generation that succeeded, since a failure leaves the previous
+		// config.json running and that is the server still to be named.
+		generated, err := service.GenerateAndRecordActiveServer(a.config, a.xray, s, ports)
+		if !generated {
 			a.sender.SendPlain(chatID, fmt.Sprintf("Xray config generation error: %v", err))
 			// Continue anyway - vpn-director.json is already saved
 		} else {
-			a.sender.SendPlain(chatID, "xray/config.json updated")
-			// Only on the success branch: the failure above leaves the previous
-			// config.json running, and that is the server the record must keep
-			// naming.
-			if err := service.RecordActiveServer(a.config, s); err != nil {
+			if err != nil {
+				// config.json is written; only the record of it is missing.
 				slog.Warn("Failed to record the active server", "server", s.Name, "error", err)
 			}
+			a.sender.SendPlain(chatID, "xray/config.json updated")
 		}
 	} else {
 		a.sender.SendPlain(chatID, "Warning: Invalid server selection, Xray config not updated")

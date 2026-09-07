@@ -88,7 +88,12 @@ func TestXrayHandler_HandleCallback_Success(t *testing.T) {
 		{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1", IPs: []string{"1.1.1.1"}},
 		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IPs: []string{"2.2.2.2"}},
 	}
-	config := &mockConfigStore{servers: servers}
+	// A configured router: the generation runs inside UpdateVPNConfig, so a
+	// store with no vpn-director.json would never reach it.
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{}
 	vpn := &mockVPNDirectorWithXray{}
 
@@ -147,9 +152,13 @@ func TestXrayHandler_HandleCallback_InvalidIndex(t *testing.T) {
 func TestXrayHandler_HandleCallback_GenerateError(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{{Name: "Server1"}}
-	config := &mockConfigStore{servers: servers}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{err: errors.New("template not found")}
-
+	// No VPN on purpose: a generation that failed must not reach RestartXray,
+	// and a nil dependency is the loudest way to prove it does not.
 	deps := &Deps{Sender: sender, Config: config, Xray: xray}
 	h := NewXrayHandler(deps)
 
@@ -171,7 +180,10 @@ func TestXrayHandler_HandleCallback_GenerateError(t *testing.T) {
 func TestXrayHandler_HandleCallback_RestartError(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{{Name: "Server1"}}
-	config := &mockConfigStore{servers: servers}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{}
 	vpn := &mockVPNDirectorWithXray{restartXrayErr: errors.New("xray not running")}
 
@@ -245,7 +257,10 @@ func TestXrayHandler_FullFlow(t *testing.T) {
 		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IPs: []string{"2.2.2.2"}},
 		{Name: "Japan, Tokyo", Address: "jp.example.com", Port: 443, UUID: "uuid3", IPs: []string{"3.3.3.3"}},
 	}
-	config := &mockConfigStore{servers: servers}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{}
 	vpn := &mockVPNDirectorWithXray{}
 
