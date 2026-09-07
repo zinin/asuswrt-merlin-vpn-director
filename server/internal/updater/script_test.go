@@ -354,6 +354,38 @@ func TestGenerateScript_PublishesThePIDByRename(t *testing.T) {
 	}
 }
 
+// BusyBox sh on Asuswrt-Merlin has no "command" builtin: `command -v pgrep`
+// exits 127 whether or not pgrep is installed. A guard written that way refuses
+// every update on the very router it was meant to protect, and a monit gate
+// written that way silently never unmonitors anything. Nothing in the generated
+// script may depend on it.
+func TestGenerateScript_DoesNotUseTheCommandBuiltin(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	// Comments are free to name the trap they explain; only what the shell
+	// executes is pinned.
+	for i, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if strings.Contains(line, "command -v") {
+			t.Errorf("line %d probes with `command -v`, which BusyBox sh does not have; use have_cmd: %s", i+1, line)
+		}
+	}
+	if !strings.Contains(script, "have_cmd() {") {
+		t.Error("script must define have_cmd to probe for a command")
+	}
+	for _, cmd := range []string{"pgrep", "monit"} {
+		if !strings.Contains(script, "have_cmd "+cmd) {
+			t.Errorf("script must probe for %s through have_cmd", cmd)
+		}
+	}
+}
+
 func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
 	s := &Service{}
 	script, err := s.generateScript(validOpts())
@@ -366,7 +398,7 @@ func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
 	// every `if` below, so nothing is stopped, cp -f lands under live
 	// processes and notify.json still says ok.
 	steps := afterOnExit(t, script)
-	const guard = "if ! command -v pgrep >/dev/null 2>&1; then"
+	const guard = "if ! have_cmd pgrep; then"
 	i := strings.Index(steps, guard)
 	if i < 0 {
 		t.Fatal("script must refuse to run without pgrep, not read its absence as \"nothing is running\"")

@@ -105,6 +105,17 @@ async function waitForVersion(target: string, baseline: string): Promise<PollOut
       if (target && version === target) {
         return 'updated'
       }
+      if (target && version) {
+        // The old build is answering. If the script is gone with it, the update
+        // ended without installing anything - a pre-flight refusal writes
+        // notify.json and exits in a second - and sitting out the five-minute
+        // restart window would only leave "the server is restarting" on screen
+        // long after nothing is restarting.
+        const running = await updateStillRunning()
+        if (running === false) {
+          return 'unchanged'
+        }
+      }
       if (!target && version) {
         const running = await updateStillRunning()
         if (running === false) {
