@@ -599,3 +599,59 @@ func TestCheckAndSendNotify_ReleasesTheClaimItTook(t *testing.T) {
 		t.Errorf("the notifier kept the claim it took: %v", err)
 	}
 }
+
+// The two daemons need not be on one version. install.sh calls the Web UI
+// optional and carries on when its download fails, and an update the Web UI
+// starts writes its own version as old_version - so a bot on v0.11.3 can read
+// a failed attempt from v0.11.2 to v0.11.4 and match neither end of it. That
+// failure is the freshest thing on the router rather than an old one: the Web
+// UI is down, and this report is the only word anyone gets.
+func TestCheckAndSendNotify_ReportsAFailureOfAnAttemptFromAnotherDaemon(t *testing.T) {
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.2","new_version":"v0.11.4","status":"failed","initiator":"webui"}`)
+
+	sender := &mockSender{}
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "v0.11.3"); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if len(sender.sentMessages) != 1 {
+		t.Fatalf("sent %d messages, want 1: v0.11.3 does not outlive an attempt at v0.11.4", len(sender.sentMessages))
+	}
+	if _, err := os.Stat(notifyFile); !os.IsNotExist(err) {
+		t.Error("notify.json must go once the report is out")
+	}
+}
+
+// Overtaking is a comparison, and a version that does not parse compares to
+// nothing. Neither a bot built outside a release nor a notify.json naming a tag
+// this build cannot read may silence a failure: what cannot be dated is
+// reported.
+func TestCheckAndSendNotify_ReportsAFailureItCannotDate(t *testing.T) {
+	cases := []struct {
+		name       string
+		running    string
+		newVersion string
+	}{
+		{"the running build is not a release", "dev", "v0.11.1"},
+		{"the attempt names something unparseable", "v0.99.0", "latest"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			notifyFile := filepath.Join(tmpDir, "notify.json")
+			writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.0","new_version":"`+tc.newVersion+`","status":"failed","initiator":"webui"}`)
+
+			sender := &mockSender{}
+			if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, tc.running); err != nil {
+				t.Fatalf("CheckAndSendNotify() error = %v", err)
+			}
+
+			if len(sender.sentMessages) != 1 {
+				t.Fatalf("sent %d messages, want 1: running %q against an attempt at %q dates nothing",
+					len(sender.sentMessages), tc.running, tc.newVersion)
+			}
+		})
+	}
+}

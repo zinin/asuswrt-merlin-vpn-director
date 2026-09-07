@@ -139,23 +139,43 @@ func notificationText(n UpdateNotification, updateDir string) string {
 
 // overtakenFailure reports whether a failed update has already been overtaken.
 // A failed update leaves notify.json behind, and the bot reads that file on
-// its next start. When that start is a build from neither end of the failed
-// attempt - install.sh was re-run, or a later update landed - the daemons the
-// failure describes are gone, and announcing it says something is broken when
-// nothing is.
+// its next start. When the build making that start is newer than the one the
+// attempt was trying to install - install.sh was re-run, or a later update
+// landed - the daemons the failure describes are gone, and announcing it says
+// something is broken when nothing is.
 //
-// Running NewVersion is not that case. The script copies both binaries into
-// place before it starts anything, so a daemon that fails to start in its step
-// 6 leaves this process running the new build with the other one down - and
-// step 6 rewrites notify.json before starting the bot precisely so that
-// failure gets reported. Reading it as old would silence the one report the
-// script went out of its way to arrange.
+// That comparison is the test, and "the running version is neither end of the
+// attempt" is not the same test. The two daemons need not be on one version:
+// install.sh calls the Web UI optional and carries on when its download fails,
+// and old_version is the version of whichever daemon started the update rather
+// than of this one. A bot on v0.11.3 beside a Web UI on v0.11.2 that fails an
+// update to v0.11.4 is neither end of it, and dropping that silences the one
+// report anybody was going to get - the Web UI is down and nothing else says so.
 //
-// A successful notification is left alone whatever the version: it names what
-// that update did, and staying quiet would be worse than saying it late.
+// Running NewVersion is not overtaking either. The script copies both binaries
+// into place before it starts anything, so a daemon that fails to start in its
+// step 6 leaves this process running the new build with the other one down -
+// and step 6 rewrites notify.json before starting the bot precisely so that
+// failure gets reported.
+//
+// A version that does not parse dates nothing, so it decides nothing: a bot
+// built outside a release, or a tag out of some later release this build
+// cannot read, leaves the failure reported. A successful notification is left
+// alone whatever the version: it names what that update did, and staying quiet
+// would be worse than saying it late.
 func overtakenFailure(n UpdateNotification, currentVersion string) bool {
-	return n.Status == "failed" && currentVersion != "" && n.OldVersion != "" &&
-		currentVersion != n.OldVersion && currentVersion != n.NewVersion
+	if n.Status != "failed" {
+		return false
+	}
+	running, err := updater.ParseVersion(currentVersion)
+	if err != nil {
+		return false
+	}
+	attempted, err := updater.ParseVersion(n.NewVersion)
+	if err != nil {
+		return false
+	}
+	return attempted.IsOlderThan(running)
 }
 
 // cleanup removes what the notification leaves behind. Errors are logged, not
