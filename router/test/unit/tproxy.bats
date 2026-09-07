@@ -346,3 +346,46 @@ EOF
     run _tproxy_setup_bypass_ipset
     assert_success
 }
+
+# ============================================================================
+# _tproxy_setup_routing / _tproxy_teardown_routing - fwmark rule for TPROXY
+# ============================================================================
+
+# The kernel prints a routing table by its rt_tables name, so table 100 comes
+# back as "lookup wan0" on Asuswrt-Merlin. A check that looks for the number
+# never recognises its own rule and re-adds it on every apply.
+@test "_tproxy_setup_routing: adds the rule once when the kernel names the table" {
+    load_tproxy_module
+
+    _tproxy_setup_routing
+    _tproxy_setup_routing
+
+    run ip rule show pref 200
+    assert_success
+    assert_equal "$(grep -c 'fwmark 0x100/0x100' <<< "$output")" 1
+}
+
+@test "_tproxy_setup_routing: collapses duplicates left behind by an older version" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    ip rule add pref 200 fwmark 0x100/0x100 table 100
+
+    _tproxy_setup_routing
+
+    run ip rule show pref 200
+    assert_success
+    assert_equal "$(grep -c 'fwmark 0x100/0x100' <<< "$output")" 1
+}
+
+@test "_tproxy_teardown_routing: removes every copy of the rule" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    ip rule add pref 200 fwmark 0x100/0x100 table 100
+
+    _tproxy_teardown_routing
+
+    run ip rule show pref 200
+    assert_success
+    refute_output
+}

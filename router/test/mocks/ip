@@ -1,10 +1,83 @@
 #!/bin/bash
 echo "ip $*" >> /tmp/bats_ip_calls.log
+
+# Rules the kernel would hold, one display line per rule. Cleared by the
+# test_helper teardown, which removes /tmp/bats_test_*.
+RULES_FILE="${BATS_IP_RULES_FILE:-/tmp/bats_test_ip_rules}"
+RT_TABLES="${RT_TABLES_FILE:-/etc/iproute2/rt_tables}"
+
+_pref=""
+_fwmark=""
+_table=""
+
+# _parse_rule_args reads the selectors of "ip rule add|del|show" into globals.
+_parse_rule_args() {
+    _pref=""
+    _fwmark=""
+    _table=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            pref|priority) _pref="$2"; shift 2 ;;
+            fwmark)        _fwmark="$2"; shift 2 ;;
+            table|lookup)  _table="$2"; shift 2 ;;
+            *)             shift ;;
+        esac
+    done
+}
+
+# _table_name renders a routing table the way iproute2 does: by its rt_tables
+# name when it has one, by its number otherwise. This is why "table 100" comes
+# back from the kernel as "lookup wan0" on Asuswrt-Merlin.
+_table_name() {
+    local name
+    name=$(awk -v id="$1" '$0 !~ /^#/ && $1 == id { print $2; exit }' "$RT_TABLES" 2>/dev/null)
+    printf '%s' "${name:-$1}"
+}
+
+# _rule_line renders the parsed selectors as "ip rule show" would print them.
+_rule_line() {
+    printf '%s:\tfrom all%s lookup %s' "$_pref" "${_fwmark:+ fwmark $_fwmark}" "$(_table_name "$_table")"
+}
+
 case "$1" in
     rule)
         case "$2" in
-            show) echo "0: from all lookup local" ;;
-            add|del) exit 0 ;;
+            show)
+                _parse_rule_args "${@:3}"
+                if [[ -n $_pref ]]; then
+                    # "ip rule show pref N" prints only the matching rules.
+                    grep "^$_pref:" "$RULES_FILE" 2>/dev/null || true
+                else
+                    printf '0:\tfrom all lookup local\n'
+                    cat "$RULES_FILE" 2>/dev/null || true
+                fi
+                ;;
+            add)
+                _parse_rule_args "${@:3}"
+                _rule_line >> "$RULES_FILE"
+                printf '\n' >> "$RULES_FILE"
+                ;;
+            del)
+                _parse_rule_args "${@:3}"
+                # The kernel matches every selector it was given, deletes one
+                # rule and fails when none is left - which is what a delete
+                # loop relies on to stop.
+                if [[ -n $_fwmark || -n $_table ]]; then
+                    target=$(_rule_line)
+                    grep -qxF "$target" "$RULES_FILE" 2>/dev/null || {
+                        echo "RTNETLINK answers: No such file or directory" >&2
+                        exit 2
+                    }
+                    awk -v t="$target" '!done && $0 == t { done = 1; next } { print }' \
+                        "$RULES_FILE" > "$RULES_FILE.tmp" && mv "$RULES_FILE.tmp" "$RULES_FILE"
+                else
+                    grep -q "^$_pref:" "$RULES_FILE" 2>/dev/null || {
+                        echo "RTNETLINK answers: No such file or directory" >&2
+                        exit 2
+                    }
+                    sed -i "0,/^$_pref:/{/^$_pref:/d}" "$RULES_FILE"
+                fi
+                ;;
         esac
         ;;
     route)

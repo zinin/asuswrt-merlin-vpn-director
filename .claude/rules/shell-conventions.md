@@ -136,3 +136,30 @@ it and takes it again, and another waiter can step into that window.
 **Related**: POSIX allows a single digit in a redirection. `exec 201>` is a
 bash/ksh extension that dash rejects, and generated scripts run under
 `/bin/sh`.
+
+### `ip rule show` prints the table by name, not by number
+
+**Problem**: `ip rule add ... table 100` reads back as `lookup wan0`, because
+`/etc/iproute2/rt_tables` on Asuswrt-Merlin maps `100 wan0` (and `111 ovpnc1`,
+`116 wgc1`, …). An idempotency check that greps the output for the table
+*number* never recognises its own rule:
+
+```bash
+# never matches on a router: the kernel prints "lookup wan0"
+ip rule show | grep -c "fwmark 0x100.*lookup 100"
+```
+
+`_tproxy_setup_routing` did exactly this and re-added its rule on every apply —
+seven copies on a router with 23 days of uptime, and auto-apply from the Web UI
+made each click add another.
+
+**Solution**: match on the preference, which is ours alone, and name every
+selector when deleting so the kernel cannot match somebody else's rule:
+
+```bash
+count=$(ip rule show pref "$PREF" | grep -c "fwmark $FWMARK" || true)
+ip rule del pref "$PREF" fwmark "$FWMARK/$MASK" table "$TABLE"
+```
+
+`ip rule del` removes one rule per call and fails when none is left, so a
+teardown deletes in a loop rather than once.
