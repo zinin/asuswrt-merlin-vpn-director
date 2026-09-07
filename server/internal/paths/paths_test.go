@@ -123,13 +123,68 @@ func TestRotatedLogs(t *testing.T) {
 	}
 }
 
-// A daemon started by an update script older than the fix inherits
-// /tmp/vpn-director-update as its working directory, and the bot deletes that
-// directory the moment it reports the update. On the router the leftover is
-// not cosmetic: monit refuses to run without a working directory, and every
-// shell spawned from here prints "shell-init: error retrieving current
-// directory" into whatever the Web UI is showing.
-func TestEnsureWorkingDirectory_LeavesADirectoryThatIsGone(t *testing.T) {
+// A daemon has no business holding the directory it was started from, and here
+// that directory is usually doomed: the update script starts the daemons while
+// /tmp/vpn-director-update still exists and the bot deletes it moments later,
+// once it has reported the update. Asking whether the directory is still there
+// is no defence - at startup it is, and the deletion comes after - so the move
+// is unconditional.
+func TestDetachFromCallerDirectory_MovesToRootFromALiveDirectory(t *testing.T) {
+	before, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(before) })
+
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DetachFromCallerDirectory(); err != nil {
+		t.Fatalf("DetachFromCallerDirectory() error = %v", err)
+	}
+	got, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/" {
+		t.Errorf("working directory is %q, want /", got)
+	}
+}
+
+// The move must not change what a relative flag names: --config vpn.json is
+// resolved against the directory the daemon was started in, before it leaves.
+func TestDetachFromCallerDirectory_ResolvesTheFlagPathsFirst(t *testing.T) {
+	before, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(before) })
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "vpn-director.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	config := "vpn-director.json"
+	if err := DetachFromCallerDirectory(&config); err != nil {
+		t.Fatalf("DetachFromCallerDirectory() error = %v", err)
+	}
+
+	if !filepath.IsAbs(config) {
+		t.Fatalf("the flag still reads %q, want an absolute path", config)
+	}
+	if _, err := os.ReadFile(config); err != nil {
+		t.Errorf("the resolved path no longer names the file: %v", err)
+	}
+}
+
+// The same call is what saves a daemon whose directory has already gone -
+// os.Chdir does not care, where a relative path would.
+func TestDetachFromCallerDirectory_WorksFromADirectoryThatIsGone(t *testing.T) {
 	before, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -146,44 +201,15 @@ func TestEnsureWorkingDirectory_LeavesADirectoryThatIsGone(t *testing.T) {
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Getwd(); err == nil {
-		t.Skip("this platform still resolves a deleted working directory")
-	}
 
-	if !EnsureWorkingDirectory() {
-		t.Error("EnsureWorkingDirectory() = false, want it to report the move")
+	if err := DetachFromCallerDirectory(); err != nil {
+		t.Fatalf("DetachFromCallerDirectory() error = %v", err)
 	}
 	got, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("the working directory is still gone: %v", err)
 	}
 	if got != "/" {
-		t.Errorf("moved to %q, want /", got)
-	}
-}
-
-// Dev mode resolves testdata/dev/... against the working directory, so one
-// that exists is never taken away.
-func TestEnsureWorkingDirectory_LeavesALiveDirectoryAlone(t *testing.T) {
-	before, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(before) })
-
-	dir := t.TempDir()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-
-	if EnsureWorkingDirectory() {
-		t.Error("EnsureWorkingDirectory() = true, want it to leave a live directory alone")
-	}
-	got, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil && got != resolved && got != dir {
-		t.Errorf("working directory is %q, want it left at %q", got, dir)
+		t.Errorf("working directory is %q, want /", got)
 	}
 }

@@ -35,17 +35,13 @@ func versionString() string {
 }
 
 func main() {
-	// Before anything here spawns a shell: an update script that ran from the
-	// update directory leaves its daemons in a directory this process then
-	// deletes, and a working directory that is gone breaks monit and prints
-	// getcwd errors into every command's output.
-	movedOutOfADeletedCwd := paths.EnsureWorkingDirectory()
-
 	devFlag := flag.Bool("dev", false, "Run in development mode (local testing)")
 	flag.Parse()
 
 	var p paths.Paths
 	var opts []bot.Option
+	// Reported once the logger exists: this runs before it.
+	var detachErr error
 
 	if *devFlag {
 		p = paths.DevPaths()
@@ -58,6 +54,12 @@ func main() {
 		}
 	} else {
 		p = paths.Default()
+		// Before anything here spawns a shell. The update script starts this
+		// daemon from the update directory, which the bot deletes moments
+		// later, once it has reported the update - and a working directory
+		// that is gone breaks monit and prints getcwd errors into the output
+		// of every command run from here.
+		detachErr = paths.DetachFromCallerDirectory()
 	}
 
 	// Always add updater service
@@ -74,8 +76,8 @@ func main() {
 
 	slog.SetDefault(slogger)
 
-	if movedOutOfADeletedCwd {
-		slog.Info("Started in a directory that no longer exists, moved to /")
+	if detachErr != nil {
+		slog.Warn("Could not leave the directory this process was started in", "error", detachErr)
 	}
 
 	if *devFlag {
