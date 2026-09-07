@@ -111,12 +111,26 @@ writes `servers.json` and `xray.servers`. All of them serialize on
 - `jwt_secret` is generated on first start when empty and written back under
   the config lock. It is never rewritten, which is what lets a login session
   survive an update.
+- The file paths in `vpn-director.json` — `data_dir`, `webui.cert_file`,
+  `webui.key_file` — are read against **the config file's own directory** when
+  they are relative (`paths.Resolve`). They cannot be read against the working
+  directory: outside dev mode both daemons move to `/` at startup, and before
+  that the directory was whatever the launcher had. Everything the project
+  writes is absolute anyway; the rule is what a hand-edited relative value
+  means.
 
 ## Dev mode
 
 ```bash
 cd server && go run ./cmd/webui --dev
 ```
+
+`testdata/dev/` is gitignored and recreated when missing. A sandbox from before
+the paths rule above carries `"data_dir": "testdata/dev/data"`, which now
+resolves beside the config and lands in `testdata/dev/testdata/dev/data`: delete
+`testdata/dev/vpn-director.json` once, or change the value to `"data"`. Dev mode
+keeps the directory it was started in — `DevPaths` are relative to `server/`, so
+`--dev` still has to be run from there.
 
 Plain HTTP instead of TLS, `server/testdata/dev/` for config, shadow and logs,
 `devmode.Executor` instead of real shell commands, and an `admin`/`admin`

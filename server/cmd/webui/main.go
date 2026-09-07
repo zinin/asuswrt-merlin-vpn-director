@@ -33,12 +33,6 @@ var (
 )
 
 func main() {
-	// Before anything here spawns a shell: an update script that ran from the
-	// update directory leaves its daemons in a directory the bot then deletes,
-	// and a working directory that is gone breaks monit and prints getcwd
-	// errors into every command's output - the Status page shows them.
-	movedOutOfADeletedCwd := paths.EnsureWorkingDirectory()
-
 	configPath := flag.String("config", "/opt/vpn-director/vpn-director.json", "path to vpn-director.json")
 	shadowPath := flag.String("shadow", "/etc/shadow", "path to shadow file")
 	devFlag := flag.Bool("dev", false, "run in development mode (HTTP, mock executor, testdata paths)")
@@ -46,6 +40,8 @@ func main() {
 
 	// In dev mode, override defaults with testdata paths.
 	var p paths.Paths
+	// Reported once the logger exists: this runs before it.
+	var detachErr error
 	if *devFlag {
 		p = paths.DevPaths()
 		if *configPath == "/opt/vpn-director/vpn-director.json" {
@@ -63,6 +59,13 @@ func main() {
 		ensureDevFiles(*configPath, *shadowPath, p.DefaultDataDir)
 	} else {
 		p = paths.Default()
+		// Before anything here spawns a shell, and with the flags resolved
+		// first so a relative --config keeps naming the same file. The update
+		// script starts this daemon from the update directory, which the bot
+		// deletes moments later, once it has reported the update - and a
+		// working directory that is gone prints getcwd errors into the output
+		// the Status page puts on screen.
+		detachErr = paths.DetachFromCallerDirectory(configPath, shadowPath)
 	}
 
 	// Log file first, like the bot, so a config load failure is logged too.
@@ -76,8 +79,8 @@ func main() {
 
 	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag)
 
-	if movedOutOfADeletedCwd {
-		slog.Info("started in a directory that no longer exists, moved to /")
+	if detachErr != nil {
+		slog.Warn("could not leave the directory this process was started in", "error", detachErr)
 	}
 
 	// Derive scripts directory from --config path so runtime reads/writes
@@ -104,6 +107,11 @@ func main() {
 	if vpnCfg.WebUI.KeyFile == "" {
 		vpnCfg.WebUI.KeyFile = "/opt/vpn-director/certs/server.key"
 	}
+	// Read against the config, like data_dir: this process has left the
+	// directory it was started in, and TLS that fails to come up is how a
+	// relative certificate path would report it.
+	vpnCfg.WebUI.CertFile = paths.Resolve(scriptsDir, vpnCfg.WebUI.CertFile)
+	vpnCfg.WebUI.KeyFile = paths.Resolve(scriptsDir, vpnCfg.WebUI.KeyFile)
 
 	logger.SetLevel(vpnCfg.WebUI.LogLevel) // "" keeps info
 
@@ -228,7 +236,7 @@ func ensureDevFiles(configPath, shadowPath, dataDir string) {
 	// VPN Director config with webui section.
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		devConfig := &vpnconfig.VPNDirectorConfig{
-			DataDir: dataDir,
+			DataDir: "data", // relative to this config file
 			WebUI: vpnconfig.WebUIConfig{
 				Port:      8444,
 				JWTSecret: "dev-secret-not-for-production-use!!",

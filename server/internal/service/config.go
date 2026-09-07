@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -71,7 +72,11 @@ func (s *ConfigService) DataDir() (string, error) {
 		return "", err
 	}
 	if cfg.DataDir != "" {
-		return cfg.DataDir, nil
+		// Relative means "beside vpn-director.json". It cannot mean "beside
+		// the directory this daemon was started in": production daemons move
+		// to / at startup, and the directory before that was whatever the
+		// launcher had - after a self-update, one that has just been deleted.
+		return paths.Resolve(filepath.Dir(s.configPath), cfg.DataDir), nil
 	}
 	return s.defaultDataDir, nil
 }

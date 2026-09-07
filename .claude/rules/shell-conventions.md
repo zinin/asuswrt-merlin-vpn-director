@@ -265,7 +265,15 @@ the script's `monit monitor …  2>/dev/null || true` swallowed the exception �
 `telegram-bot` stayed unmonitored, and all three daemons carried a dead cwd.
 
 **Rule**: start long-lived processes from a directory nothing deletes (`/`), and
-let a log helper survive the loss of its own file:
+let a log helper survive the loss of its own file.
+
+A daemon checking at startup whether its own directory still exists is **not** a
+defence, and v0.11.4 shipped one that could never fire: the update script starts
+the daemons while the directory is still there, and the bot removes it moments
+later, once it has reported the update. The move has to be unconditional — with
+any relative flag resolved before it, or `--config vpn-director.json` starts
+naming `/vpn-director.json`. Dev mode is the exception: `DevPaths` are relative
+to the source tree, so it keeps the directory it was started in.
 
 ```sh
 log() {
