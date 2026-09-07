@@ -53,10 +53,31 @@ type TunnelDirectorConfig struct {
 }
 
 type XrayConfig struct {
-	Clients     []string `json:"clients"`
-	Servers     []string `json:"servers"`
-	ExcludeIPs  []string `json:"exclude_ips"`
-	ExcludeSets []string `json:"exclude_sets"`
+	Clients      []string      `json:"clients"`
+	Servers      []string      `json:"servers"`
+	ExcludeIPs   []string      `json:"exclude_ips"`
+	ExcludeSets  []string      `json:"exclude_sets"`
+	ActiveServer *ActiveServer `json:"active_server,omitempty"`
+}
+
+// ActiveServer records which server the generated Xray config was built from.
+// Nothing else can answer that: config.json holds only the outbound, and on a
+// real subscription many entries share one endpoint - the router this was
+// written for has 62 servers behind 9 address:port pairs and a single UUID, so
+// eight names fit the running outbound equally well. Absent until something
+// selects a server, and omitted from the file rather than written as null: a
+// config that predates this field must not start claiming a server is active.
+type ActiveServer struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	Port    int    `json:"port"`
+}
+
+// NewActiveServer records the fields of s that identify it to a reader. The
+// rest - UUID, REALITY keys - would put credentials in a file the Web UI hands
+// out over /api/config.
+func NewActiveServer(s Server) *ActiveServer {
+	return &ActiveServer{Name: s.Name, Address: s.Address, Port: s.Port}
 }
 
 // ClientInfo represents a VPN client with its route and pause status.

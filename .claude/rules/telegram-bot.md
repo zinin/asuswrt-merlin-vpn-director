@@ -99,6 +99,8 @@ server/
 On apply:
 - Updates vpn-director.json (clients, exclusions, rules)
 - Generates /opt/etc/xray/config.json from template
+- Records the chosen server in `xray.active_server`, and only once the
+  generation above succeeded — `/xray` does the same. See `webui.md`
 - Runs `vpn-director.sh update`
 - Restarts Xray
 

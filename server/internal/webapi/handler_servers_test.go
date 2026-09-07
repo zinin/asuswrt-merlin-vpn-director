@@ -402,3 +402,135 @@ func TestNoServersMessage(t *testing.T) {
 		t.Errorf("five errors must be capped at three: got %q", got)
 	}
 }
+
+// The selection is recorded nowhere else. config.json holds only the outbound,
+// and a subscription puts many names behind one address:port - on the router
+// this was written for, eight names share the running endpoint - so the choice
+// has to be written down at the moment it is made.
+func TestHandleSelectServer_RecordsTheSelection(t *testing.T) {
+	mc := &mockConfig{
+		servers: []vpnconfig.Server{
+			{Address: "s1.example.com", Port: 443, UUID: "uuid-1", Name: "Амстердам", IPs: []string{"1.1.1.1"}},
+			{Address: "s2.example.com", Port: 8443, UUID: "uuid-2", Name: "Берлин", IPs: []string{"2.2.2.2"}},
+		},
+		cfg: &vpnconfig.VPNDirectorConfig{},
+	}
+	deps := newTestDeps(t)
+	deps.Config = mc
+
+	handler := handleSelectServer(deps)
+
+	req := httptest.NewRequest("POST", "/api/servers/active", strings.NewReader(`{"index": 1}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	active := mc.cfg.Xray.ActiveServer
+	if active == nil {
+		t.Fatal("nothing was recorded; the UI has no other way to name the running server")
+	}
+	if active.Name != "Берлин" || active.Address != "s2.example.com" || active.Port != 8443 {
+		t.Errorf("recorded %+v, want the server at index 1", *active)
+	}
+}
+
+// A server whose parameters Xray rejects - an incomplete REALITY record out of
+// a subscription is the usual way - leaves the old config.json running. Naming
+// it as active would be a plain lie, and the caller has already been told the
+// switch failed.
+func TestHandleSelectServer_RecordsNothingWhenGenerationFails(t *testing.T) {
+	mc := &mockConfig{
+		servers: []vpnconfig.Server{
+			{Address: "s1.example.com", Port: 443, UUID: "uuid-1", Name: "Амстердам", IPs: []string{"1.1.1.1"}},
+		},
+		cfg: &vpnconfig.VPNDirectorConfig{},
+	}
+	deps := newTestDeps(t)
+	deps.Config = mc
+	deps.Xray = &mockXray{err: errors.New("reality requires a public key")}
+
+	handler := handleSelectServer(deps)
+
+	req := httptest.NewRequest("POST", "/api/servers/active", strings.NewReader(`{"index": 0}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if active := mc.cfg.Xray.ActiveServer; active != nil {
+		t.Errorf("recorded %+v after the config failed to generate", *active)
+	}
+}
+
+func TestHandleListServers_ReportsTheActiveServer(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{
+		servers: []vpnconfig.Server{
+			{Address: "s1.example.com", Port: 443, Name: "Амстердам", IPs: []string{"1.1.1.1"}},
+		},
+		cfg: &vpnconfig.VPNDirectorConfig{
+			Xray: vpnconfig.XrayConfig{
+				ActiveServer: &vpnconfig.ActiveServer{Name: "Амстердам", Address: "s1.example.com", Port: 443},
+			},
+		},
+	}
+
+	handler := handleListServers(deps)
+
+	req := httptest.NewRequest("GET", "/api/servers", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Active *vpnconfig.ActiveServer `json:"active"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Active == nil {
+		t.Fatal("expected the response to name the active server")
+	}
+	if resp.Active.Name != "Амстердам" || resp.Active.Port != 443 {
+		t.Errorf("active = %+v, want the recorded server", *resp.Active)
+	}
+}
+
+// An install that predates the field, or one where nobody has picked a server
+// yet, must come back as null rather than as some server the client then
+// presents as running.
+func TestHandleListServers_ActiveIsNullWhenNothingIsRecorded(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{
+		servers: []vpnconfig.Server{{Address: "s1.example.com", Port: 443, Name: "Амстердам"}},
+		cfg:     &vpnconfig.VPNDirectorConfig{},
+	}
+
+	handler := handleListServers(deps)
+
+	req := httptest.NewRequest("GET", "/api/servers", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]json.RawMessage
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got, ok := resp["active"]; !ok || string(got) != "null" {
+		t.Errorf("active = %s (present: %v), want null", got, ok)
+	}
+}

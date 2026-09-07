@@ -46,7 +46,7 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 | POST | `/api/ipsets/update` | `vpn-director.sh update` (`IPSET_FORCE_UPDATE=1`) |
 | GET | `/api/ip` | External IP |
 | GET | `/api/version` | Build version and commit |
-| GET | `/api/servers` | Xray server list |
+| GET | `/api/servers` | Xray server list plus `active`, the recorded server |
 | POST | `/api/servers/active`, `/api/servers/import` | Select the active server, import a subscription |
 | GET/POST/DELETE | `/api/clients` | LAN clients |
 | POST | `/api/clients/pause`, `/api/clients/resume` | Pause and resume a client |
@@ -57,6 +57,19 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 | GET | `/api/update/check` | Latest release; `?force=1` pierces the 30-minute cache |
 | POST | `/api/update` | Starts the unified update, answers 202 |
 | GET | `/api/update/status` | Whether an update script is running |
+
+`xray.active_server` is the only record of which server is running.
+`config.json` carries just the outbound, and a subscription routinely puts many
+names behind one `address:port` - the router this was written on has 62 servers
+across 9 endpoints and one UUID - so the name cannot be recovered from it
+afterwards. Every path that generates `config.json` writes the record
+immediately after the generation succeeds, never before: the Web UI, the bot's
+`/xray`, the wizard (all three via `service.RecordActiveServer`) and
+`configure.sh`. A record naming a server whose config failed to generate would
+be worse than none, and a write failure is logged rather than returned - the
+switch itself worked. The record holds name, address and port only: `/api/config`
+hands this file to the browser, so the UUID and the REALITY material stay out.
+It is absent, and `active` is `null`, until something selects a server.
 
 Client and exclusion mutations go through `updateAndApply`: the change is
 written under the config lock and `vpn-director.sh apply` runs immediately

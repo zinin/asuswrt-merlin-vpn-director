@@ -3,6 +3,7 @@ package handler
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -95,6 +96,13 @@ func (h *XrayHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 	if err := h.deps.Xray.GenerateConfig(server, ports); err != nil {
 		h.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2(fmt.Sprintf("Ошибка: %v", err)))
 		return
+	}
+
+	// The Web UI reads this record to name the running server, so a switch
+	// made from Telegram owes it too. Logged rather than reported: the switch
+	// itself succeeded and the user has nothing to do about a lock timeout.
+	if err := service.RecordActiveServer(h.deps.Config, server); err != nil {
+		slog.Warn("Failed to record the active server", "server", server.Name, "error", err)
 	}
 
 	// Restart Xray

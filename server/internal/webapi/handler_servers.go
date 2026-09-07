@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -24,7 +25,20 @@ func handleListServers(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusInternalServerError, "failed to load servers")
 			return
 		}
-		jsonOK(w, map[string]interface{}{"servers": servers})
+		// The list on its own cannot say which entry is running: a
+		// subscription routinely puts many names behind one address:port. The
+		// answer is the record a selection leaves in vpn-director.json, and
+		// nil - "nothing has been selected" - travels as null.
+		cfg, err := deps.Config.LoadVPNConfig()
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
+			return
+		}
+		var active *vpnconfig.ActiveServer
+		if cfg != nil {
+			active = cfg.Xray.ActiveServer
+		}
+		jsonOK(w, map[string]interface{}{"servers": servers, "active": active})
 	}
 }
 
@@ -92,6 +106,14 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 		if err := deps.Xray.GenerateConfig(server, ports); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
 			return
+		}
+
+		// Record what config.json was built from, now that it has been. A
+		// failure here is bookkeeping, not the switch: the server did change,
+		// and answering 500 would send the user back to redo a restart that
+		// worked. The cost is a stale name in the UI until the next selection.
+		if err := service.RecordActiveServer(deps.Config, server); err != nil {
+			slog.Warn("Failed to record the active server", "server", server.Name, "error", err)
 		}
 
 		if err := deps.VPN.RestartXray(); err != nil {

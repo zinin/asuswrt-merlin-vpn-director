@@ -3,6 +3,7 @@ package wizard
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
@@ -162,6 +163,12 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 			// Continue anyway - vpn-director.json is already saved
 		} else {
 			a.sender.SendPlain(chatID, "xray/config.json updated")
+			// Only on the success branch: the failure above leaves the previous
+			// config.json running, and that is the server the record must keep
+			// naming.
+			if err := service.RecordActiveServer(a.config, s); err != nil {
+				slog.Warn("Failed to record the active server", "server", s.Name, "error", err)
+			}
 		}
 	} else {
 		a.sender.SendPlain(chatID, "Warning: Invalid server selection, Xray config not updated")

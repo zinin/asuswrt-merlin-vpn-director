@@ -872,3 +872,66 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 		}
 	})
 }
+
+// The wizard is the third path that writes config.json, and it owes the same
+// record as the Web UI and /xray: without it a wizard run leaves the Status
+// tab naming whichever server some other path chose last.
+func TestApplier_Apply_RecordsTheSelectedServer(t *testing.T) {
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{
+			{Name: "Server1", IPs: []string{"1.2.3.4"}, Address: "srv1.example.com", Port: 443, UUID: "uuid-1"},
+			{Name: "Server2", IPs: []string{"5.6.7.8"}, Address: "srv2.example.com", Port: 8443, UUID: "uuid-2"},
+		},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{Tunnels: make(map[string]vpnconfig.TunnelConfig)},
+		},
+	}
+	applier := NewApplier(&trackingManager{}, &trackingSender{}, configStore, &mockVPNDirector{}, &mockXrayGenerator{})
+
+	err := applier.Apply(123, &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 1,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients:     []ClientRoute{{IP: "192.168.1.10", Route: "xray"}},
+	})
+
+	if err != nil {
+		t.Fatalf("Apply error: %v", err)
+	}
+	active := configStore.vpnConfig.Xray.ActiveServer
+	if active == nil {
+		t.Fatal("the wizard applied a server without recording which one")
+	}
+	if active.Name != "Server2" || active.Address != "srv2.example.com" || active.Port != 8443 {
+		t.Errorf("recorded %+v, want the server at index 1", *active)
+	}
+}
+
+// Apply deliberately carries on after a generation failure - vpn-director.json
+// is already saved - but the record must not follow it: config.json still
+// describes the previous server.
+func TestApplier_Apply_RecordsNothingWhenXrayGenerationFails(t *testing.T) {
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{
+			{Name: "Server1", IPs: []string{"1.2.3.4"}, Address: "srv1.example.com", Port: 443, UUID: "uuid-1"},
+		},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{Tunnels: make(map[string]vpnconfig.TunnelConfig)},
+		},
+	}
+	xrayGen := &mockXrayGenerator{generateErr: errors.New("reality requires a public key")}
+	applier := NewApplier(&trackingManager{}, &trackingSender{}, configStore, &mockVPNDirector{}, xrayGen)
+
+	_ = applier.Apply(123, &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients:     []ClientRoute{{IP: "192.168.1.10", Route: "xray"}},
+	})
+
+	if active := configStore.vpnConfig.Xray.ActiveServer; active != nil {
+		t.Errorf("recorded %+v after the config failed to generate", *active)
+	}
+}

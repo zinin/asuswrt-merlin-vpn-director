@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import api from '../api'
+import type { ActiveServer } from '../types'
 
 const status = ref('')
 const ip = ref('')
 const ipError = ref('')
+const activeServer = ref<ActiveServer | null>(null)
+const serverError = ref('')
+// "Nothing is selected" and "we have not asked yet" look identical in
+// activeServer, and only the first of them is worth telling the user about.
+const serverLoaded = ref(false)
 const loading = ref(false)
 const actionLoading = ref('')
 
@@ -15,9 +21,14 @@ function errorText(e: any): string {
 async function loadStatus() {
   loading.value = true
   ipError.value = ''
-  // Status and external IP load independently: a failing curl ifconfig.me
-  // must not hide the VPN Director status.
-  const [statusRes, ipRes] = await Promise.allSettled([api.getStatus(), api.getIP()])
+  serverError.value = ''
+  // The three load independently: a failing curl ifconfig.me must not hide the
+  // VPN Director status, and neither must an unreadable server list.
+  const [statusRes, ipRes, serversRes] = await Promise.allSettled([
+    api.getStatus(),
+    api.getIP(),
+    api.getServers(),
+  ])
   if (statusRes.status === 'fulfilled') {
     status.value = statusRes.value.data.output
   } else {
@@ -28,6 +39,13 @@ async function loadStatus() {
   } else {
     ip.value = ''
     ipError.value = errorText(ipRes.reason)
+  }
+  if (serversRes.status === 'fulfilled') {
+    activeServer.value = serversRes.value.data.active ?? null
+    serverLoaded.value = true
+  } else {
+    activeServer.value = null
+    serverError.value = errorText(serversRes.reason)
   }
   loading.value = false
 }
@@ -71,13 +89,34 @@ onMounted(loadStatus)
       <div class="card-title">Status</div>
       <pre style="font-size: 12px; white-space: pre-wrap; line-height: 1.6;">{{ status || 'Loading...' }}</pre>
     </div>
-    <div class="card">
-      <div class="card-title">External IP</div>
-      <div v-if="ip" style="font-size: 20px; margin-top: 8px;">{{ ip }}</div>
-      <div v-else-if="ipError" style="margin-top: 8px; color: #ff6b6b; font-size: 0.875rem;">
-        unavailable: {{ ipError }}
+    <div>
+      <div class="card">
+        <div class="card-title">Xray Server</div>
+        <div v-if="activeServer">
+          <div style="font-size: 20px; margin-top: 8px;">
+            {{ activeServer.name || activeServer.address }}
+          </div>
+          <div style="margin-top: 4px; color: #999; font-size: 0.875rem;">
+            {{ activeServer.address }}:{{ activeServer.port }}
+          </div>
+        </div>
+        <div v-else-if="serverError" style="margin-top: 8px; color: #ff6b6b; font-size: 0.875rem;">
+          unavailable: {{ serverError }}
+        </div>
+        <div v-else-if="serverLoaded" style="margin-top: 8px; color: #999; font-size: 0.875rem;">
+          none selected yet — pick one on the Servers tab
+        </div>
+        <div v-else style="font-size: 20px; margin-top: 8px;">...</div>
       </div>
-      <div v-else style="font-size: 20px; margin-top: 8px;">...</div>
+
+      <div class="card">
+        <div class="card-title">External IP</div>
+        <div v-if="ip" style="font-size: 20px; margin-top: 8px;">{{ ip }}</div>
+        <div v-else-if="ipError" style="margin-top: 8px; color: #ff6b6b; font-size: 0.875rem;">
+          unavailable: {{ ipError }}
+        </div>
+        <div v-else style="font-size: 20px; margin-top: 8px;">...</div>
+      </div>
     </div>
   </div>
 </template>
