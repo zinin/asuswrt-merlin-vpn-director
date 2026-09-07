@@ -205,20 +205,37 @@ func (s *Service) CreateLock() error {
 		return fmt.Errorf("failed to create lock directory: %w", err)
 	}
 
-	// Atomic lock creation - fails if file already exists
-	f, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	// Publish the lock with its PID already in it. O_CREATE|O_EXCL alone
+	// leaves the file empty between the open and the write, and a status check
+	// landing there parses no PID, judges the lock garbage and deletes it -
+	// CreateLock would then report success on a lock that no longer exists,
+	// and the next Start would begin a second update that wipes the shared
+	// files/ directory under this one. Link fails when the target exists, so
+	// the exclusivity O_EXCL gave us is kept.
+	tmp, err := os.CreateTemp(dir, "lock.*")
 	if err != nil {
+		return fmt.Errorf("failed to create lock file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the link is in place and this returns
+
+	if _, err := tmp.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to write PID to lock file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to write PID to lock file: %w", err)
+	}
+	// CreateTemp gives 0600; the lock has always been world-readable.
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return fmt.Errorf("failed to create lock file: %w", err)
+	}
+
+	if err := os.Link(tmpName, lockFile); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return ErrLockExists
 		}
 		return fmt.Errorf("failed to create lock file: %w", err)
-	}
-	defer f.Close()
-
-	pid := os.Getpid()
-	if _, err := f.WriteString(strconv.Itoa(pid)); err != nil {
-		os.Remove(lockFile) // Clean up on write failure
-		return fmt.Errorf("failed to write PID to lock file: %w", err)
 	}
 
 	return nil
