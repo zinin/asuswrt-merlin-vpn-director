@@ -27,8 +27,13 @@ RUNNING_INITS=""
 # which the EXIT trap calls, so it must exist before anything can fail.
 APPLY_LOCK_FD_OPEN=0
 
+# The bot deletes the whole update directory, update.log with it, the moment
+# it has reported a successful update - and this script is still running its
+# last steps then. Under set -e a redirect into a directory that is gone would
+# end the script where it stands, taking the monit re-monitor of step 7 and
+# the lock removal of step 8 with it.
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
+    { echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"; } 2>/dev/null || true
 }
 
 # have_cmd $1 - is this command available? BusyBox sh on Asuswrt-Merlin has no

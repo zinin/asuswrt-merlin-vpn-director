@@ -234,3 +234,41 @@ scripts: the generated update script and the init scripts.
 puts `/opt/bin` first in `PATH`, so `curl … | bash` resolves to the real bash
 5.x, but a non-interactive `ssh router 'bash script.sh'` does not — call
 `/opt/bin/bash` explicitly there.
+
+### A deleted working directory breaks monit and every shell below it
+
+**Problem**: a process whose cwd has been removed keeps running, but the dead
+directory is inherited by everything it starts, and on the router that is not
+cosmetic. monit refuses to run at all:
+
+```sh
+cd /tmp/gone && rm -rf /tmp/gone && monit status telegram-bot
+# AssertException: Monit: Cannot read current directory -- No such file or directory
+#  raised in init_env at src/env.c:111        (exit 1)
+```
+
+and every shell the affected daemons spawn prefixes its output with
+
+```
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: No such file or directory
+chdir: error retrieving current directory: getcwd: ...
+```
+
+which is what the Web UI's Status page then shows above the real output.
+
+Under `set -e` the same deletion is fatal in another way: a `>>` redirect into
+the removed directory fails, and the shell exits at that line.
+
+**Seen as**: the self-update script ran from `/tmp/vpn-director-update`
+(`cmd.Dir`), the bot deleted that directory the moment it reported success, and
+the script's `monit monitor …  2>/dev/null || true` swallowed the exception —
+`telegram-bot` stayed unmonitored, and all three daemons carried a dead cwd.
+
+**Rule**: start long-lived processes from a directory nothing deletes (`/`), and
+let a log helper survive the loss of its own file:
+
+```sh
+log() {
+    { echo "$1" >> "$LOG_FILE"; } 2>/dev/null || true
+}
+```

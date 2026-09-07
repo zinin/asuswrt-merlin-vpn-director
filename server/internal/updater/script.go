@@ -80,16 +80,7 @@ func (s *Service) RunUpdateScript(opts RunOptions) error {
 	// Note: f will be inherited by child process via fork, so it stays open
 	// even after bot dies. We don't close it here to avoid race with child.
 
-	// Run script directly with Setsid for proper detachment.
-	// Setsid creates a new session, so script survives bot termination.
-	// Unlike "nohup ... &", this gives us proper error detection at exec level.
-	cmd := exec.Command(s.getShell(), scriptPath)
-	cmd.Dir = updateDir
-	cmd.Stdout = f
-	cmd.Stderr = f
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Detach into new session - survives parent death
-	}
+	cmd := s.updateCommand(scriptPath, f)
 
 	if err := cmd.Start(); err != nil {
 		f.Close()
@@ -99,6 +90,31 @@ func (s *Service) RunUpdateScript(opts RunOptions) error {
 	// Don't wait - script runs in its own session and will kill this process.
 	// Script continues running after bot dies because of Setsid.
 	return nil
+}
+
+// updateCommand builds the detached run of the update script, with out
+// taking both its streams.
+//
+// Setsid creates a new session, so the script survives the bot it kills a few
+// seconds later. Unlike "nohup ... &" this still reports an exec failure.
+func (s *Service) updateCommand(scriptPath string, out *os.File) *exec.Cmd {
+	cmd := exec.Command(s.getShell(), scriptPath)
+	// Anywhere but the update directory. The bot deletes that whole directory
+	// as soon as it has reported a successful update, and this script is still
+	// on its last steps then: a working directory that no longer exists is
+	// inherited by every daemon the script starts, and on the router monit
+	// refuses to run at all without one ("Monit: Cannot read current
+	// directory"), so step 7's re-monitor is lost to its own 2>/dev/null.
+	// Every shell those daemons spawn also prints "shell-init: error
+	// retrieving current directory", which is what the Web UI ends up showing
+	// above its status output.
+	cmd.Dir = "/"
+	cmd.Stdout = out
+	cmd.Stderr = out
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true, // Detach into new session - survives parent death
+	}
+	return cmd
 }
 
 // generateScript creates the update script content from template.
