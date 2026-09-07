@@ -31,6 +31,16 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
 }
 
+# have_cmd $1 - is this command available? BusyBox sh on Asuswrt-Merlin has no
+# "command" builtin, so `command -v pgrep` exits 127 whether or not pgrep is
+# installed: written that way the guard below refuses every update on the router
+# it was meant to protect, and the monit gates skip silently, leaving monit free
+# to restart a daemon in the middle of the update. "type" is a builtin there,
+# and "which" covers a shell that has neither.
+have_cmd() {
+    type "$1" >/dev/null 2>&1 || which "$1" >/dev/null 2>&1
+}
+
 # write_notify $1=status - the bot reads this file on its next startup.
 write_notify() {
     cat > "$NOTIFY_FILE" << EOF
@@ -78,7 +88,7 @@ start_if_listed() {
 # Restore monit only for daemons that were running. Remonitoring a stopped
 # one would start it, against "a daemon that was stopped stays stopped".
 remonitor_running() {
-    command -v monit >/dev/null 2>&1 || return 0
+    have_cmd monit || return 0
     for entry in $DAEMONS; do
         name="${entry%%|*}"
         rest="${entry#*|}"
@@ -137,7 +147,7 @@ trap on_exit EXIT
 # report success while both daemons kept running the old code. Refuse
 # instead - RUNNING_INITS is still empty, so the trap stops nothing, starts
 # nothing and reports the failure.
-if ! command -v pgrep >/dev/null 2>&1; then
+if ! have_cmd pgrep; then
     log "ERROR: pgrep not found, cannot tell which daemons are running"
     exit 1
 fi
@@ -169,7 +179,7 @@ for entry in $DAEMONS; do
 done
 
 # 2. Unmonitor in monit (if available) - optional, continue on failure
-if command -v monit >/dev/null 2>&1; then
+if have_cmd monit; then
     for entry in $DAEMONS; do
         log "Unmonitoring ${entry%%|*} in monit"
         monit unmonitor "${entry%%|*}" 2>/dev/null || true
