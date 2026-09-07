@@ -1,6 +1,8 @@
 package paths
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -118,5 +120,70 @@ func TestRotatedLogs(t *testing.T) {
 		if path == "" {
 			t.Error("RotatedLogs contains an empty path")
 		}
+	}
+}
+
+// A daemon started by an update script older than the fix inherits
+// /tmp/vpn-director-update as its working directory, and the bot deletes that
+// directory the moment it reports the update. On the router the leftover is
+// not cosmetic: monit refuses to run without a working directory, and every
+// shell spawned from here prints "shell-init: error retrieving current
+// directory" into whatever the Web UI is showing.
+func TestEnsureWorkingDirectory_LeavesADirectoryThatIsGone(t *testing.T) {
+	before, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(before) })
+
+	dir, err := os.MkdirTemp("", "deleted-cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Getwd(); err == nil {
+		t.Skip("this platform still resolves a deleted working directory")
+	}
+
+	if !EnsureWorkingDirectory() {
+		t.Error("EnsureWorkingDirectory() = false, want it to report the move")
+	}
+	got, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("the working directory is still gone: %v", err)
+	}
+	if got != "/" {
+		t.Errorf("moved to %q, want /", got)
+	}
+}
+
+// Dev mode resolves testdata/dev/... against the working directory, so one
+// that exists is never taken away.
+func TestEnsureWorkingDirectory_LeavesALiveDirectoryAlone(t *testing.T) {
+	before, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(before) })
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if EnsureWorkingDirectory() {
+		t.Error("EnsureWorkingDirectory() = true, want it to leave a live directory alone")
+	}
+	got, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil && got != resolved && got != dir {
+		t.Errorf("working directory is %q, want it left at %q", got, dir)
 	}
 }

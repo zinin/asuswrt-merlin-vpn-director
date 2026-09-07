@@ -1,6 +1,8 @@
 // Package paths provides centralized path configuration for the application
 package paths
 
+import "os"
+
 // Paths holds all configurable paths for the application
 type Paths struct {
 	ScriptsDir     string // /opt/vpn-director
@@ -49,4 +51,23 @@ func DevPaths() Paths {
 // os.Truncate is idempotent, so two processes rotating at once are safe.
 func (p Paths) RotatedLogs() []string {
 	return []string{p.BotLogPath, p.VPNLogPath, p.WebUILogPath, p.XrayLogPath}
+}
+
+// EnsureWorkingDirectory moves the process to / when the directory it was
+// started in has been removed, and reports whether it had to.
+//
+// A daemon started by an update script that ran from /tmp/vpn-director-update
+// inherits that directory, and the bot deletes it the moment it reports the
+// update. What is left is a process whose working directory does not exist,
+// which on the router is not cosmetic: monit refuses to run at all without
+// one, and every shell spawned from here prints "shell-init: error retrieving
+// current directory" into whatever the Web UI is showing.
+//
+// A working directory that exists is left where it is, whatever it is: dev
+// mode resolves DevPaths against it.
+func EnsureWorkingDirectory() bool {
+	if _, err := os.Getwd(); err == nil {
+		return false
+	}
+	return os.Chdir("/") == nil
 }
