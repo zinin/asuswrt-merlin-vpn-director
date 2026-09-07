@@ -318,3 +318,39 @@ func TestDaemons_CarryNoShellMetacharacters(t *testing.T) {
 		}
 	}
 }
+
+// The bot's startup notifier clears the payload a failed update left behind,
+// and it is handed paths rather than a Service. Its claim still has to be the
+// one Start makes, down to the PID a status check reads back out of it -
+// otherwise the two do not exclude each other at all.
+func TestCreateLockAt_ClaimsTheDirectoryForTheCallingProcess(t *testing.T) {
+	lockFile := filepath.Join(t.TempDir(), "lock")
+
+	if err := CreateLockAt(lockFile); err != nil {
+		t.Fatalf("CreateLockAt() error = %v", err)
+	}
+	data, err := os.ReadFile(lockFile)
+	if err != nil {
+		t.Fatalf("read the claim: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid != os.Getpid() {
+		t.Errorf("the claim holds %q, want the PID %d", data, os.Getpid())
+	}
+
+	if err := CreateLockAt(lockFile); !errors.Is(err, ErrLockExists) {
+		t.Errorf("second CreateLockAt() error = %v, want ErrLockExists", err)
+	}
+	again, err := os.ReadFile(lockFile)
+	if err != nil || string(again) != string(data) {
+		t.Errorf("a refused claim disturbed the lock: %q (%v), was %q", again, err, data)
+	}
+
+	RemoveLockAt(lockFile)
+	if _, err := os.Stat(lockFile); !os.IsNotExist(err) {
+		t.Fatalf("RemoveLockAt() left the claim behind: %v", err)
+	}
+	if err := CreateLockAt(lockFile); err != nil {
+		t.Errorf("CreateLockAt() after a release error = %v, want the directory free again", err)
+	}
+}

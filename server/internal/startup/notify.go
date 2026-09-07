@@ -3,6 +3,7 @@ package startup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -169,18 +170,38 @@ func cleanup(n UpdateNotification, notifyFile, updateDir string) {
 		// until the next update or reboot. update.log stays: the message
 		// points at it.
 		//
-		// Unless a lock says the directory is spoken for. updateflow.Start
-		// creates it before it downloads a byte, so a lock beside the payload
-		// can mean files/ is being filled right now, and removing it would
-		// break that attempt. It can also still be the failed script's own:
-		// that script starts the daemons back up before it drops its lock, so
-		// this can run in between. Skipping then costs only the reclaimed
-		// space - the next update wipes files/ before writing anyway - which
-		// is the harmless way to be wrong.
-		if _, err := os.Stat(filepath.Join(updateDir, updater.LockFileName)); err == nil {
-			slog.Info("An update holds the lock, leaving its payload alone", "dir", updateDir)
+		// Unless the directory is spoken for. updateflow.Start claims it
+		// before it downloads a byte, so a payload beside a claim can be an
+		// attempt's, and removing it would break that attempt. The claim can
+		// also still be the failed script's own: that script starts the
+		// daemons back up before it drops its lock, so this can run in
+		// between. Skipping then costs only the reclaimed space - the next
+		// update wipes files/ before writing anyway - which is the harmless
+		// way to be wrong.
+		//
+		// Claiming the directory is what makes that so, where looking whether
+		// it is claimed would not. A look leaves the window between itself and
+		// the removal: an attempt starting inside that window passes its own
+		// check, takes the lock and begins filling files/, and what it
+		// downloaded goes with the payload being cleared here - the retry the
+		// user just started fails over files that were there a moment ago.
+		// CreateLockAt is the same atomic claim Start makes, so one of the two
+		// is refused instead.
+		lockFile := filepath.Join(updateDir, updater.LockFileName)
+		if err := updater.CreateLockAt(lockFile); err != nil {
+			if errors.Is(err, updater.ErrLockExists) {
+				slog.Info("An update holds the lock, leaving its payload alone", "dir", updateDir)
+			} else {
+				slog.Warn("Could not claim the update directory, leaving its payload alone",
+					"dir", updateDir, "error", err)
+			}
 			return
 		}
+		// Held for the removal and no longer. The claim names this process,
+		// which is alive, so one left behind has every later update refused as
+		// one already in progress until the bot restarts.
+		defer updater.RemoveLockAt(lockFile)
+
 		filesDir := filepath.Join(updateDir, updater.FilesDirName)
 		if err := os.RemoveAll(filesDir); err != nil {
 			slog.Warn("Failed to remove update payload", "path", filesDir, "error", err)

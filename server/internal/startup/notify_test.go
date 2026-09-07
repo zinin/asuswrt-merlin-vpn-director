@@ -506,10 +506,11 @@ func TestCheckAndSendNotify_ReportsAFailureThatLeftTheNewBinariesRunning(t *test
 	}
 }
 
-// updateflow.Start creates the lock before it downloads, so a lock beside the
-// payload means a live attempt is filling files/ right now. The failed script
-// removes its own lock before it exits, so nothing else can be holding one:
-// deleting the directory here would pull 16 MB out from under that attempt.
+// updateflow.Start creates the lock before it downloads a byte, so a lock
+// beside the payload can mean an attempt is filling files/ right now, and
+// removing it would pull 16 MB out from under that attempt. It can equally be
+// the failed script's own - that script starts the daemons back up before it
+// drops its lock - and skipping then costs only the reclaimed space.
 func TestCheckAndSendNotify_LeavesThePayloadOfAnAttemptThatHoldsTheLock(t *testing.T) {
 	tmpDir := t.TempDir()
 	notifyFile := filepath.Join(tmpDir, "notify.json")
@@ -531,7 +532,70 @@ func TestCheckAndSendNotify_LeavesThePayloadOfAnAttemptThatHoldsTheLock(t *testi
 	if _, err := os.Stat(filesDir); err != nil {
 		t.Errorf("files/ belongs to the attempt holding the lock, it must survive: %v", err)
 	}
+	// The lock is that attempt's, not ours to release: dropping it would let a
+	// second update start beside the one already running.
+	if data, err := os.ReadFile(lockFile); err != nil || string(data) != "4242\n" {
+		t.Errorf("the attempt's lock reads %q (%v), want it untouched", data, err)
+	}
 	if _, err := os.Stat(notifyFile); !os.IsNotExist(err) {
 		t.Error("notify.json is ours and must still go, or the report returns on every restart")
+	}
+}
+
+// A claim, not a look. os.Stat cannot tell "no lock" from "a lock a moment
+// from now": updateflow.Start creates its lock and starts filling files/ in
+// the window between the look and os.RemoveAll, and the payload it has just
+// downloaded goes with the one this notifier meant to clear - the retry the
+// user started fails, and its error names a file that was there a moment ago.
+// Creating the lock the way Start does closes the window; whoever loses that
+// race is refused instead.
+//
+// A dangling symlink is the one state that tells a claim from a look apart
+// without racing two goroutines: os.Stat follows it and reports nothing
+// there, while link(2) refuses any name that already exists. What it stands in
+// for is an attempt claiming the directory inside the window.
+func TestCheckAndSendNotify_ClaimsTheDirectoryRatherThanLookingAtIt(t *testing.T) {
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.2","new_version":"v0.11.3","status":"failed","initiator":"webui"}`)
+	filesDir := writeFilesDir(t, tmpDir)
+	if err := os.Symlink(filepath.Join(tmpDir, "no-such-target"), filepath.Join(tmpDir, "lock")); err != nil {
+		t.Fatal(err)
+	}
+
+	sender := &mockSender{}
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "v0.11.2"); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if len(sender.sentMessages) != 1 {
+		t.Fatalf("sent %d messages, want 1: the failure still has to be reported", len(sender.sentMessages))
+	}
+	if _, err := os.Stat(filesDir); err != nil {
+		t.Errorf("the claim was refused, so files/ was not this notifier's to remove: %v", err)
+	}
+}
+
+// The claim is held for the removal and no longer. Left behind it would cost
+// more than the 16 MB it reclaims: the lock names this process, which is very
+// much alive, so IsUpdateInProgress reads it as an update in flight and every
+// attempt afterwards is refused with "already in progress" until the bot is
+// restarted.
+func TestCheckAndSendNotify_ReleasesTheClaimItTook(t *testing.T) {
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.2","new_version":"v0.11.3","status":"failed","initiator":"webui"}`)
+	filesDir := writeFilesDir(t, tmpDir)
+
+	sender := &mockSender{}
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "v0.11.2"); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if _, err := os.Stat(filesDir); !os.IsNotExist(err) {
+		t.Errorf("files/ belongs to the failed attempt and must go: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "lock")); !os.IsNotExist(err) {
+		t.Errorf("the notifier kept the claim it took: %v", err)
 	}
 }
