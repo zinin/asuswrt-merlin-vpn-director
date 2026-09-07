@@ -41,6 +41,13 @@ setup() {
 }
 
 teardown() {
+    # load_common gives bats its EXIT trap back, so common.sh's temp cleanup
+    # has to be called here. Under bats that trap never ran reliably anyway —
+    # /tmp had collected thousands of empty *.tmp_files lists.
+    if declare -F _cleanup_tmp >/dev/null 2>&1; then
+        _cleanup_tmp
+    fi
+
     # Cleanup temp files if any
     rm -rf /tmp/bats_test_*
     # Cleanup tunnel director state files
@@ -51,7 +58,16 @@ teardown() {
 load_common() {
     # Set $0 to a fake script path for get_script_* functions
     export BASH_SOURCE_OVERRIDE="$SCRIPTS_DIR/test_script.sh"
+
+    # common.sh ends with "trap _cleanup_tmp EXIT INT TERM", which replaces the
+    # EXIT trap bats installs to report the result of the test. Without the
+    # trap bats never hears about a failing assertion and prints "Executed N
+    # instead of expected M" instead of naming the test, so save it and put it
+    # back. Temp files are cleaned by teardown() below instead.
+    local bats_exit_trap
+    bats_exit_trap="$(trap -p EXIT)"
     source "$LIB_DIR/common.sh"
+    eval "${bats_exit_trap:-trap - EXIT}"
 }
 
 # Helper to source firewall.sh (requires common.sh first)

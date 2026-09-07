@@ -124,3 +124,20 @@ Mocks are added to PATH before real commands via `setup()`.
 3. Use appropriate `load_*` helper to source scripts
 4. Add mocks to `router/test/mocks/` if needed
 5. Run: `bats router/test/unit/new_module.bats`
+
+## Gotcha: modules replace the EXIT trap bats reports through
+
+`common.sh` ends with `trap _cleanup_tmp EXIT INT TERM`. Sourcing it replaces
+the EXIT trap bats installs to report a test result, so a failing assertion in
+any test that called a `load_*` helper used to disappear into
+
+```
+# bats warning: Executed 33 instead of expected 36 tests
+```
+
+with no test name and no diff. The run still exits non-zero, so CI catches the
+failure — it just cannot say which one.
+
+`load_common` now saves the trap before sourcing and restores it afterwards,
+and `teardown()` calls `_cleanup_tmp` in its place. If you add a helper that
+sources a module some other way, keep the trap.
