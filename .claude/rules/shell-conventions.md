@@ -153,13 +153,52 @@ ip rule show | grep -c "fwmark 0x100.*lookup 100"
 seven copies on a router with 23 days of uptime, and auto-apply from the Web UI
 made each click add another.
 
-**Solution**: match on the preference, which is ours alone, and name every
-selector when deleting so the kernel cannot match somebody else's rule:
+**Solution**: the preference belongs to the module, so reconcile everything
+sitting on it instead of looking for one tuple. Keep a rule that carries the
+configured mark and table — comparing what the kernel *prints*, via
+`_tproxy_table_label` — and delete the rest, including rules an earlier
+`route_table` or `fwmark_mask` left behind. Matching only the configured tuple
+has the mirror-image failure: a stale rule counts as ours, and the new setting
+never gets installed.
 
 ```bash
-count=$(ip rule show pref "$PREF" | grep -c "fwmark $FWMARK" || true)
-ip rule del pref "$PREF" fwmark "$FWMARK/$MASK" table "$TABLE"
+want_table=$(_tproxy_table_label "$TABLE")     # 100 -> wan0
+mark=$(printf '%s' "$line" | sed -n 's/.*fwmark \([^ ]*\).*/\1/p')
+table=$(printf '%s' "$line" | sed -n 's/.*lookup \([^ ]*\).*/\1/p')
 ```
 
 `ip rule del` removes one rule per call and fails when none is left, so a
-teardown deletes in a loop rather than once.
+teardown deletes by preference in a loop rather than once.
+
+### BusyBox `sh` has no `command` builtin
+
+**Problem**: on Asuswrt-Merlin, `/bin/sh` is BusyBox and `command` is not there:
+
+```
+$ /bin/sh -c 'command -v pgrep'
+/bin/sh: command: not found       # exit 127, even though /opt/bin/pgrep exists
+```
+
+Every `command -v X` in a `#!/bin/sh` script therefore reports "missing" for
+tools that are installed. In `update_script.sh.tmpl` this turned the guard
+`if ! command -v pgrep` into a refusal of every self-update on the router, and
+made the two `command -v monit` gates skip silently, so monit was never
+unmonitored during an update and was free to restart a daemon mid-copy.
+
+**Solution**: probe with `type`, which BusyBox does have, and keep `which` as a
+fallback for a shell that has neither:
+
+```sh
+have_cmd() {
+    type "$1" >/dev/null 2>&1 || which "$1" >/dev/null 2>&1
+}
+```
+
+Scripts with a `#!/usr/bin/env bash` shebang run under Entware's bash
+(`/opt/bin/bash`), where `command -v` works — this applies to `#!/bin/sh`
+scripts: the generated update script and the init scripts.
+
+**Related**: `/bin/bash` on the router is a symlink to busybox. A login shell
+puts `/opt/bin` first in `PATH`, so `curl … | bash` resolves to the real bash
+5.x, but a non-interactive `ssh router 'bash script.sh'` does not — call
+`/opt/bin/bash` explicitly there.
