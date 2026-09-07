@@ -94,7 +94,7 @@ func handleIP(deps *Deps) http.HandlerFunc {
 
 		ip, err := deps.Network.GetExternalIP()
 		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to get external IP")
+			jsonError(w, http.StatusInternalServerError, "failed to get external IP: "+lastErrorLine(err))
 			return
 		}
 		jsonOK(w, map[string]string{"ip": ip})

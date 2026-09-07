@@ -170,6 +170,38 @@ table=$(printf '%s' "$line" | sed -n 's/.*lookup \([^ ]*\).*/\1/p')
 `ip rule del` removes one rule per call and fails when none is left, so a
 teardown deletes by preference in a loop rather than once.
 
+### A dual-family DNS lookup on the router often never answers
+
+**Problem**: `/etc/resolv.conf` points the router's own processes straight at
+8.8.8.8/8.8.4.4, and anything resolving `AF_UNSPEC` - curl, wget, every
+`getaddrinfo` caller - asks for A and AAAA together. The AAAA half goes
+unanswered often enough to matter, and glibc waits its full `timeout:` of five
+seconds before retrying. Interleaved on an RT-AX86U, same window, same host:
+
+```
+curl -s  --connect-timeout 5 --max-time 10 ifconfig.me    16 failures / 30
+curl -4 -s --connect-timeout 5 --max-time 10 ifconfig.me   0 failures / 30
+```
+
+The failure is `curl: (6) Could not resolve host` arriving at exactly 5.011s:
+`--connect-timeout` covers name resolution, so a timeout at or below the
+resolver's retry boundary turns a slow lookup into a hard failure. It is not
+the binary - Entware's curl fails 10/10 the same way - and not reachability:
+`--connect-timeout 20` succeeds in about six seconds. `GetExternalIP` was the
+only caller to show this because its 5 s was the only connect timeout in the
+repository below the boundary; everything else uses 10 or 30.
+
+**Solution**: ask only for the family the router can route. Everything here is
+IPv4 - the ipsets, the TPROXY rules, the fwmark tables - so `-4` requests what
+the code actually needs rather than papering over the resolver:
+
+```sh
+curl -4 -s --connect-timeout 5 --max-time 10 ifconfig.me
+```
+
+Where a wait is acceptable instead, keep the connect timeout above five seconds
+so the resolver's second attempt can land.
+
 ### BusyBox `sh` has no `command` builtin
 
 **Problem**: on Asuswrt-Merlin, `/bin/sh` is BusyBox and `command` is not there:
