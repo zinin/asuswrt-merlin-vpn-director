@@ -137,15 +137,24 @@ func notificationText(n UpdateNotification, updateDir string) string {
 }
 
 // overtakenFailure reports whether a failed update has already been overtaken.
-// A failed update leaves both the old daemons and notify.json behind, and the
-// bot reads that file on its next start. When that start is a different build
-// - install.sh was re-run, or a later update landed - the daemon the failure
-// describes is gone, and announcing it says something is broken when nothing
-// is. A successful notification is left alone: it names what that update did,
-// and staying quiet about it would be worse than saying it late.
+// A failed update leaves notify.json behind, and the bot reads that file on
+// its next start. When that start is a build from neither end of the failed
+// attempt - install.sh was re-run, or a later update landed - the daemons the
+// failure describes are gone, and announcing it says something is broken when
+// nothing is.
+//
+// Running NewVersion is not that case. The script copies both binaries into
+// place before it starts anything, so a daemon that fails to start in its step
+// 6 leaves this process running the new build with the other one down - and
+// step 6 rewrites notify.json before starting the bot precisely so that
+// failure gets reported. Reading it as old would silence the one report the
+// script went out of its way to arrange.
+//
+// A successful notification is left alone whatever the version: it names what
+// that update did, and staying quiet would be worse than saying it late.
 func overtakenFailure(n UpdateNotification, currentVersion string) bool {
 	return n.Status == "failed" && currentVersion != "" && n.OldVersion != "" &&
-		currentVersion != n.OldVersion
+		currentVersion != n.OldVersion && currentVersion != n.NewVersion
 }
 
 // cleanup removes what the notification leaves behind. Errors are logged, not
@@ -159,6 +168,19 @@ func cleanup(n UpdateNotification, notifyFile, updateDir string) {
 		// files/ before writing into it - and it is 16 MB of a router's tmpfs
 		// until the next update or reboot. update.log stays: the message
 		// points at it.
+		//
+		// Unless a lock says the directory is spoken for. updateflow.Start
+		// creates it before it downloads a byte, so a lock beside the payload
+		// can mean files/ is being filled right now, and removing it would
+		// break that attempt. It can also still be the failed script's own:
+		// that script starts the daemons back up before it drops its lock, so
+		// this can run in between. Skipping then costs only the reclaimed
+		// space - the next update wipes files/ before writing anyway - which
+		// is the harmless way to be wrong.
+		if _, err := os.Stat(filepath.Join(updateDir, updater.LockFileName)); err == nil {
+			slog.Info("An update holds the lock, leaving its payload alone", "dir", updateDir)
+			return
+		}
 		filesDir := filepath.Join(updateDir, updater.FilesDirName)
 		if err := os.RemoveAll(filesDir); err != nil {
 			slog.Warn("Failed to remove update payload", "path", filesDir, "error", err)

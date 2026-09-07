@@ -483,3 +483,55 @@ func writeFilesDir(t *testing.T, updateDir string) string {
 	}
 	return filesDir
 }
+
+// update_script.sh.tmpl copies both binaries into place before it starts
+// anything (its step 4), so a daemon that fails to start in step 6 leaves this
+// process running NewVersion while the Web UI is down. Differing from
+// OldVersion does not make that failure old - it is precisely the failure of
+// the build now running, and step 6 goes to the trouble of rewriting
+// notify.json before starting the bot so that it gets reported.
+func TestCheckAndSendNotify_ReportsAFailureThatLeftTheNewBinariesRunning(t *testing.T) {
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.2","new_version":"v0.11.3","status":"failed","initiator":"webui"}`)
+
+	sender := &mockSender{}
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "v0.11.3"); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if len(sender.sentMessages) != 1 {
+		t.Fatalf("sent %d messages, want 1: the Web UI is down and this build is the one that broke it",
+			len(sender.sentMessages))
+	}
+}
+
+// updateflow.Start creates the lock before it downloads, so a lock beside the
+// payload means a live attempt is filling files/ right now. The failed script
+// removes its own lock before it exits, so nothing else can be holding one:
+// deleting the directory here would pull 16 MB out from under that attempt.
+func TestCheckAndSendNotify_LeavesThePayloadOfAnAttemptThatHoldsTheLock(t *testing.T) {
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.2","new_version":"v0.11.3","status":"failed","initiator":"webui"}`)
+	filesDir := writeFilesDir(t, tmpDir)
+	lockFile := filepath.Join(tmpDir, "lock")
+	if err := os.WriteFile(lockFile, []byte("4242\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sender := &mockSender{}
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "v0.11.2"); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if len(sender.sentMessages) != 1 {
+		t.Fatalf("sent %d messages, want 1: the failure still has to be reported", len(sender.sentMessages))
+	}
+	if _, err := os.Stat(filesDir); err != nil {
+		t.Errorf("files/ belongs to the attempt holding the lock, it must survive: %v", err)
+	}
+	if _, err := os.Stat(notifyFile); !os.IsNotExist(err) {
+		t.Error("notify.json is ours and must still go, or the report returns on every restart")
+	}
+}

@@ -21,7 +21,12 @@ const (
 	// failed update has been accounted for.
 	FilesDirName = "files"
 	FilesDir     = UpdateDir + "/" + FilesDirName
-	LockFile     = UpdateDir + "/lock"
+	// LockFileName is how an attempt claims the update directory: created by
+	// updateflow.Start before anything is downloaded, republished by the
+	// script under its own PID, removed when the attempt is over. The bot's
+	// startup notifier looks for it before clearing a payload.
+	LockFileName = "lock"
+	LockFile     = UpdateDir + "/" + LockFileName
 	NotifyFile   = UpdateDir + "/notify.json"
 	ScriptFile   = UpdateDir + "/update.sh"
 )
