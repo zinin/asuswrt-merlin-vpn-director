@@ -194,9 +194,11 @@ async function resumeFromServer() {
     // The server is unreachable; the normal error paths already say so.
     return
   }
-  if (!updateTarget.value) {
-    updateTarget.value = updateInfo.value?.latest || ''
-  }
+  // The target does not come from the cached check: it can name the version
+  // this router already runs while the bot updates to a newer one, and the
+  // first /api/version answer would then end the poll and reload onto the old
+  // SPA while the script is still going. With no target the loop waits for the
+  // version to change instead.
   if (!updateTarget.value && !updateBaseline.value) {
     // No target to wait for, so record what is running now: that is the only
     // thing a later answer can be compared against.

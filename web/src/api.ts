@@ -111,8 +111,11 @@ export default {
     api.get<UpdateCheckResponse>('/api/update/check', { params: force ? { force: 1 } : {} }),
   update: () =>
     api.post<UpdateStartResponse>('/api/update'),
+  // Bounded like pollVersion: waitForVersion awaits this inside its loop, so a
+  // hung connection to the router would otherwise stop the loop from ever
+  // reaching its own twenty-minute limit.
   updateStatus: () =>
-    api.get<UpdateStatusResponse>('/api/update/status'),
+    api.get<UpdateStatusResponse>('/api/update/status', { timeout: 8000 }),
   // pollVersion is used while the server restarts: connection errors and a
   // brief 401 must not bounce the user to the login page.
   pollVersion: () =>

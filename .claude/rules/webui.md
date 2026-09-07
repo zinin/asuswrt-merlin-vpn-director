@@ -123,6 +123,8 @@ belong to the Web UI half:
   user to the login page. It reloads as soon as the new version answers. Five
   minutes is the restart window; past it the loop continues only while
   `/api/update/status` still reports the script running, up to twenty minutes.
+  Both requests carry their own 8-second timeout: the loop awaits the status
+  call, so a hung connection would otherwise keep it from reaching that limit.
   `/api/update/status` also lets a reloaded page rejoin an update it did not
   start — and such a rejoin has no target version, so it records the running
   version first: the script's `EXIT` trap restarts the old binaries, and
