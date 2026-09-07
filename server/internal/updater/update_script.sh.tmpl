@@ -144,8 +144,12 @@ fi
 
 # The lock still names the daemon that started us. That process is about to
 # be stopped; until we overwrite it, the other daemon's IsUpdateInProgress
-# treats the lock as stale and deletes it.
-echo $$ > "$LOCK_FILE"
+# treats the lock as stale and deletes it. Publish the new PID by rename: a
+# reader that catches the file truncated but not yet written parses no PID,
+# deletes the lock as stale, and the update then runs unlocked while another
+# one is free to start and wipe the shared files/ directory.
+printf '%s\n' "$$" > "$LOCK_FILE.new"
+mv -f "$LOCK_FILE.new" "$LOCK_FILE"
 
 log "Starting update from $OLD_VERSION to $NEW_VERSION (initiator: $INITIATOR)"
 

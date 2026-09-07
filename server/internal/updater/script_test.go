@@ -98,7 +98,7 @@ func TestGenerateScript(t *testing.T) {
 		t.Error("script must wait for vpn-director.sh before rewriting it")
 	}
 
-	own := strings.Index(script, `echo $$ > "$LOCK_FILE"`)
+	own := strings.Index(script, `mv -f "$LOCK_FILE.new" "$LOCK_FILE"`)
 	stop := strings.Index(script, "# 3. Stop the running daemons")
 	if own < 0 {
 		t.Error("script must take lock ownership before it stops the initiator")
@@ -333,6 +333,24 @@ func TestGenerateScript_RestoresMonitLast(t *testing.T) {
 		if notify := strings.Index(p.body, "write_notify"); notify < 0 || remonitor < notify {
 			t.Errorf("%s restores monit before it commits the status", p.name)
 		}
+	}
+}
+
+// A reader that catches the lock truncated but not yet written parses no PID,
+// deletes the lock as stale, and the running update ends up unlocked - free
+// for a second update to start and wipe the shared files/ directory.
+func TestGenerateScript_PublishesThePIDByRename(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	if strings.Contains(script, `echo $$ > "$LOCK_FILE"`) {
+		t.Error("the PID is written straight into the lock file, truncating it first")
+	}
+	if !strings.Contains(script, `mv -f "$LOCK_FILE.new" "$LOCK_FILE"`) {
+		t.Error("the script must publish the new PID with a rename")
 	}
 }
 
