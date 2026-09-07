@@ -125,6 +125,13 @@ writes `servers.json` and `xray.servers`. All of them serialize on
 cd server && go run ./cmd/webui --dev
 ```
 
+`testdata/dev/` is gitignored and recreated when missing. A sandbox from before
+the paths rule above carries `"data_dir": "testdata/dev/data"`, which now
+resolves beside the config and lands in `testdata/dev/testdata/dev/data`: delete
+`testdata/dev/vpn-director.json` once, or change the value to `"data"`. Dev mode
+keeps the directory it was started in — `DevPaths` are relative to `server/`, so
+`--dev` still has to be run from there.
+
 Plain HTTP instead of TLS, `server/testdata/dev/` for config, shadow and logs,
 `devmode.Executor` instead of real shell commands, and an `admin`/`admin`
 shadow file created on first run. `testdata/dev/vpn-director.json` is
