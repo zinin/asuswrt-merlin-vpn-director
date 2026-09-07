@@ -26,7 +26,7 @@
 #   _tproxy_exclude_sets [-q]       - validated, lower-cased XRAY_EXCLUDE_SETS on one line
 #   _tproxy_check_required_ipsets() - fail-safe check for required ipsets
 #   _tproxy_setup_routing()         - setup routing table and ip rule
-#   _tproxy_del_routing_rule()      - delete one copy of the fwmark ip rule
+#   _tproxy_table_label()           - the name the kernel prints for a table
 #   _tproxy_teardown_routing()      - remove routing table and ip rule
 #   _tproxy_setup_clients_ipset()   - setup clients ipset
 #   _tproxy_validate_ipv4_cidr()    - validate IPv4 address or CIDR notation
@@ -181,56 +181,77 @@ _tproxy_check_required_ipsets() {
 # _tproxy_setup_routing - setup routing table and ip rule for TPROXY
 # -------------------------------------------------------------------------------------------------
 _tproxy_setup_routing() {
-    local rt_exists rule_count
+    local rt_exists want_mark want_table kept=0 line mark table
 
     # Check if route exists in our table
     rt_exists=$(ip route show table "$XRAY_ROUTE_TABLE" 2>/dev/null | grep -c "local default" || true)
-
-    # Count our rules by preference, not by table name. The kernel prints a
-    # routing table by its rt_tables name, so on Asuswrt-Merlin table 100 comes
-    # back as "lookup wan0": matching on the number never recognises our own
-    # rule, and every apply would add another copy of it.
-    rule_count=$(ip rule show pref "$XRAY_RULE_PREF" 2>/dev/null | grep -c "fwmark $XRAY_FWMARK" || true)
 
     if [[ $rt_exists -eq 0 ]]; then
         ip route add local default dev lo table "$XRAY_ROUTE_TABLE"
         log "Added route: local default dev lo table $XRAY_ROUTE_TABLE"
     fi
 
-    if [[ $rule_count -eq 0 ]]; then
-        ip rule add pref "$XRAY_RULE_PREF" fwmark "$XRAY_FWMARK/$XRAY_FWMARK_MASK" table "$XRAY_ROUTE_TABLE"
-        log "Added ip rule: pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XRAY_ROUTE_TABLE"
-    elif [[ $rule_count -gt 1 ]]; then
-        # Copies an older version left behind. Drop the extras one at a time so
-        # a marked packet always finds a rule to follow.
-        log -l WARN "Found $rule_count ip rules at pref $XRAY_RULE_PREF, removing duplicates"
-        while [[ $rule_count -gt 1 ]]; do
-            _tproxy_del_routing_rule || break
-            rule_count=$((rule_count - 1))
-        done
+    want_mark="$XRAY_FWMARK/$XRAY_FWMARK_MASK"
+    want_table=$(_tproxy_table_label "$XRAY_ROUTE_TABLE")
+
+    # The preference belongs to this module, so every rule on it is ours to
+    # reconcile: keep one that carries the configured mark and table, drop the
+    # rest. That covers both the copies an older version added on every apply
+    # and a rule left over from an earlier route_table or fwmark_mask, which
+    # would otherwise be counted as ours and keep the new setting from ever
+    # being installed. Comparing what the kernel prints - not the table number -
+    # is the whole point; see _tproxy_table_label.
+    while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        mark=$(printf '%s' "$line" | sed -n 's/.*fwmark \([^ ]*\).*/\1/p')
+        table=$(printf '%s' "$line" | sed -n 's/.*lookup \([^ ]*\).*/\1/p')
+
+        if [[ $kept -eq 0 && $mark == "$want_mark" && $table == "$want_table" ]]; then
+            kept=1
+            continue
+        fi
+
+        if [[ -n $mark ]]; then
+            ip rule del pref "$XRAY_RULE_PREF" fwmark "$mark" table "$table" 2>/dev/null || true
+        elif [[ -n $table ]]; then
+            ip rule del pref "$XRAY_RULE_PREF" table "$table" 2>/dev/null || true
+        else
+            ip rule del pref "$XRAY_RULE_PREF" 2>/dev/null || true
+        fi
+        log -l WARN "Removed stale ip rule: pref $XRAY_RULE_PREF fwmark ${mark:-none} lookup ${table:-none}"
+    done <<< "$(ip rule show pref "$XRAY_RULE_PREF" 2>/dev/null || true)"
+
+    if [[ $kept -eq 0 ]]; then
+        ip rule add pref "$XRAY_RULE_PREF" fwmark "$want_mark" table "$XRAY_ROUTE_TABLE"
+        log "Added ip rule: pref $XRAY_RULE_PREF fwmark $want_mark table $XRAY_ROUTE_TABLE"
     fi
 }
 
 # -------------------------------------------------------------------------------------------------
-# _tproxy_del_routing_rule - delete one copy of our fwmark rule
+# _tproxy_table_label - the name the kernel prints for a routing table
 # -------------------------------------------------------------------------------------------------
-# Names every selector so the kernel can only match a rule we created, never
-# somebody else's rule that happens to sit at the same preference.
-_tproxy_del_routing_rule() {
-    ip rule del pref "$XRAY_RULE_PREF" fwmark "$XRAY_FWMARK/$XRAY_FWMARK_MASK" \
-        table "$XRAY_ROUTE_TABLE" 2>/dev/null
+# iproute2 renders a routing table by its rt_tables name and falls back to the
+# number, so table 100 reads back as "lookup wan0" on Asuswrt-Merlin. When
+# rt_tables is missing both sides fall back to the number and still agree.
+_tproxy_table_label() {
+    local name
+    name=$(awk -v id="$1" '$0 !~ /^#/ && $1 == id { print $2; exit }' \
+        "${RT_TABLES_FILE:-/etc/iproute2/rt_tables}" 2>/dev/null)
+    printf '%s' "${name:-$1}"
 }
 
 # -------------------------------------------------------------------------------------------------
 # _tproxy_teardown_routing - remove routing table and ip rule
 # -------------------------------------------------------------------------------------------------
 _tproxy_teardown_routing() {
-    # Delete until the kernel reports there is nothing left: an older version
-    # could not recognise its own rule and left a copy behind on every apply.
-    # The counter only guards against a delete that always succeeds, which
-    # would otherwise wedge stop.
+    # Delete by preference until the kernel says there is nothing left. By
+    # preference, not by the configured tuple: an older version left a copy
+    # behind on every apply, and a changed route_table or fwmark_mask leaves a
+    # rule that no longer matches the configuration but is still ours. The
+    # counter only guards against a delete that always succeeds, which would
+    # otherwise wedge stop.
     local i=0
-    while [[ $i -lt 64 ]] && _tproxy_del_routing_rule; do
+    while [[ $i -lt 64 ]] && ip rule del pref "$XRAY_RULE_PREF" 2>/dev/null; do
         i=$((i + 1))
     done
 

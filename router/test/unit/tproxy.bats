@@ -389,3 +389,42 @@ EOF
     assert_success
     refute_output
 }
+
+# A rule created with an earlier advanced.xray.route_table / fwmark_mask sits at
+# the same reserved preference. Deleting only the exact configured tuple would
+# leave it in place, and counting it as "our rule" would skip installing the one
+# the config now asks for - the configuration change would be ignored.
+@test "_tproxy_setup_routing: replaces a rule left by a different route_table" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0x100/0x100 table 111
+
+    _tproxy_setup_routing
+
+    run ip rule show pref 200
+    assert_success
+    assert_output --partial "lookup wan0"
+    refute_output --partial "lookup wgc1"
+}
+
+@test "_tproxy_setup_routing: replaces a rule left by a different fwmark mask" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0x100/0x1ff table 100
+
+    _tproxy_setup_routing
+
+    run ip rule show pref 200
+    assert_success
+    assert_output --partial "fwmark 0x100/0x100"
+    refute_output --partial "0x1ff"
+}
+
+@test "_tproxy_teardown_routing: removes a rule left by earlier settings" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0x100/0x1ff table 111
+
+    _tproxy_teardown_routing
+
+    run ip rule show pref 200
+    assert_success
+    refute_output
+}
