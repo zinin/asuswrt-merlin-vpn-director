@@ -87,3 +87,21 @@ func DetachFromCallerDirectory(flagPaths ...*string) error {
 	}
 	return os.Chdir("/")
 }
+
+// Resolve reads p against base when p is relative, and hands it back unchanged
+// when it is absolute or empty.
+//
+// It is how the file paths inside vpn-director.json are understood: against
+// the config file, never against the directory a daemon happened to be started
+// in. Those daemons move to / at startup, and before that the directory was
+// whatever the launcher had - the update script's own, at one point, which the
+// bot deletes moments later.
+//
+// base may itself be relative, and then so is the answer: dev mode's paths are
+// relative to the source tree.
+func Resolve(base, p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(base, p)
+}

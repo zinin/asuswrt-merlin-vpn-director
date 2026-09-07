@@ -107,6 +107,11 @@ func main() {
 	if vpnCfg.WebUI.KeyFile == "" {
 		vpnCfg.WebUI.KeyFile = "/opt/vpn-director/certs/server.key"
 	}
+	// Read against the config, like data_dir: this process has left the
+	// directory it was started in, and TLS that fails to come up is how a
+	// relative certificate path would report it.
+	vpnCfg.WebUI.CertFile = paths.Resolve(scriptsDir, vpnCfg.WebUI.CertFile)
+	vpnCfg.WebUI.KeyFile = paths.Resolve(scriptsDir, vpnCfg.WebUI.KeyFile)
 
 	logger.SetLevel(vpnCfg.WebUI.LogLevel) // "" keeps info
 
@@ -231,7 +236,7 @@ func ensureDevFiles(configPath, shadowPath, dataDir string) {
 	// VPN Director config with webui section.
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		devConfig := &vpnconfig.VPNDirectorConfig{
-			DataDir: dataDir,
+			DataDir: "data", // relative to this config file
 			WebUI: vpnconfig.WebUIConfig{
 				Port:      8444,
 				JWTSecret: "dev-secret-not-for-production-use!!",

@@ -246,3 +246,25 @@ func TestConfigService_UpdateVPNConfig_SerializesConcurrentWriters(t *testing.T)
 		t.Errorf("lost updates: %d clients saved, want %d", len(cfg.Xray.Clients), 2*n)
 	}
 }
+
+// A relative data_dir means "beside vpn-director.json". It cannot mean "beside
+// the directory the daemon was started in": production daemons move to / at
+// startup, and before that the directory was whatever the launcher had -
+// including, after a self-update, one that had just been deleted.
+func TestConfigService_DataDir_ResolvesARelativeValueAgainstTheConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "vpn-director.json")
+	if err := os.WriteFile(configPath, []byte(`{"data_dir": "data"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewConfigService(dir, filepath.Join(dir, "default-data"), configPath)
+
+	dataDir, err := svc.DataDir()
+	if err != nil {
+		t.Fatalf("DataDir() error: %v", err)
+	}
+	if want := filepath.Join(dir, "data"); dataDir != want {
+		t.Errorf("DataDir() = %q, want %q", dataDir, want)
+	}
+}

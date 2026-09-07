@@ -213,3 +213,24 @@ func TestDetachFromCallerDirectory_WorksFromADirectoryThatIsGone(t *testing.T) {
 		t.Errorf("working directory is %q, want /", got)
 	}
 }
+
+// Paths inside vpn-director.json are read against the config file, because the
+// daemons no longer keep the directory they were started in - and before they
+// moved to /, that directory depended on whoever launched them.
+func TestResolve(t *testing.T) {
+	cases := []struct {
+		name, base, path, want string
+	}{
+		{"a relative path lands beside the config", "/opt/vpn-director", "data", "/opt/vpn-director/data"},
+		{"an absolute path is its own answer", "/opt/vpn-director", "/mnt/usb/data", "/mnt/usb/data"},
+		{"an empty path stays empty", "/opt/vpn-director", "", ""},
+		{"a relative base keeps the result relative", "testdata/dev", "data", "testdata/dev/data"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Resolve(tc.base, tc.path); got != tc.want {
+				t.Errorf("Resolve(%q, %q) = %q, want %q", tc.base, tc.path, got, tc.want)
+			}
+		})
+	}
+}

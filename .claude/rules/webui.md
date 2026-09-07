@@ -111,6 +111,13 @@ writes `servers.json` and `xray.servers`. All of them serialize on
 - `jwt_secret` is generated on first start when empty and written back under
   the config lock. It is never rewritten, which is what lets a login session
   survive an update.
+- The file paths in `vpn-director.json` — `data_dir`, `webui.cert_file`,
+  `webui.key_file` — are read against **the config file's own directory** when
+  they are relative (`paths.Resolve`). They cannot be read against the working
+  directory: outside dev mode both daemons move to `/` at startup, and before
+  that the directory was whatever the launcher had. Everything the project
+  writes is absolute anyway; the rule is what a hand-edited relative value
+  means.
 
 ## Dev mode
 
