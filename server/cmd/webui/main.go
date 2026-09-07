@@ -33,6 +33,12 @@ var (
 )
 
 func main() {
+	// Before anything here spawns a shell: an update script that ran from the
+	// update directory leaves its daemons in a directory the bot then deletes,
+	// and a working directory that is gone breaks monit and prints getcwd
+	// errors into every command's output - the Status page shows them.
+	movedOutOfADeletedCwd := paths.EnsureWorkingDirectory()
+
 	configPath := flag.String("config", "/opt/vpn-director/vpn-director.json", "path to vpn-director.json")
 	shadowPath := flag.String("shadow", "/etc/shadow", "path to shadow file")
 	devFlag := flag.Bool("dev", false, "run in development mode (HTTP, mock executor, testdata paths)")
@@ -69,6 +75,10 @@ func main() {
 	slog.SetDefault(slogger)
 
 	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag)
+
+	if movedOutOfADeletedCwd {
+		slog.Info("started in a directory that no longer exists, moved to /")
+	}
 
 	// Derive scripts directory from --config path so runtime reads/writes
 	// honour the flag instead of hardcoding /opt/vpn-director.

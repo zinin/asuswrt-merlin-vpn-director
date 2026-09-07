@@ -682,3 +682,71 @@ func TestRunUpdateScript_ScriptContent(t *testing.T) {
 		t.Error("Script missing correct NEW_VERSION")
 	}
 }
+
+// The bot deletes the whole update directory the moment it has reported a
+// successful update - while this script is still on its last steps. Started
+// inside that directory, the script is left with a working directory that no
+// longer exists, and so is every daemon it starts. On the router monit then
+// refuses to run at all ("Monit: Cannot read current directory"), so step 7's
+// re-monitor is swallowed by its own `2>/dev/null || true` and the bot stays
+// unmonitored; and every shell the daemons spawn prints "shell-init: error
+// retrieving current directory" into whatever the Web UI is showing.
+func TestUpdateCommand_StartsTheScriptOutsideTheDirectoryTheUpdateDeletes(t *testing.T) {
+	updateDir := t.TempDir()
+	s := &Service{updateDir: updateDir, shell: "/bin/sh"}
+
+	cwdFile := filepath.Join(t.TempDir(), "cwd")
+	probe := filepath.Join(updateDir, "probe.sh")
+	if err := os.WriteFile(probe, []byte("pwd > "+cwdFile+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+
+	if err := s.updateCommand(probe, out).Run(); err != nil {
+		t.Fatalf("run the probe script: %v", err)
+	}
+
+	data, err := os.ReadFile(cwdFile)
+	if err != nil {
+		t.Fatalf("read the probe's working directory: %v", err)
+	}
+	got := strings.TrimSpace(string(data))
+	doomed, err := filepath.EvalSymlinks(updateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == doomed || strings.HasPrefix(got, doomed+string(os.PathSeparator)) {
+		t.Errorf("the script runs from %q, inside the directory the update deletes", got)
+	}
+}
+
+// The same deletion takes update.log with it, so every log call after that
+// point writes into a directory that is gone. Under set -e a failing redirect
+// ends the script where it stands - taking the monit re-monitor and the lock
+// removal of steps 7 and 8 with it.
+func TestGenerateScript_LogSurvivesTheDirectoryTheBotDeletes(t *testing.T) {
+	s := &Service{}
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+
+	logFn := regexp.MustCompile(`(?ms)^log\(\) \{.*?^\}`).FindString(script)
+	if logFn == "" {
+		t.Fatal("no log() definition in the generated script")
+	}
+
+	gone := filepath.Join(t.TempDir(), "removed", "update.log")
+	snippet := "set -e\n" + logFn + "\nLOG_FILE=" + gone + "\nlog 'a line'\necho SURVIVED\n"
+	out, err := exec.Command("/bin/sh", "-c", snippet).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the script dies once its log file is gone: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "SURVIVED") {
+		t.Errorf("output %q, want the shell to carry on past the failed log", out)
+	}
+}

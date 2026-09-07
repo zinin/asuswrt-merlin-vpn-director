@@ -35,6 +35,12 @@ func versionString() string {
 }
 
 func main() {
+	// Before anything here spawns a shell: an update script that ran from the
+	// update directory leaves its daemons in a directory this process then
+	// deletes, and a working directory that is gone breaks monit and prints
+	// getcwd errors into every command's output.
+	movedOutOfADeletedCwd := paths.EnsureWorkingDirectory()
+
 	devFlag := flag.Bool("dev", false, "Run in development mode (local testing)")
 	flag.Parse()
 
@@ -67,6 +73,10 @@ func main() {
 	defer logger.Close()
 
 	slog.SetDefault(slogger)
+
+	if movedOutOfADeletedCwd {
+		slog.Info("Started in a directory that no longer exists, moved to /")
+	}
 
 	if *devFlag {
 		slog.Info("Running in DEVELOPMENT mode", "config", p.BotConfigPath)
