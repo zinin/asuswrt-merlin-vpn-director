@@ -14,11 +14,16 @@ import (
 
 // Update directory paths.
 const (
-	UpdateDir  = "/tmp/vpn-director-update"
-	FilesDir   = UpdateDir + "/files"
-	LockFile   = UpdateDir + "/lock"
-	NotifyFile = UpdateDir + "/notify.json"
-	ScriptFile = UpdateDir + "/update.sh"
+	UpdateDir = "/tmp/vpn-director-update"
+	// FilesDirName is where a download lands inside the update directory. It
+	// has a name of its own because the directory is injectable in tests and
+	// because the bot's startup notifier clears this subdirectory once a
+	// failed update has been accounted for.
+	FilesDirName = "files"
+	FilesDir     = UpdateDir + "/" + FilesDirName
+	LockFile     = UpdateDir + "/lock"
+	NotifyFile   = UpdateDir + "/notify.json"
+	ScriptFile   = UpdateDir + "/update.sh"
 )
 
 // ErrLockExists is returned by CreateLock when the lock file is already there.
@@ -135,7 +140,7 @@ func (s *Service) getUpdateDir() string {
 
 // getFilesDir returns the files directory path.
 func (s *Service) getFilesDir() string {
-	return filepath.Join(s.getUpdateDir(), "files")
+	return filepath.Join(s.getUpdateDir(), FilesDirName)
 }
 
 // getScriptFile returns the script file path.

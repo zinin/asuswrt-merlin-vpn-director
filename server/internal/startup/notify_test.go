@@ -80,7 +80,7 @@ func TestCheckAndSendNotify_Success(t *testing.T) {
 
 	sender := &mockSender{}
 
-	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir)
+	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "")
 	if err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
@@ -115,7 +115,7 @@ func TestCheckAndSendNotify_NoFile(t *testing.T) {
 	sender := &mockSender{}
 
 	// Should not error when file doesn't exist
-	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir)
+	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "")
 	if err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v, want nil for missing file", err)
 	}
@@ -137,7 +137,7 @@ func TestCheckAndSendNotify_InvalidJSON(t *testing.T) {
 
 	sender := &mockSender{}
 
-	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir)
+	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "")
 	if err == nil {
 		t.Fatal("Expected error for invalid JSON")
 	}
@@ -160,7 +160,7 @@ func TestCheckAndSendNotify_SendError(t *testing.T) {
 		sendErr: errors.New("telegram API error"),
 	}
 
-	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir)
+	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "")
 	if err == nil {
 		t.Fatal("Expected error when send fails")
 	}
@@ -187,7 +187,7 @@ func TestCheckAndSendNotify_CleanupAfterSuccess(t *testing.T) {
 
 	sender := &mockSender{}
 
-	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir)
+	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "")
 	if err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
@@ -216,7 +216,7 @@ func TestCheckAndSendNotify_EmptyVersions(t *testing.T) {
 
 	sender := &mockSender{}
 
-	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir)
+	err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "")
 	if err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
@@ -242,7 +242,7 @@ func TestCheckAndSendNotify_ZeroChatIDGoesToEveryActiveUser(t *testing.T) {
 		{Username: "bob", ChatID: 222},
 	}}
 
-	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir); err != nil {
+	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir, ""); err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 
@@ -269,13 +269,19 @@ func TestCheckAndSendNotify_FailedStatusKeepsTheLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	filesDir := writeFilesDir(t, tmpDir)
+
 	sender := &mockSender{}
-	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir); err != nil {
+	// No version to compare against: the failure is reported, as before.
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, ""); err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 
 	if len(sender.sentMessages) != 1 {
 		t.Fatalf("sent %d messages, want 1", len(sender.sentMessages))
+	}
+	if _, err := os.Stat(filesDir); !os.IsNotExist(err) {
+		t.Error("the payload of a failed attempt must not stay in tmpfs; a retry downloads it again")
 	}
 	want := "Update failed: see " + logFile
 	if sender.sentMessages[0].text != want {
@@ -296,7 +302,7 @@ func TestCheckAndSendNotify_ZeroChatIDWithoutStoreIsSkipped(t *testing.T) {
 	writeNotify(t, notifyFile, `{"chat_id":0,"old_version":"v1.2.0","new_version":"v1.3.0","status":"ok","initiator":"webui"}`)
 
 	sender := &mockSender{}
-	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir); err != nil {
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, ""); err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 	if len(sender.sentMessages) != 0 {
@@ -315,7 +321,7 @@ func TestCheckAndSendNotify_ZeroChatIDWithNoActiveUsersIsCleanedUp(t *testing.T)
 	writeNotify(t, notifyFile, `{"chat_id":0,"old_version":"v1.2.0","new_version":"v1.3.0","status":"ok","initiator":"webui"}`)
 
 	sender := &mockSender{}
-	if err := CheckAndSendNotify(sender, &mockStore{}, notifyFile, tmpDir); err != nil {
+	if err := CheckAndSendNotify(sender, &mockStore{}, notifyFile, tmpDir, ""); err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
@@ -335,7 +341,7 @@ func TestCheckAndSendNotify_PartialFailureKeepsNothingBack(t *testing.T) {
 		{Username: "bob", ChatID: 222},
 	}}
 
-	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir); err != nil {
+	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir, ""); err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
@@ -349,7 +355,7 @@ func TestCheckAndSendNotify_AllSendsFailKeepTheFile(t *testing.T) {
 	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v1.2.0","new_version":"v1.3.0","status":"ok","initiator":"bot"}`)
 
 	sender := &mockSender{sendErr: errors.New("network down")}
-	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir); err == nil {
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, ""); err == nil {
 		t.Fatal("CheckAndSendNotify() must report a total delivery failure")
 	}
 	if _, err := os.Stat(notifyFile); err != nil {
@@ -367,7 +373,7 @@ func TestCheckAndSendNotify_StoreErrorKeepsTheFile(t *testing.T) {
 	sender := &mockSender{}
 	store := &mockStore{err: errors.New("chats.json is unreadable")}
 
-	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir); err == nil {
+	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir, ""); err == nil {
 		t.Fatal("CheckAndSendNotify() must report a store failure")
 	}
 	if len(sender.sentMessages) != 0 {
@@ -393,7 +399,7 @@ func TestCheckAndSendNotify_DeduplicatesByChatID(t *testing.T) {
 		{Username: "someone", ChatID: 43},
 	}}
 
-	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir); err != nil {
+	if err := CheckAndSendNotify(sender, store, notifyFile, tmpDir, ""); err != nil {
 		t.Fatalf("CheckAndSendNotify() error = %v", err)
 	}
 
@@ -414,4 +420,66 @@ func writeNotify(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestCheckAndSendNotify_DropsAFailureTheRunningVersionOutlived(t *testing.T) {
+	// A failed update leaves notify.json for the next bot start. When that
+	// start is a different build - install.sh was re-run, or a later update
+	// landed - the failure it describes has been overtaken, and reporting it
+	// says something is broken when nothing is.
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	logFile := filepath.Join(tmpDir, "update.log")
+	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.0","new_version":"v0.11.1","status":"failed","initiator":"webui"}`)
+	if err := os.WriteFile(logFile, []byte("ERROR: pgrep not found\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	filesDir := writeFilesDir(t, tmpDir)
+
+	sender := &mockSender{}
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "v0.11.2"); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if len(sender.sentMessages) != 0 {
+		t.Errorf("sent %d messages, want none: the failure was overtaken", len(sender.sentMessages))
+	}
+	if _, err := os.Stat(notifyFile); !os.IsNotExist(err) {
+		t.Error("notify.json must go, or the stale report returns on every restart")
+	}
+	if _, err := os.Stat(filesDir); !os.IsNotExist(err) {
+		t.Error("the payload of the overtaken attempt must not stay in tmpfs")
+	}
+	if _, err := os.Stat(logFile); err != nil {
+		t.Errorf("update.log must survive for diagnosis: %v", err)
+	}
+}
+
+func TestCheckAndSendNotify_ReportsAFailureOfTheRunningVersion(t *testing.T) {
+	// The daemon that failed is the one running now, so the report stands.
+	tmpDir := t.TempDir()
+	notifyFile := filepath.Join(tmpDir, "notify.json")
+	writeNotify(t, notifyFile, `{"chat_id":42,"old_version":"v0.11.0","new_version":"v0.11.1","status":"failed","initiator":"webui"}`)
+
+	sender := &mockSender{}
+	if err := CheckAndSendNotify(sender, nil, notifyFile, tmpDir, "v0.11.0"); err != nil {
+		t.Fatalf("CheckAndSendNotify() error = %v", err)
+	}
+
+	if len(sender.sentMessages) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(sender.sentMessages))
+	}
+}
+
+// writeFilesDir creates the download directory an update leaves behind.
+func writeFilesDir(t *testing.T, updateDir string) string {
+	t.Helper()
+	filesDir := filepath.Join(updateDir, "files")
+	if err := os.MkdirAll(filesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDir, "telegram-bot"), []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return filesDir
 }

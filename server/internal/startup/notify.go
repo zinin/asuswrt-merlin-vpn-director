@@ -10,6 +10,7 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/chatstore"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 )
 
 // Default paths for update notification files.
@@ -38,7 +39,8 @@ type UpdateNotification struct {
 // every active chat; store may be nil (dev mode), in which case it is skipped
 // and kept for the next start. A successful update clears the whole update
 // directory; a failed one keeps update.log, because the message points at it.
-func CheckAndSendNotify(sender telegram.MessageSender, store ChatStore, notifyFile, updateDir string) error {
+// currentVersion is the version this process runs; "" means unknown.
+func CheckAndSendNotify(sender telegram.MessageSender, store ChatStore, notifyFile, updateDir, currentVersion string) error {
 	data, err := os.ReadFile(notifyFile)
 	if os.IsNotExist(err) {
 		// No notification pending - this is normal
@@ -51,6 +53,13 @@ func CheckAndSendNotify(sender telegram.MessageSender, store ChatStore, notifyFi
 	var n UpdateNotification
 	if err := json.Unmarshal(data, &n); err != nil {
 		return fmt.Errorf("parse notify file: %w", err)
+	}
+
+	if overtakenFailure(n, currentVersion) {
+		slog.Info("Dropping an update failure the running version outlived",
+			"failed_from", n.OldVersion, "failed_to", n.NewVersion, "running", currentVersion)
+		cleanup(n, notifyFile, updateDir)
+		return nil
 	}
 
 	recipients, err := recipientsFor(n, store)
@@ -127,12 +136,32 @@ func notificationText(n UpdateNotification, updateDir string) string {
 	return fmt.Sprintf("Update complete: %s → %s", n.OldVersion, n.NewVersion)
 }
 
+// overtakenFailure reports whether a failed update has already been overtaken.
+// A failed update leaves both the old daemons and notify.json behind, and the
+// bot reads that file on its next start. When that start is a different build
+// - install.sh was re-run, or a later update landed - the daemon the failure
+// describes is gone, and announcing it says something is broken when nothing
+// is. A successful notification is left alone: it names what that update did,
+// and staying quiet about it would be worse than saying it late.
+func overtakenFailure(n UpdateNotification, currentVersion string) bool {
+	return n.Status == "failed" && currentVersion != "" && n.OldVersion != "" &&
+		currentVersion != n.OldVersion
+}
+
 // cleanup removes what the notification leaves behind. Errors are logged, not
 // returned: the message is already delivered and cleanup is best-effort.
 func cleanup(n UpdateNotification, notifyFile, updateDir string) {
 	if n.Status == "failed" {
 		if err := os.Remove(notifyFile); err != nil {
 			slog.Warn("Failed to remove notify file", "path", notifyFile, "error", err)
+		}
+		// The download the attempt left behind is worthless - a retry wipes
+		// files/ before writing into it - and it is 16 MB of a router's tmpfs
+		// until the next update or reboot. update.log stays: the message
+		// points at it.
+		filesDir := filepath.Join(updateDir, updater.FilesDirName)
+		if err := os.RemoveAll(filesDir); err != nil {
+			slog.Warn("Failed to remove update payload", "path", filesDir, "error", err)
 		}
 		return
 	}

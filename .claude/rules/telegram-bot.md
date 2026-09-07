@@ -120,7 +120,9 @@ Both daemons — `telegram-bot` and `webui` — are updated together, from the b
  "status": "ok", "initiator": "webui"}
 ```
 
-`chat_id` 0 marks an update started from the Web UI: on its next start the bot notifies every active chat. A successful update clears `/tmp/vpn-director-update`; a failed one keeps `update.log`, because the message points at it.
+`chat_id` 0 marks an update started from the Web UI: on its next start the bot notifies every active chat. A successful update clears `/tmp/vpn-director-update`; a failed one keeps `update.log`, because the message points at it, and drops the downloaded `files/` — 16 MB of tmpfs that a retry re-downloads anyway.
+
+The bot only reads `notify.json` at startup, so a failure can wait there for a long time. If the version it finds in `old_version` is not the version now running, the failure has been overtaken — `install.sh` was re-run, or a later update landed — and the daemon it describes is gone: the bot logs the file, cleans up and stays quiet instead of announcing a breakage that no longer exists. A successful notification is always delivered, however late: it names what that update did.
 
 **Dev mode**: `/update` is disabled with `--dev` and for a `dev` build.
 

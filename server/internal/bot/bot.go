@@ -30,6 +30,9 @@ type Bot struct {
 	executor  service.ShellExecutor
 	updater   updater.Updater
 	chatStore *chatstore.Store
+	// version the bot is running. The startup notifier compares it with the
+	// version a failed update left behind.
+	version string
 }
 
 // Option configures the Bot.
@@ -81,9 +84,10 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 
 	// Create bot with defaults
 	b := &Bot{
-		api:    api,
-		auth:   NewAuth(cfg.AllowedUsers),
-		sender: sender,
+		api:     api,
+		auth:    NewAuth(cfg.AllowedUsers),
+		sender:  sender,
+		version: version,
 	}
 
 	// Apply options
@@ -172,7 +176,7 @@ func (b *Bot) Run(ctx context.Context) {
 		store = b.chatStore
 	}
 	// Check for pending update notification before starting polling
-	if err := startup.CheckAndSendNotify(b.sender, store, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
+	if err := startup.CheckAndSendNotify(b.sender, store, startup.DefaultNotifyFile, startup.DefaultUpdateDir, b.version); err != nil {
 		slog.Warn("Failed to send update notification", "error", err)
 	}
 
