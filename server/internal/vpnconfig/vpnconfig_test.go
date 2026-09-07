@@ -1,6 +1,7 @@
 package vpnconfig
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -649,5 +650,40 @@ func TestRepointPausedClients_DropsTheDuplicateItCreates(t *testing.T) {
 
 	if len(got) != 1 || got[0] != "192.168.50.20" {
 		t.Errorf("RepointPausedClients() = %v, want one entry 192.168.50.20", got)
+	}
+}
+
+// A config written before this field existed - every install in the wild -
+// must not come back claiming a server is active. omitempty is what keeps the
+// key out of the file until something selects one.
+func TestXrayConfig_OmitsTheActiveServerUntilOneIsSelected(t *testing.T) {
+	out, err := json.Marshal(VPNDirectorConfig{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "active_server") {
+		t.Errorf("marshalled %s, want no active_server key at all", out)
+	}
+}
+
+// /api/config hands the whole file to the browser. The record identifies the
+// server to a reader and stops there: the UUID is the subscription credential
+// and has no business travelling with a display name.
+func TestNewActiveServer_CarriesNoCredentials(t *testing.T) {
+	out, err := json.Marshal(NewActiveServer(Server{
+		Name:      "Осло, Норвегия, Extra",
+		Address:   "155.117.201.148",
+		Port:      443,
+		UUID:      "the-subscription-uuid",
+		PublicKey: "the-reality-public-key",
+		ShortID:   "the-reality-short-id",
+	}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, secret := range []string{"the-subscription-uuid", "the-reality-public-key", "the-reality-short-id"} {
+		if strings.Contains(string(out), secret) {
+			t.Errorf("marshalled %s, want no %q in it", out, secret)
+		}
 	}
 }

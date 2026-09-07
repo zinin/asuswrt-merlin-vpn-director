@@ -13,6 +13,15 @@ import (
 // has its own --max-time 10; this is the outer safety net.
 const ExternalIPTimeout = 15 * time.Second
 
+// curlErrors names the exit codes this one call can realistically produce.
+// The Web UI shows whatever comes back, and a bare number told nobody which
+// half of the request had failed.
+var curlErrors = map[int]string{
+	6:  "could not resolve host",
+	7:  "could not connect",
+	28: "timed out",
+}
+
 // NetworkService handles network-related operations
 type NetworkService struct {
 	executor ShellExecutor
@@ -33,11 +42,20 @@ func NewNetworkService(executor ShellExecutor) *NetworkService {
 func (s *NetworkService) GetExternalIP() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), ExternalIPTimeout)
 	defer cancel()
-	result, err := s.executor.Exec(ctx, "curl", "-s", "--connect-timeout", "5", "--max-time", "10", "ifconfig.me")
+	// -4 keeps the lookup to A records. Without it the router resolves
+	// AF_UNSPEC and asks for AAAA too - an answer it cannot use, since IPv6 is
+	// off - and that query intermittently goes unanswered: glibc sits out its
+	// full five seconds before retrying, --connect-timeout 5 fires first, and
+	// curl exits 6. Interleaved on an RT-AX86U that was 16 failures in 30
+	// tries; with -4, none in 30.
+	result, err := s.executor.Exec(ctx, "curl", "-4", "-s", "--connect-timeout", "5", "--max-time", "10", "ifconfig.me")
 	if err != nil {
 		return "", err
 	}
 	if result.ExitCode != 0 {
+		if name, ok := curlErrors[result.ExitCode]; ok {
+			return "", fmt.Errorf("curl: %s (exit code %d)", name, result.ExitCode)
+		}
 		return "", fmt.Errorf("curl failed with exit code %d", result.ExitCode)
 	}
 	ip := strings.TrimSpace(result.Output)

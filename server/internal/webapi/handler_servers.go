@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -24,7 +25,20 @@ func handleListServers(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusInternalServerError, "failed to load servers")
 			return
 		}
-		jsonOK(w, map[string]interface{}{"servers": servers})
+		// The list on its own cannot say which entry is running: a
+		// subscription routinely puts many names behind one address:port. The
+		// answer is the record a selection leaves in vpn-director.json, and
+		// nil - "nothing has been selected" - travels as null.
+		cfg, err := deps.Config.LoadVPNConfig()
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
+			return
+		}
+		var active *vpnconfig.ActiveServer
+		if cfg != nil {
+			active = cfg.Xray.ActiveServer
+		}
+		jsonOK(w, map[string]interface{}{"servers": servers, "active": active})
 	}
 }
 
@@ -89,9 +103,25 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := deps.Xray.GenerateConfig(server, ports); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
+		// Generation and the record of it go under one lock: a switch from the
+		// bot landing in between would otherwise leave config.json describing
+		// its server while this one's name reaches the UI.
+		generated, err := service.GenerateAndRecordActiveServer(deps.Config, deps.Xray, server, ports)
+		if !generated {
+			// Nothing was written, so nothing is worth restarting Xray for.
+			if errors.Is(err, service.ErrConfigLoad) {
+				jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
+			} else {
+				jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
+			}
 			return
+		}
+		if err != nil {
+			// config.json is written and only the record is missing. The
+			// server did change, and answering 500 would send the user back to
+			// redo a switch that worked; the cost is a stale name in the UI
+			// until the next selection.
+			slog.Warn("Failed to record the active server", "server", server.Name, "error", err)
 		}
 
 		if err := deps.VPN.RestartXray(); err != nil {

@@ -3,6 +3,7 @@ package startup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/chatstore"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 )
 
 // Default paths for update notification files.
@@ -38,7 +40,8 @@ type UpdateNotification struct {
 // every active chat; store may be nil (dev mode), in which case it is skipped
 // and kept for the next start. A successful update clears the whole update
 // directory; a failed one keeps update.log, because the message points at it.
-func CheckAndSendNotify(sender telegram.MessageSender, store ChatStore, notifyFile, updateDir string) error {
+// currentVersion is the version this process runs; "" means unknown.
+func CheckAndSendNotify(sender telegram.MessageSender, store ChatStore, notifyFile, updateDir, currentVersion string) error {
 	data, err := os.ReadFile(notifyFile)
 	if os.IsNotExist(err) {
 		// No notification pending - this is normal
@@ -51,6 +54,13 @@ func CheckAndSendNotify(sender telegram.MessageSender, store ChatStore, notifyFi
 	var n UpdateNotification
 	if err := json.Unmarshal(data, &n); err != nil {
 		return fmt.Errorf("parse notify file: %w", err)
+	}
+
+	if overtakenFailure(n, currentVersion) {
+		slog.Info("Dropping an update failure the running version outlived",
+			"failed_from", n.OldVersion, "failed_to", n.NewVersion, "running", currentVersion)
+		cleanup(n, notifyFile, updateDir)
+		return nil
 	}
 
 	recipients, err := recipientsFor(n, store)
@@ -127,12 +137,94 @@ func notificationText(n UpdateNotification, updateDir string) string {
 	return fmt.Sprintf("Update complete: %s → %s", n.OldVersion, n.NewVersion)
 }
 
+// overtakenFailure reports whether a failed update has already been overtaken.
+// A failed update leaves notify.json behind, and the bot reads that file on
+// its next start. When the build making that start is newer than the one the
+// attempt was trying to install - install.sh was re-run, or a later update
+// landed - the daemons the failure describes are gone, and announcing it says
+// something is broken when nothing is.
+//
+// That comparison is the test, and "the running version is neither end of the
+// attempt" is not the same test. The two daemons need not be on one version:
+// install.sh calls the Web UI optional and carries on when its download fails,
+// and old_version is the version of whichever daemon started the update rather
+// than of this one. A bot on v0.11.3 beside a Web UI on v0.11.2 that fails an
+// update to v0.11.4 is neither end of it, and dropping that silences the one
+// report anybody was going to get - the Web UI is down and nothing else says so.
+//
+// Running NewVersion is not overtaking either. The script copies both binaries
+// into place before it starts anything, so a daemon that fails to start in its
+// step 6 leaves this process running the new build with the other one down -
+// and step 6 rewrites notify.json before starting the bot precisely so that
+// failure gets reported.
+//
+// A version that does not parse dates nothing, so it decides nothing: a bot
+// built outside a release, or a tag out of some later release this build
+// cannot read, leaves the failure reported. A successful notification is left
+// alone whatever the version: it names what that update did, and staying quiet
+// would be worse than saying it late.
+func overtakenFailure(n UpdateNotification, currentVersion string) bool {
+	if n.Status != "failed" {
+		return false
+	}
+	running, err := updater.ParseVersion(currentVersion)
+	if err != nil {
+		return false
+	}
+	attempted, err := updater.ParseVersion(n.NewVersion)
+	if err != nil {
+		return false
+	}
+	return attempted.IsOlderThan(running)
+}
+
 // cleanup removes what the notification leaves behind. Errors are logged, not
 // returned: the message is already delivered and cleanup is best-effort.
 func cleanup(n UpdateNotification, notifyFile, updateDir string) {
 	if n.Status == "failed" {
 		if err := os.Remove(notifyFile); err != nil {
 			slog.Warn("Failed to remove notify file", "path", notifyFile, "error", err)
+		}
+		// The download the attempt left behind is worthless - a retry wipes
+		// files/ before writing into it - and it is 16 MB of a router's tmpfs
+		// until the next update or reboot. update.log stays: the message
+		// points at it.
+		//
+		// Unless the directory is spoken for. updateflow.Start claims it
+		// before it downloads a byte, so a payload beside a claim can be an
+		// attempt's, and removing it would break that attempt. The claim can
+		// also still be the failed script's own: that script starts the
+		// daemons back up before it drops its lock, so this can run in
+		// between. Skipping then costs only the reclaimed space - the next
+		// update wipes files/ before writing anyway - which is the harmless
+		// way to be wrong.
+		//
+		// Claiming the directory is what makes that so, where looking whether
+		// it is claimed would not. A look leaves the window between itself and
+		// the removal: an attempt starting inside that window passes its own
+		// check, takes the lock and begins filling files/, and what it
+		// downloaded goes with the payload being cleared here - the retry the
+		// user just started fails over files that were there a moment ago.
+		// CreateLockAt is the same atomic claim Start makes, so one of the two
+		// is refused instead.
+		lockFile := filepath.Join(updateDir, updater.LockFileName)
+		if err := updater.CreateLockAt(lockFile); err != nil {
+			if errors.Is(err, updater.ErrLockExists) {
+				slog.Info("An update holds the lock, leaving its payload alone", "dir", updateDir)
+			} else {
+				slog.Warn("Could not claim the update directory, leaving its payload alone",
+					"dir", updateDir, "error", err)
+			}
+			return
+		}
+		// Held for the removal and no longer. The claim names this process,
+		// which is alive, so one left behind has every later update refused as
+		// one already in progress until the bot restarts.
+		defer updater.RemoveLockAt(lockFile)
+
+		filesDir := filepath.Join(updateDir, updater.FilesDirName)
+		if err := os.RemoveAll(filesDir); err != nil {
+			slog.Warn("Failed to remove update payload", "path", filesDir, "error", err)
 		}
 		return
 	}

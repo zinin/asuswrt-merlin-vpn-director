@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import api from '../api'
-import type { Server } from '../types'
+import type { ActiveServer, Server } from '../types'
 
 const servers = ref<Server[]>([])
+const active = ref<ActiveServer | null>(null)
 const loading = ref(false)
 const importLoading = ref(false)
 const selectLoading = ref(-1)
@@ -16,11 +17,24 @@ async function loadServers() {
   try {
     const resp = await api.getServers()
     servers.value = resp.data.servers ?? []
+    active.value = resp.data.active ?? null
   } catch (e: any) {
     error.value = e.response?.data?.error || e.message
   } finally {
     loading.value = false
   }
+}
+
+// Name as well as endpoint: eight of the servers in a real subscription can
+// share one address:port, and matching on that alone lights up all of them.
+function isActive(server: Server): boolean {
+  const a = active.value
+  return (
+    a !== null &&
+    a.name === server.name &&
+    a.address === server.address &&
+    a.port === server.port
+  )
 }
 
 async function selectServer(index: number) {
@@ -84,7 +98,10 @@ onMounted(loadServers)
       <tbody>
         <tr v-for="(server, idx) in servers" :key="idx">
           <td>{{ idx + 1 }}</td>
-          <td>{{ server.name }}</td>
+          <td>
+            {{ server.name }}
+            <span v-if="isActive(server)" class="badge badge-green" style="margin-left: 0.5rem;">Active</span>
+          </td>
           <td>{{ server.address }}</td>
           <td>{{ server.port }}</td>
           <td>

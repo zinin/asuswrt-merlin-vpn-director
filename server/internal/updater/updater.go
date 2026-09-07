@@ -14,11 +14,22 @@ import (
 
 // Update directory paths.
 const (
-	UpdateDir  = "/tmp/vpn-director-update"
-	FilesDir   = UpdateDir + "/files"
-	LockFile   = UpdateDir + "/lock"
-	NotifyFile = UpdateDir + "/notify.json"
-	ScriptFile = UpdateDir + "/update.sh"
+	UpdateDir = "/tmp/vpn-director-update"
+	// FilesDirName is where a download lands inside the update directory. It
+	// has a name of its own because the directory is injectable in tests and
+	// because the bot's startup notifier clears this subdirectory once a
+	// failed update has been accounted for.
+	FilesDirName = "files"
+	FilesDir     = UpdateDir + "/" + FilesDirName
+	// LockFileName is how an attempt claims the update directory: created by
+	// updateflow.Start before anything is downloaded, republished by the
+	// script under its own PID, removed when the attempt is over. The bot's
+	// startup notifier claims it too, for as long as it takes to clear the
+	// payload of an attempt that failed.
+	LockFileName = "lock"
+	LockFile     = UpdateDir + "/" + LockFileName
+	NotifyFile   = UpdateDir + "/notify.json"
+	ScriptFile   = UpdateDir + "/update.sh"
 )
 
 // ErrLockExists is returned by CreateLock when the lock file is already there.
@@ -135,7 +146,7 @@ func (s *Service) getUpdateDir() string {
 
 // getFilesDir returns the files directory path.
 func (s *Service) getFilesDir() string {
-	return filepath.Join(s.getUpdateDir(), "files")
+	return filepath.Join(s.getUpdateDir(), FilesDirName)
 }
 
 // getScriptFile returns the script file path.
@@ -191,11 +202,17 @@ func (s *Service) IsUpdateInProgress() bool {
 	return true
 }
 
-// CreateLock creates a lock file with the current process PID.
-// Uses O_CREATE|O_EXCL for atomic creation - fails if lock already exists.
-func (s *Service) CreateLock() error {
-	lockFile := s.getLockFile()
-
+// CreateLockAt claims the update directory by publishing lockFile with the
+// PID of the calling process. Every writer of that directory goes through it:
+// Start before it downloads, and the bot's startup notifier before it clears
+// the payload of an attempt that failed. ErrLockExists means someone else
+// holds the claim and the caller owns nothing in there.
+//
+// The claim is made, never looked for. Whoever only checks whether the lock is
+// there leaves the window between that check and its own work for a second
+// claimant to start in; linking a written file into place has exactly one of
+// two callers arriving together win.
+func CreateLockAt(lockFile string) error {
 	// Ensure directory exists
 	dir := filepath.Dir(lockFile)
 	// 0755 root-owned: the update directory holds a script this process then
@@ -241,10 +258,16 @@ func (s *Service) CreateLock() error {
 	return nil
 }
 
+// CreateLock claims the update directory for this Service.
+func (s *Service) CreateLock() error { return CreateLockAt(s.getLockFile()) }
+
+// RemoveLockAt drops the claim at lockFile. Errors are ignored: the claim of a
+// process that is gone is reaped by the next IsUpdateInProgress, which finds
+// nothing alive behind the PID in it.
+func RemoveLockAt(lockFile string) { os.Remove(lockFile) }
+
 // RemoveLock removes the lock file. Errors are ignored.
-func (s *Service) RemoveLock() {
-	os.Remove(s.getLockFile())
-}
+func (s *Service) RemoveLock() { RemoveLockAt(s.getLockFile()) }
 
 // CleanFiles removes the files/ directory. Errors are ignored.
 func (s *Service) CleanFiles() {

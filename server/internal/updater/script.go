@@ -116,7 +116,7 @@ func (s *Service) generateScript(opts RunOptions) (string, error) {
 		OldVersion: opts.OldVersion,
 		NewVersion: opts.NewVersion,
 		UpdateDir:  updateDir,
-		FilesDir:   filepath.Join(updateDir, "files"),
+		FilesDir:   filepath.Join(updateDir, FilesDirName),
 		NotifyFile: filepath.Join(updateDir, "notify.json"),
 		LockFile:   filepath.Join(updateDir, "lock"),
 		Daemons:    Daemons,

@@ -228,6 +228,34 @@ func TestHandleIP_Error(t *testing.T) {
 	}
 }
 
+// The 500 used to be a flat "failed to get external IP" with the reason
+// dropped on the floor: a DNS failure, an unreachable host and a bad response
+// all reached the browser identically. The other control handlers already echo
+// the cause; this one now does too.
+func TestHandleIP_ErrorCarriesTheReason(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Network = &mockNetwork{err: errors.New("curl: could not resolve host (exit code 6)")}
+
+	handler := handleIP(deps)
+
+	req := httptest.NewRequest("GET", "/api/ip", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "failed to get external IP: curl: could not resolve host (exit code 6)" {
+		t.Errorf("unexpected error text: %q", resp["error"])
+	}
+}
+
 func TestHandleVersion(t *testing.T) {
 	deps := newTestDeps(t)
 	deps.Version = "2.1.0"

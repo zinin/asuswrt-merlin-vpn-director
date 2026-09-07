@@ -191,3 +191,29 @@ write_daemon_config() {
     assert_output "secret-from-the-daemon"
     [[ -z "$(find "$VPD_DIR" -name 'vpn-director.json.??????')" ]]
 }
+
+@test "step_generate_configs: records the server the Xray config was built from" {
+    load_wizard
+    write_daemon_config
+    SELECTED_SERVER_JSON='{"name":"Осло, Норвегия, Extra","address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","network":"tcp","sni":"cdn.example.com","fingerprint":"firefox","public_key":"PBK","short_id":"sid1"}'
+
+    run step_generate_configs
+
+    assert_success
+    run jq -r '.xray.active_server | "\(.name)|\(.address)|\(.port)"' "$VPD_DIR/vpn-director.json"
+    assert_output "Осло, Норвегия, Extra|1.2.3.4|443"
+}
+
+# The Web UI serves this file over /api/config. The record names the server and
+# stops there; the subscription UUID and the REALITY material stay in
+# servers.json and in the Xray config, which nobody hands to a browser.
+@test "step_generate_configs: keeps credentials out of the recorded server" {
+    load_wizard
+    write_daemon_config
+
+    run step_generate_configs
+
+    assert_success
+    run jq -r '.xray.active_server | keys | join(",")' "$VPD_DIR/vpn-director.json"
+    assert_output "address,name,port"
+}

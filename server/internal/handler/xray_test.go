@@ -88,7 +88,12 @@ func TestXrayHandler_HandleCallback_Success(t *testing.T) {
 		{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1", IPs: []string{"1.1.1.1"}},
 		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IPs: []string{"2.2.2.2"}},
 	}
-	config := &mockConfigStore{servers: servers}
+	// A configured router: the generation runs inside UpdateVPNConfig, so a
+	// store with no vpn-director.json would never reach it.
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{}
 	vpn := &mockVPNDirectorWithXray{}
 
@@ -147,9 +152,13 @@ func TestXrayHandler_HandleCallback_InvalidIndex(t *testing.T) {
 func TestXrayHandler_HandleCallback_GenerateError(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{{Name: "Server1"}}
-	config := &mockConfigStore{servers: servers}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{err: errors.New("template not found")}
-
+	// No VPN on purpose: a generation that failed must not reach RestartXray,
+	// and a nil dependency is the loudest way to prove it does not.
 	deps := &Deps{Sender: sender, Config: config, Xray: xray}
 	h := NewXrayHandler(deps)
 
@@ -171,7 +180,10 @@ func TestXrayHandler_HandleCallback_GenerateError(t *testing.T) {
 func TestXrayHandler_HandleCallback_RestartError(t *testing.T) {
 	sender := &mockSenderWithKeyboard{}
 	servers := []vpnconfig.Server{{Name: "Server1"}}
-	config := &mockConfigStore{servers: servers}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{}
 	vpn := &mockVPNDirectorWithXray{restartXrayErr: errors.New("xray not running")}
 
@@ -245,7 +257,10 @@ func TestXrayHandler_FullFlow(t *testing.T) {
 		{Name: "USA, New York", Address: "us.example.com", Port: 443, UUID: "uuid2", IPs: []string{"2.2.2.2"}},
 		{Name: "Japan, Tokyo", Address: "jp.example.com", Port: 443, UUID: "uuid3", IPs: []string{"3.3.3.3"}},
 	}
-	config := &mockConfigStore{servers: servers}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: servers},
+		cfg:             &vpnconfig.VPNDirectorConfig{},
+	}
 	xray := &mockXrayGenerator{}
 	vpn := &mockVPNDirectorWithXray{}
 
@@ -310,3 +325,78 @@ func (m *mockVPNDirectorWithXray) Restart() error          { return m.restartErr
 func (m *mockVPNDirectorWithXray) RestartXray() error      { return m.restartXrayErr }
 func (m *mockVPNDirectorWithXray) Stop() error             { return m.stopErr }
 func (m *mockVPNDirectorWithXray) Update() error           { return nil }
+
+// trackingXrayConfigStore holds a config the way a configured router does, so
+// a test can read back what the switch wrote. The plain mockConfigStore stands
+// in for a router before its first configure and fails every update.
+type trackingXrayConfigStore struct {
+	mockConfigStore
+	cfg *vpnconfig.VPNDirectorConfig
+}
+
+func (m *trackingXrayConfigStore) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
+	return m.cfg, m.err
+}
+
+func (m *trackingXrayConfigStore) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
+	return fn(m.cfg)
+}
+
+// The bot switches servers without going through the Web UI, so it owes the
+// same record: otherwise the Status tab keeps naming whatever was chosen last
+// time a browser did it.
+func TestXrayHandler_HandleCallback_RecordsTheSelection(t *testing.T) {
+	sender := &mockSenderWithKeyboard{}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: []vpnconfig.Server{
+			{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1", IPs: []string{"1.1.1.1"}},
+			{Name: "USA, New York", Address: "us.example.com", Port: 8443, UUID: "uuid2", IPs: []string{"2.2.2.2"}},
+		}},
+		cfg: &vpnconfig.VPNDirectorConfig{},
+	}
+	deps := &Deps{Sender: sender, Config: config, Xray: &mockXrayGenerator{}, VPN: &mockVPNDirectorWithXray{}}
+	h := NewXrayHandler(deps)
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		ID:      "cb123",
+		Data:    "xray:select:1",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	active := config.cfg.Xray.ActiveServer
+	if active == nil {
+		t.Fatal("the bot switched servers without recording which one")
+	}
+	if active.Name != "USA, New York" || active.Address != "us.example.com" || active.Port != 8443 {
+		t.Errorf("recorded %+v, want the server at index 1", *active)
+	}
+}
+
+// A generation failure leaves the previous config.json in place, so the record
+// has to stay on the server that is still running.
+func TestXrayHandler_HandleCallback_RecordsNothingWhenGenerationFails(t *testing.T) {
+	sender := &mockSenderWithKeyboard{}
+	config := &trackingXrayConfigStore{
+		mockConfigStore: mockConfigStore{servers: []vpnconfig.Server{
+			{Name: "Germany, Berlin", Address: "de.example.com", Port: 443, UUID: "uuid1"},
+		}},
+		cfg: &vpnconfig.VPNDirectorConfig{},
+	}
+	deps := &Deps{
+		Sender: sender,
+		Config: config,
+		Xray:   &mockXrayGenerator{err: errors.New("reality requires a public key")},
+		VPN:    &mockVPNDirectorWithXray{},
+	}
+	h := NewXrayHandler(deps)
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		ID:      "cb124",
+		Data:    "xray:select:0",
+		Message: &tgbotapi.Message{MessageID: 43, Chat: &tgbotapi.Chat{ID: 101}},
+	})
+
+	if active := config.cfg.Xray.ActiveServer; active != nil {
+		t.Errorf("recorded %+v after the config failed to generate", *active)
+	}
+}

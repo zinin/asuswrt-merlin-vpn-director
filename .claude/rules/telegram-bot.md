@@ -99,6 +99,8 @@ server/
 On apply:
 - Updates vpn-director.json (clients, exclusions, rules)
 - Generates /opt/etc/xray/config.json from template
+- Records the chosen server in `xray.active_server`, and only once the
+  generation above succeeded — `/xray` does the same. See `webui.md`
 - Runs `vpn-director.sh update`
 - Restarts Xray
 
@@ -120,7 +122,9 @@ Both daemons — `telegram-bot` and `webui` — are updated together, from the b
  "status": "ok", "initiator": "webui"}
 ```
 
-`chat_id` 0 marks an update started from the Web UI: on its next start the bot notifies every active chat. A successful update clears `/tmp/vpn-director-update`; a failed one keeps `update.log`, because the message points at it.
+`chat_id` 0 marks an update started from the Web UI: on its next start the bot notifies every active chat. A successful update clears `/tmp/vpn-director-update`; a failed one keeps `update.log`, because the message points at it, and drops the downloaded `files/` — 16 MB of tmpfs that a retry re-downloads anyway. Unless the directory is spoken for: the notifier claims it through `updater.CreateLockAt`, the same atomic claim `updateflow.Start` makes before it downloads a byte, and a refused claim can mean `files/` belongs to a live attempt. Claiming rather than checking is the whole of it — a check leaves the window between itself and the removal, and an attempt starting inside that window takes the lock and loses the payload it has just downloaded. The claim can equally be refused by the failed script's own lock — that script starts the daemons back up before dropping it — and skipping then costs only the reclaimed space, since the next attempt wipes `files/` before writing anyway. Wrong in the harmless direction either way. It is held for the removal and no longer: a claim left behind names a process that is alive, and every later update would be refused as one already in progress.
+
+The bot only reads `notify.json` at startup, so a failure can wait there for a long time. A failure is treated as overtaken — logged, cleaned up, not announced — only when the running build is **strictly newer** than the `new_version` the attempt was installing: `install.sh` was re-run, or a later update landed, and the daemons it describes are gone. Not "neither end of the attempt": the two daemons need not share a version, because `install.sh` calls the Web UI optional and carries on when its download fails, and `old_version` is the version of whichever daemon *started* the update. A bot on v0.11.3 reading a failed v0.11.2 → v0.11.4 attempt of the Web UI's matches neither end while that failure is the freshest thing on the router — and the Web UI is down, so nothing else reports it. Running `new_version` is not overtaking either: step 4 copies both binaries before anything is started, so a daemon that fails to start in step 6 leaves the bot on the new build with the other daemon down — and step 6 rewrites `notify.json` before starting the bot precisely so that failure gets reported. A version that does not parse dates nothing and decides nothing: a tag this build cannot read, or a bot built outside a release, leaves the failure reported. A successful notification is always delivered, however late: it names what that update did.
 
 **Dev mode**: `/update` is disabled with `--dev` and for a `dev` build.
 

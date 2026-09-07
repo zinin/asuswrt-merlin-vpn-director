@@ -444,6 +444,14 @@ step_generate_configs() {
         xray_servers_json=$(jq '[.[].ips[]] | unique' "$SERVERS_FILE")
     fi
 
+    # Which server config.json is about to be built from. Nothing else records
+    # it, and it cannot be read back out of config.json afterwards: a
+    # subscription routinely puts a dozen names behind one address:port. Only
+    # the three fields that identify the server to a reader - the Web UI serves
+    # this file over /api/config, so the uuid and the REALITY material stay out.
+    xray_active_server_json=$(printf '%s' "$SELECTED_SERVER_JSON" \
+        | jq -c '{name: (.name // ""), address: (.address // ""), port: (.port // 0)}')
+
     # The Web UI and the bot serialise their writes on this lock
     # (service.ConfigService.LockPath). The wizard is the third writer over the
     # same file: without the lock a daemon write landing between the read and
@@ -462,7 +470,7 @@ step_generate_configs() {
         _cfg_lock_waited=$((_cfg_lock_waited + 1))
     done
 
-    # The wizard owns four fields; everything else in the file belongs to the
+    # The wizard owns five fields; everything else in the file belongs to the
     # daemons and to the user: the jwt_secret the Web UI generates on its first
     # start, exclude_ips and paused_clients written by both daemons, data_dir
     # and the advanced section. So build on the existing config rather than on
@@ -518,9 +526,11 @@ step_generate_configs() {
         --argjson exclude "$xray_exclude_json" \
         --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
         --argjson servers "$xray_servers_json" \
+        --argjson active "$xray_active_server_json" \
         '.xray.clients = $clients |
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
+         .xray.active_server = $active |
          .tunnel_director.tunnels = $tunnels' \
         > "$_vpd_cfg_tmp"; then
         chmod 600 "$_vpd_cfg_tmp"

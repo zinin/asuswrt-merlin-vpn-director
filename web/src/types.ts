@@ -51,11 +51,21 @@ export interface IPResponse {
   ip: string
 }
 
+/** The server the running Xray config was generated from. Null until something
+ *  selects one: config.json holds only the outbound, and a subscription puts
+ *  many names behind one address:port, so it cannot be read back into a name. */
+export interface ActiveServer {
+  name: string
+  address: string
+  port: number
+}
+
 /** Go marshals a nil slice as null and none of these four fields carry
  *  omitempty, so an empty router answers with null, not []. The `?? []` guards
  *  at the call sites are load-bearing; the nullable type keeps them that way. */
 export interface ServersResponse {
   servers: Server[] | null
+  active: ActiveServer | null
 }
 
 export interface ClientsResponse {
