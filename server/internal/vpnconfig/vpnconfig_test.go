@@ -588,3 +588,66 @@ func TestSaveVPNDirectorConfig_FailedRenameLeavesNoTemp(t *testing.T) {
 	}
 	assertNoTempFiles(t, dir)
 }
+
+func TestXrayInboundPorts(t *testing.T) {
+	tests := []struct {
+		name          string
+		advanced      map[string]interface{}
+		tproxy, socks int
+	}{
+		{
+			name: "configured",
+			advanced: map[string]interface{}{"xray": map[string]interface{}{
+				"tproxy_port": float64(23456), "socks_port": float64(23457),
+			}},
+			tproxy: 23456, socks: 23457,
+		},
+		{
+			name:     "absent section",
+			advanced: map[string]interface{}{},
+		},
+		{
+			name: "non-numeric and non-positive are ignored",
+			advanced: map[string]interface{}{"xray": map[string]interface{}{
+				"tproxy_port": "23456", "socks_port": float64(0),
+			}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tproxy, socks := XrayInboundPorts(&VPNDirectorConfig{Advanced: tc.advanced})
+			if tproxy != tc.tproxy || socks != tc.socks {
+				t.Errorf("XrayInboundPorts() = (%d, %d), want (%d, %d)", tproxy, socks, tc.tproxy, tc.socks)
+			}
+		})
+	}
+}
+
+func TestRepointPausedClients(t *testing.T) {
+	clients := []ClientInfo{
+		{IP: "192.168.50.10", Route: "xray"},
+		{IP: "192.168.50.20", Route: "wgc1"},
+	}
+
+	got := RepointPausedClients([]string{"192.168.50.20/32", "10.0.0.1"}, clients)
+
+	want := []string{"192.168.50.20", "10.0.0.1"}
+	if len(got) != len(want) {
+		t.Fatalf("RepointPausedClients() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("RepointPausedClients()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestRepointPausedClients_DropsTheDuplicateItCreates(t *testing.T) {
+	clients := []ClientInfo{{IP: "192.168.50.20", Route: "wgc1"}}
+
+	got := RepointPausedClients([]string{"192.168.50.20", "192.168.50.20/32"}, clients)
+
+	if len(got) != 1 || got[0] != "192.168.50.20" {
+		t.Errorf("RepointPausedClients() = %v, want one entry 192.168.50.20", got)
+	}
+}

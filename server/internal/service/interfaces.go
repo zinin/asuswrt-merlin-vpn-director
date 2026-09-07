@@ -64,9 +64,10 @@ type VPNDirector interface {
 	Update() error
 }
 
-// XrayGenerator is the interface for Xray config generation
+// XrayGenerator is the interface for Xray config generation. The optional
+// ports keep the generated inbounds in step with advanced.xray.
 type XrayGenerator interface {
-	GenerateConfig(server vpnconfig.Server) error
+	GenerateConfig(server vpnconfig.Server, ports ...InboundPorts) error
 }
 
 // NetworkInfo is the interface for network operations

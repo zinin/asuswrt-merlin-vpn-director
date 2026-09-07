@@ -39,7 +39,7 @@ type mockXrayGenerator struct {
 	generateErr     error
 }
 
-func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server) error {
+func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server, _ ...service.InboundPorts) error {
 	m.generateCalled = true
 	m.generatedServer = server
 	return m.generateErr
@@ -235,6 +235,50 @@ func TestApplier_Apply_Success(t *testing.T) {
 			t.Errorf("expected at least 5 messages, got %d", len(sender.messages))
 		}
 	})
+}
+
+// The old wizard stored tunnel clients as 192.168.50.20/32 and paused them
+// under that spelling. The current one stores the address as entered, and
+// lib/config.sh subtracts paused_clients literally, so without repointing the
+// entry the client would resume on its own.
+func TestApplier_Apply_KeepsAPausedClientPausedAcrossASpellingChange(t *testing.T) {
+	manager := &trackingManager{}
+	sender := &trackingSender{}
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{
+			{Name: "Server1", IPs: []string{"1.2.3.4"}, Address: "srv1.example.com", Port: 443, UUID: "uuid-1"},
+		},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			DataDir: "/opt/vpn-director/data",
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: map[string]vpnconfig.TunnelConfig{
+					"wgc1": {Clients: []string{"192.168.50.20/32"}},
+				},
+			},
+			PausedClients: []string{"192.168.50.20/32"},
+		},
+	}
+	applier := NewApplier(manager, sender, configStore, &mockVPNDirector{}, &mockXrayGenerator{})
+
+	state := &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients:     []ClientRoute{{IP: "192.168.50.20", Route: "wgc1"}},
+	}
+
+	if err := applier.Apply(123, state); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	saved := configStore.savedConfig
+	if got := saved.TunnelDirector.Tunnels["wgc1"].Clients; len(got) != 1 || got[0] != "192.168.50.20" {
+		t.Fatalf("tunnel clients = %v, want the address as entered", got)
+	}
+	if len(saved.PausedClients) != 1 || saved.PausedClients[0] != "192.168.50.20" {
+		t.Errorf("paused_clients = %v, want it to follow the client spelling", saved.PausedClients)
+	}
 }
 
 func TestApplier_Apply_DefaultExclusions(t *testing.T) {

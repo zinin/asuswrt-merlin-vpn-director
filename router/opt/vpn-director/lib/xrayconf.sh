@@ -65,12 +65,26 @@ xrayconf_build_outbound() {
     '
 }
 
-# xrayconf_generate <template_path>: reads one server JSON object on stdin,
-# prints the full config.json (template with outbounds replaced) on stdout.
+# xrayconf_generate <template_path> [tproxy_port] [socks_port]: reads one
+# server JSON object on stdin, prints the full config.json (template with
+# outbounds replaced) on stdout. The ports are optional; given, they replace
+# the template's inbound ports, because the dokodemo-door port has to match
+# advanced.xray.tproxy_port - that is the port the TPROXY rules send traffic
+# to, and a mismatch leaves it with no listener.
 xrayconf_generate() {
     local template="$1"
+    local tproxy_port="${2:-}"
+    local socks_port="${3:-}"
     local server_json outbound
     server_json="$(cat)"
     outbound="$(printf '%s' "$server_json" | xrayconf_build_outbound)" || return 1
-    jq --argjson ob "$outbound" '.outbounds = [$ob]' "$template"
+    jq --argjson ob "$outbound" --arg tp "$tproxy_port" --arg sp "$socks_port" \
+        '.outbounds = [$ob]
+         | if $tp == "" then . else
+             (.inbounds[] | select(.tag == "tproxy-in") | .port) = ($tp | tonumber)
+           end
+         | if $sp == "" then . else
+             (.inbounds[] | select(.tag == "socks-in") | .port) = ($sp | tonumber)
+           end' \
+        "$template"
 }

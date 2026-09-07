@@ -100,7 +100,7 @@ type mockXray struct {
 	err error
 }
 
-func (m *mockXray) GenerateConfig(_ vpnconfig.Server) error { return m.err }
+func (m *mockXray) GenerateConfig(_ vpnconfig.Server, _ ...service.InboundPorts) error { return m.err }
 
 // mockShadow implements password verification for testing.
 // It acts as a thin wrapper that allows tests to control Verify results.

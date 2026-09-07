@@ -120,6 +120,23 @@ write_daemon_config() {
     assert_output "/tmp/moved-storage|23456"
 }
 
+@test "step_generate_configs: the Xray inbound follows the preserved tproxy_port" {
+    load_wizard
+    write_daemon_config
+    jq '.advanced.xray.tproxy_port = 23456' "$VPD_DIR/vpn-director.json" > "$VPD_DIR/cfg.new"
+    mv "$VPD_DIR/cfg.new" "$VPD_DIR/vpn-director.json"
+
+    run step_generate_configs
+
+    assert_success
+    # The TPROXY rules send traffic to advanced.xray.tproxy_port, so Xray has
+    # to listen there; the template default would leave that port unserved.
+    run jq -r '.inbounds[] | select(.tag == "tproxy-in") | .port' "$XRAY_CONFIG_DIR/config.json"
+    assert_output "23456"
+    run jq -r '.advanced.xray.tproxy_port' "$VPD_DIR/vpn-director.json"
+    assert_output "23456"
+}
+
 @test "step_generate_configs: picks up a key an update added to the template" {
     load_wizard
     write_daemon_config

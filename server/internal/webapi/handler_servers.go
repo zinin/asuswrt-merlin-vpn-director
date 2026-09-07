@@ -72,8 +72,12 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 		// Persist xray.servers before rewriting config.json. Generating first
 		// left a new outbound on disk if the save then failed, and the next
 		// xray restart would pick it up against the old vpn-director.json.
+		var ports service.InboundPorts
 		err = deps.Config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
 			cfg.Xray.Servers = collectServerIPs(servers)
+			// Read here, where the config is already in hand: the generated
+			// inbound has to listen where the TPROXY rules send traffic.
+			ports.TProxy, ports.Socks = vpnconfig.XrayInboundPorts(cfg)
 			return nil
 		})
 		if err != nil {
@@ -85,7 +89,7 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		if err := deps.Xray.GenerateConfig(server); err != nil {
+		if err := deps.Xray.GenerateConfig(server, ports); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
 			return
 		}

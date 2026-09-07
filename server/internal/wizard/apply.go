@@ -126,12 +126,22 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	excludeIPs := state.GetExcludeIPs()
 
 	// Update config under the cross-process lock
+	var ports service.InboundPorts
 	err = a.config.UpdateVPNConfig(func(vpnCfg *vpnconfig.VPNDirectorConfig) error {
 		vpnCfg.Xray.Clients = xrayClients
 		vpnCfg.Xray.ExcludeSets = excl
 		vpnCfg.Xray.ExcludeIPs = excludeIPs
 		vpnCfg.Xray.Servers = serverIPs
 		vpnCfg.TunnelDirector.Tunnels = tunnels
+		// The wizard stores addresses as entered, so a client the old wizard
+		// wrote as 1.2.3.4/32 comes back as 1.2.3.4. paused_clients is matched
+		// literally, so its entry has to follow or the client resumes on its
+		// own. Runs after the clients are in place, on the new spellings.
+		vpnCfg.PausedClients = vpnconfig.RepointPausedClients(
+			vpnCfg.PausedClients, vpnconfig.CollectClients(vpnCfg))
+		// The generated inbound has to listen where the TPROXY rules send
+		// traffic, so read the ports while the config is in hand.
+		ports.TProxy, ports.Socks = vpnconfig.XrayInboundPorts(vpnCfg)
 		return nil
 	})
 	if err != nil {
@@ -147,7 +157,7 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 	// Generate Xray config if server index is valid
 	if serverIndex >= 0 && serverIndex < len(servers) {
 		s := servers[serverIndex]
-		if err := a.xray.GenerateConfig(s); err != nil {
+		if err := a.xray.GenerateConfig(s, ports); err != nil {
 			a.sender.SendPlain(chatID, fmt.Sprintf("Xray config generation error: %v", err))
 			// Continue anyway - vpn-director.json is already saved
 		} else {

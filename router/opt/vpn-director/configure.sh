@@ -426,28 +426,6 @@ step_generate_configs() {
         exit 1
     fi
 
-    # Generate xray/config.json from template
-    print_info "Generating Xray config..."
-
-    # Generate to a temp file first, then replace atomically. A '>' redirect would
-    # truncate the live config.json before xrayconf_generate runs, so a generator
-    # failure (bad params, jq/template error) would leave the router with an empty
-    # config. Write-then-mv keeps the existing config intact on any failure.
-    _xray_cfg_tmp=$(mktemp "$XRAY_CONFIG_DIR/config.json.XXXXXX")
-    if printf '%s' "$SELECTED_SERVER_JSON" \
-        | xrayconf_generate "$XRAY_CONFIG_DIR/config.json.template" \
-        > "$_xray_cfg_tmp"; then
-        mv -f "$_xray_cfg_tmp" "$XRAY_CONFIG_DIR/config.json"
-        print_success "Generated $XRAY_CONFIG_DIR/config.json"
-    else
-        rm -f "$_xray_cfg_tmp"
-        print_error "Failed to generate Xray config (invalid server params?); kept existing config.json"
-        exit 1
-    fi
-
-    # Generate vpn-director.json
-    print_info "Generating vpn-director.json..."
-
     # Build JSON arrays
     xray_clients_json="[]"
     if [[ -n $XRAY_CLIENTS_LIST ]]; then
@@ -500,6 +478,37 @@ step_generate_configs() {
             print_warning "Existing config is not valid JSON, falling back to the template"
         fi
     fi
+
+    # The dokodemo-door port has to match advanced.xray.tproxy_port: that is
+    # where the TPROXY rules send traffic, and the template's default would
+    # leave a preserved custom port without a listener. Same for the socks
+    # port, which setup_telegram_bot.sh reads from the config.
+    _tproxy_port=$(printf '%s' "$base_json" | jq -r '.advanced.xray.tproxy_port // empty')
+    _socks_port=$(printf '%s' "$base_json" | jq -r '.advanced.xray.socks_port // empty')
+
+    # Generate xray/config.json from template
+    print_info "Generating Xray config..."
+
+    # Generate to a temp file first, then replace atomically. A '>' redirect would
+    # truncate the live config.json before xrayconf_generate runs, so a generator
+    # failure (bad params, jq/template error) would leave the router with an empty
+    # config. Write-then-mv keeps the existing config intact on any failure.
+    _xray_cfg_tmp=$(mktemp "$XRAY_CONFIG_DIR/config.json.XXXXXX")
+    if printf '%s' "$SELECTED_SERVER_JSON" \
+        | xrayconf_generate "$XRAY_CONFIG_DIR/config.json.template" \
+            "$_tproxy_port" "$_socks_port" \
+        > "$_xray_cfg_tmp"; then
+        mv -f "$_xray_cfg_tmp" "$XRAY_CONFIG_DIR/config.json"
+        print_success "Generated $XRAY_CONFIG_DIR/config.json"
+    else
+        rm -f "$_xray_cfg_tmp"
+        flock -u 9
+        exec 9>&-
+        print_error "Failed to generate Xray config (invalid server params?); kept existing config.json"
+        exit 1
+    fi
+
+    print_info "Generating vpn-director.json..."
 
     # Write to a temp file first: a '>' redirect truncates the live config
     # before jq runs, so a generator failure would take the jwt_secret with it.

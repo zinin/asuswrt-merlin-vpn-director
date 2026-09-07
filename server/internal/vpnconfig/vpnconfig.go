@@ -67,6 +67,63 @@ type ClientInfo struct {
 }
 
 // CollectClients builds a unified list of all clients from xray and tunnel_director sections.
+// XrayInboundPorts reads advanced.xray.tproxy_port and advanced.xray.socks_port.
+// A missing, non-numeric or non-positive value comes back as 0, which the Xray
+// generator reads as "keep the port the template carries".
+func XrayInboundPorts(cfg *VPNDirectorConfig) (tproxy, socks int) {
+	if cfg == nil {
+		return 0, 0
+	}
+	xray, ok := cfg.Advanced["xray"].(map[string]interface{})
+	if !ok {
+		return 0, 0
+	}
+	read := func(key string) int {
+		// Numbers decoded from JSON into interface{} arrive as float64.
+		v, ok := xray[key].(float64)
+		if !ok || v <= 0 {
+			return 0
+		}
+		return int(v)
+	}
+	return read("tproxy_port"), read("socks_port")
+}
+
+// RepointPausedClients rewrites paused entries onto the spelling the clients
+// are stored under. lib/config.sh subtracts paused_clients by exact string, so
+// a client rewritten from 1.2.3.4/32 to 1.2.3.4 silently resumes unless its
+// paused entry follows. Entries matching no client are kept untouched.
+func RepointPausedClients(paused []string, clients []ClientInfo) []string {
+	stored := make(map[string]string, len(clients))
+	for _, c := range clients {
+		key := c.IP
+		if norm, err := NormalizeClientAddr(c.IP); err == nil {
+			key = norm
+		}
+		if _, seen := stored[key]; !seen {
+			stored[key] = c.IP
+		}
+	}
+
+	out := make([]string, 0, len(paused))
+	seen := make(map[string]bool, len(paused))
+	for _, entry := range paused {
+		key := entry
+		if norm, err := NormalizeClientAddr(entry); err == nil {
+			key = norm
+		}
+		if s, ok := stored[key]; ok {
+			entry = s
+		}
+		if seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	return out
+}
+
 func CollectClients(cfg *VPNDirectorConfig) []ClientInfo {
 	paused := make(map[string]bool, len(cfg.PausedClients))
 	for _, ip := range cfg.PausedClients {

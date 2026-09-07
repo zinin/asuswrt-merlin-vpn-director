@@ -65,6 +65,13 @@ In `vpn-director.json`:
 | `advanced.xray.clients_ipset` | `XRAY_CLIENTS` | Source clients ipset |
 | `advanced.xray.bypass_ipset` | `TPROXY_BYPASS` | Bypass ipset (servers + user excludes + OpenVPN endpoints) |
 
+`advanced.xray.tproxy_port` and `socks_port` are not just read by the firewall
+rules: both generators write them into `config.json` — `xrayconf_generate` takes
+them as its second and third arguments, `XrayService.GenerateConfig` as
+`InboundPorts` — so the dokodemo-door inbound listens where the TPROXY rules
+send traffic. Regenerating `config.json` from the template alone would silently
+put the inbound back on 12345.
+
 ## IPSets Created
 
 | Name | Type | Purpose |

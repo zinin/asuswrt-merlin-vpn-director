@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -16,7 +17,7 @@ type mockXrayGenerator struct {
 	err        error
 }
 
-func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server) error {
+func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server, _ ...service.InboundPorts) error {
 	m.lastServer = server
 	return m.err
 }
