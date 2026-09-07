@@ -2,9 +2,12 @@ package wizard
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -73,12 +76,18 @@ func (m *mockConfigStore) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) 
 	return m.vpnConfig, m.err
 }
 
-func (m *mockConfigStore) SaveVPNConfig(*vpnconfig.VPNDirectorConfig) error {
+func (m *mockConfigStore) SaveServers([]vpnconfig.Server) error {
 	return m.err
 }
 
-func (m *mockConfigStore) SaveServers([]vpnconfig.Server) error {
-	return m.err
+func (m *mockConfigStore) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
+	if m.err != nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, m.err)
+	}
+	if m.vpnConfig == nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, os.ErrNotExist)
+	}
+	return fn(m.vpnConfig)
 }
 
 func (m *mockConfigStore) DataDir() (string, error) {

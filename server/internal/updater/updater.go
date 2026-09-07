@@ -21,6 +21,10 @@ const (
 	ScriptFile = UpdateDir + "/update.sh"
 )
 
+// ErrLockExists is returned by CreateLock when the lock file is already there.
+// Start maps it to updateflow.ErrInProgress so a second caller gets 409, not 500.
+var ErrLockExists = errors.New("lock file already exists (update in progress)")
+
 // Release represents a GitHub release.
 type Release struct {
 	TagName string
@@ -32,6 +36,26 @@ type Release struct {
 type Asset struct {
 	Name        string
 	DownloadURL string
+}
+
+// Daemon describes an updatable daemon. Name is the release asset prefix
+// (<Name>-<arch>), the file name under files/ and the monit service name the
+// update script unmonitors and re-monitors; Binary is where the update script
+// installs it and what `pgrep -f` matches on; InitScript is the Entware script
+// that starts and stops it.
+type Daemon struct {
+	Name       string
+	Binary     string
+	InitScript string
+}
+
+// Daemons lists every daemon a release ships. DownloadRelease fetches one
+// binary per entry and the update script restarts the entries that were
+// running before the update. This table is the single source of truth: the
+// downloader, the script template and install.sh must not drift apart.
+var Daemons = []Daemon{
+	{Name: "telegram-bot", Binary: "/opt/vpn-director/telegram-bot", InitScript: "S98telegram-bot"},
+	{Name: "webui", Binary: "/opt/vpn-director/webui", InitScript: "S98vpn-director-webui"},
 }
 
 // Updater defines the interface for update operations.
@@ -59,16 +83,19 @@ type Updater interface {
 	DownloadRelease(ctx context.Context, release *Release) error
 
 	// RunUpdateScript generates and runs the update shell script.
-	RunUpdateScript(chatID int64, oldVersion, newVersion string) error
+	RunUpdateScript(opts RunOptions) error
 }
 
 // Service implements the Updater interface.
 type Service struct {
 	httpClient *http.Client
 	baseURL    string // Injectable for testing, empty = default GitHub API
+	rawBaseURL string // Injectable for testing, empty = raw.githubusercontent.com
 	lockFile   string // Configurable for testing
 	updateDir  string // Configurable for testing
 	scriptFile string // Configurable for testing
+	archSuffix string // Injectable for testing, empty = derived from runtime.GOARCH
+	shell      string // Injectable for testing, empty = /bin/sh
 }
 
 // Verify Service implements Updater interface.
@@ -119,6 +146,16 @@ func (s *Service) getScriptFile() string {
 	return ScriptFile
 }
 
+// getShell returns the interpreter that runs the update script. Tests point
+// it at a path that does not exist, so the unit suite never launches the real
+// script against the machine running go test.
+func (s *Service) getShell() string {
+	if s.shell != "" {
+		return s.shell
+	}
+	return "/bin/sh"
+}
+
 // IsUpdateInProgress checks if a lock file exists and the process is still alive.
 // If the process is dead, the stale lock is removed and false is returned.
 func (s *Service) IsUpdateInProgress() bool {
@@ -161,24 +198,44 @@ func (s *Service) CreateLock() error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(lockFile)
+	// 0755 root-owned: the update directory holds a script this process then
+	// runs as root. On Asuswrt-Merlin there is no unprivileged local user to
+	// defend against, which is why this is a comment and not a mechanism.
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create lock directory: %w", err)
 	}
 
-	// Atomic lock creation - fails if file already exists
-	f, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	// Publish the lock with its PID already in it. O_CREATE|O_EXCL alone
+	// leaves the file empty between the open and the write, and a status check
+	// landing there parses no PID, judges the lock garbage and deletes it -
+	// CreateLock would then report success on a lock that no longer exists,
+	// and the next Start would begin a second update that wipes the shared
+	// files/ directory under this one. Link fails when the target exists, so
+	// the exclusivity O_EXCL gave us is kept.
+	tmp, err := os.CreateTemp(dir, "lock.*")
 	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("lock file already exists (update in progress)")
-		}
 		return fmt.Errorf("failed to create lock file: %w", err)
 	}
-	defer f.Close()
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the link is in place and this returns
 
-	pid := os.Getpid()
-	if _, err := f.WriteString(strconv.Itoa(pid)); err != nil {
-		os.Remove(lockFile) // Clean up on write failure
+	if _, err := tmp.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		tmp.Close()
 		return fmt.Errorf("failed to write PID to lock file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to write PID to lock file: %w", err)
+	}
+	// CreateTemp gives 0600; the lock has always been world-readable.
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return fmt.Errorf("failed to create lock file: %w", err)
+	}
+
+	if err := os.Link(tmpName, lockFile); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return ErrLockExists
+		}
+		return fmt.Errorf("failed to create lock file: %w", err)
 	}
 
 	return nil

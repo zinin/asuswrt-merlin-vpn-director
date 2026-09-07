@@ -3,6 +3,7 @@ package vpnconfig
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sort"
 )
 
@@ -27,6 +28,7 @@ type WebUIConfig struct {
 	CertFile  string `json:"cert_file,omitempty"`
 	KeyFile   string `json:"key_file,omitempty"`
 	JWTSecret string `json:"jwt_secret,omitempty"`
+	LogLevel  string `json:"log_level,omitempty"` // debug, info, warn, error; empty means info
 }
 
 type VPNDirectorConfig struct {
@@ -65,6 +67,63 @@ type ClientInfo struct {
 }
 
 // CollectClients builds a unified list of all clients from xray and tunnel_director sections.
+// XrayInboundPorts reads advanced.xray.tproxy_port and advanced.xray.socks_port.
+// A missing, non-numeric or non-positive value comes back as 0, which the Xray
+// generator reads as "keep the port the template carries".
+func XrayInboundPorts(cfg *VPNDirectorConfig) (tproxy, socks int) {
+	if cfg == nil {
+		return 0, 0
+	}
+	xray, ok := cfg.Advanced["xray"].(map[string]interface{})
+	if !ok {
+		return 0, 0
+	}
+	read := func(key string) int {
+		// Numbers decoded from JSON into interface{} arrive as float64.
+		v, ok := xray[key].(float64)
+		if !ok || v <= 0 {
+			return 0
+		}
+		return int(v)
+	}
+	return read("tproxy_port"), read("socks_port")
+}
+
+// RepointPausedClients rewrites paused entries onto the spelling the clients
+// are stored under. lib/config.sh subtracts paused_clients by exact string, so
+// a client rewritten from 1.2.3.4/32 to 1.2.3.4 silently resumes unless its
+// paused entry follows. Entries matching no client are kept untouched.
+func RepointPausedClients(paused []string, clients []ClientInfo) []string {
+	stored := make(map[string]string, len(clients))
+	for _, c := range clients {
+		key := c.IP
+		if norm, err := NormalizeClientAddr(c.IP); err == nil {
+			key = norm
+		}
+		if _, seen := stored[key]; !seen {
+			stored[key] = c.IP
+		}
+	}
+
+	out := make([]string, 0, len(paused))
+	seen := make(map[string]bool, len(paused))
+	for _, entry := range paused {
+		key := entry
+		if norm, err := NormalizeClientAddr(entry); err == nil {
+			key = norm
+		}
+		if s, ok := stored[key]; ok {
+			entry = s
+		}
+		if seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	return out
+}
+
 func CollectClients(cfg *VPNDirectorConfig) []ClientInfo {
 	paused := make(map[string]bool, len(cfg.PausedClients))
 	for _, ip := range cfg.PausedClients {
@@ -116,7 +175,7 @@ func SaveServers(path string, servers []Server) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	return writeFileAtomic(path, append(data, '\n'))
 }
 
 func LoadVPNDirectorConfig(path string) (*VPNDirectorConfig, error) {
@@ -133,5 +192,37 @@ func SaveVPNDirectorConfig(path string, cfg *VPNDirectorConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	return writeFileAtomic(path, append(data, '\n'))
+}
+
+// writeFileAtomic writes data to path through a temp file in the same
+// directory, fsyncs it, sets 0600 and renames it over path. A reader (the
+// shell scripts, the other daemon) therefore never sees a partial file, a
+// crash leaves either the old or the new content, and jwt_secret and server
+// UUIDs stop being world-readable.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

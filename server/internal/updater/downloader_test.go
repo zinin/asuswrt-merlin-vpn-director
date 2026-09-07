@@ -6,7 +6,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -157,31 +160,6 @@ func TestDownloadFile_UserAgent(t *testing.T) {
 	}
 }
 
-func TestDownloadBotBinary_AssetNotFound(t *testing.T) {
-	tempDir := t.TempDir()
-	s := &Service{
-		httpClient: &http.Client{},
-		updateDir:  tempDir,
-	}
-
-	release := &Release{
-		TagName: "v1.0.0",
-		Assets: []Asset{
-			{Name: "some-other-file", DownloadURL: "https://example.com/other"},
-		},
-	}
-
-	err := s.downloadBotBinary(context.Background(), release)
-	if err == nil {
-		t.Error("downloadBotBinary() should fail when binary not found or unsupported arch")
-	}
-	// On non-ARM architectures (like amd64 in dev environment), we get "unsupported architecture"
-	// On ARM architectures without matching asset, we get "not found in release"
-	if !strings.Contains(err.Error(), "not found in release") && !strings.Contains(err.Error(), "unsupported architecture") {
-		t.Errorf("Error should mention binary not found or unsupported arch, got: %v", err)
-	}
-}
-
 func TestDownloadRelease_CleansBeforeDownload(t *testing.T) {
 	// Server that responds to all requests
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,6 +182,7 @@ func TestDownloadRelease_CleansBeforeDownload(t *testing.T) {
 	s := &Service{
 		httpClient: &http.Client{},
 		baseURL:    server.URL,
+		rawBaseURL: server.URL,
 		updateDir:  tempDir,
 	}
 
@@ -217,13 +196,53 @@ func TestDownloadRelease_CleansBeforeDownload(t *testing.T) {
 	}
 }
 
+// TestDownloadRelease_UsesTheInjectedRawHost is why rawBaseURL exists: before
+// it, downloadScriptFile always addressed the real raw.githubusercontent.com,
+// so the unit suite reached the network on every `go test` - a dependency CI
+// would inherit. It was not slow about it: the tag these tests ask for does not
+// exist, so the run took one 404 and stopped at the first of the nineteen
+// files. This test is the first to drive all nineteen through a server it
+// controls, which is what lets it assert the count.
+func TestDownloadRelease_UsesTheInjectedRawHost(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	s := &Service{
+		httpClient: &http.Client{},
+		baseURL:    server.URL,
+		rawBaseURL: server.URL,
+		updateDir:  t.TempDir(),
+		archSuffix: "arm64",
+	}
+
+	// No assets in the release, so downloadBinaries fails after the scripts.
+	_ = s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) != len(scriptFiles) {
+		t.Fatalf("the test server saw %d requests, want %d - some file still goes to the real host", len(paths), len(scriptFiles))
+	}
+	want := "/" + repoOwner + "/" + repoName + "/refs/tags/v1.0.0/" + scriptFiles[0]
+	if paths[0] != want {
+		t.Errorf("first request path = %q, want %q", paths[0], want)
+	}
+}
+
 func TestDownloadScriptFile_PathTransformation(t *testing.T) {
 	// This test verifies the path transformation logic:
 	// "router/opt/vpn-director/lib/common.sh" → "files/opt/vpn-director/lib/common.sh"
 	// The downloadScriptFile uses raw.githubusercontent.com URL format, not GitHub API.
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// downloadScriptFile uses repoRawURL format which contains the file path
+		// downloadScriptFile builds its URL from repoRawPath, which contains the file path
 		if strings.Contains(r.URL.Path, "common.sh") {
 			w.Write([]byte("#!/bin/bash\necho test"))
 		} else {
@@ -259,5 +278,211 @@ func TestDownloadScriptFile_PathTransformation(t *testing.T) {
 		if result != tc.expected {
 			t.Errorf("TrimPrefix(%q, \"router\") = %q, want %q", tc.input, result, tc.expected)
 		}
+	}
+}
+
+func TestScriptFiles_ExistInRepo(t *testing.T) {
+	// The list is a copy of install.sh's downloads; a renamed or removed file
+	// silently breaks every future update, so pin it to the working tree.
+	for _, f := range scriptFiles {
+		path := filepath.Join("..", "..", "..", f)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("scriptFiles entry %q not found in the repo: %v", f, err)
+		}
+	}
+}
+
+func TestScriptFiles_IncludesWebUIInitScript(t *testing.T) {
+	const want = "router/opt/etc/init.d/S98vpn-director-webui"
+	for _, f := range scriptFiles {
+		if f == want {
+			return
+		}
+	}
+	t.Errorf("scriptFiles must ship %s, otherwise an update leaves the old init script", want)
+}
+
+// TestScriptFiles_MatchInstallSh closes the last hole in the single-source-of-
+// truth claim. TestScriptFiles_ExistInRepo catches a file renamed in the tree;
+// nothing catches a file added to one of the two lists and not the other, and
+// the two lists are what decide whether an update leaves a stale script behind.
+func TestScriptFiles_MatchInstallSh(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+
+	// Every path install.sh fetches appears as a router/... literal: eighteen
+	// in download_scripts' loop plus the xray template right after it. The
+	// trailing + excludes the bare "router/" of `target="/${script#router/}"`.
+	re := regexp.MustCompile(`router/[A-Za-z0-9._/-]+`)
+	inInstaller := make(map[string]bool)
+	for _, m := range re.FindAllString(string(data), -1) {
+		inInstaller[m] = true
+	}
+
+	inGo := make(map[string]bool, len(scriptFiles))
+	for _, f := range scriptFiles {
+		inGo[f] = true
+		if !inInstaller[f] {
+			t.Errorf("scriptFiles ships %q but install.sh does not download it: a fresh install would miss the file", f)
+		}
+	}
+	for f := range inInstaller {
+		if !inGo[f] {
+			t.Errorf("install.sh downloads %q but scriptFiles does not: an update would leave the old one in place", f)
+		}
+	}
+}
+
+func TestArchAssetSuffix(t *testing.T) {
+	tests := []struct {
+		goarch  string
+		want    string
+		wantErr bool
+	}{
+		{goarch: "arm64", want: "arm64"},
+		{goarch: "arm", want: "arm"},
+		{goarch: "amd64", wantErr: true},
+		{goarch: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.goarch, func(t *testing.T) {
+			got, err := archAssetSuffix(tt.goarch)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("archAssetSuffix(%q) = %q, want error", tt.goarch, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("archAssetSuffix(%q) error = %v", tt.goarch, err)
+			}
+			if got != tt.want {
+				t.Errorf("archAssetSuffix(%q) = %q, want %q", tt.goarch, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGetArchSuffix_ProductionBranchMatchesRuntime pins the one line no CI
+// machine executes on the target architecture: a typo there breaks self-update
+// for every router at once. Comparing error strings and not merely "both
+// failed" is the point - on an amd64 box both branches error either way, so a
+// weaker assertion would pass even if the production branch asked about
+// runtime.GOOS.
+func TestGetArchSuffix_ProductionBranchMatchesRuntime(t *testing.T) {
+	got, gotErr := (&Service{}).getArchSuffix()
+	want, wantErr := archAssetSuffix(runtime.GOARCH)
+
+	if got != want {
+		t.Errorf("getArchSuffix() = %q, want %q", got, want)
+	}
+	switch {
+	case gotErr == nil && wantErr == nil:
+	case gotErr == nil || wantErr == nil:
+		t.Fatalf("getArchSuffix() error = %v, archAssetSuffix error = %v", gotErr, wantErr)
+	case gotErr.Error() != wantErr.Error():
+		t.Errorf("getArchSuffix() error = %q, want %q", gotErr, wantErr)
+	}
+}
+
+func TestDownloadBinaries_DownloadsEveryDaemon(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("binary of " + strings.TrimPrefix(r.URL.Path, "/")))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	s := &Service{httpClient: server.Client(), updateDir: tempDir, archSuffix: "arm64"}
+
+	release := &Release{TagName: "v1.0.0"}
+	for _, d := range Daemons {
+		release.Assets = append(release.Assets, Asset{
+			Name:        d.Name + "-arm64",
+			DownloadURL: server.URL + "/" + d.Name + "-arm64",
+		})
+	}
+
+	if err := s.downloadBinaries(context.Background(), release); err != nil {
+		t.Fatalf("downloadBinaries() error = %v", err)
+	}
+
+	for _, d := range Daemons {
+		target := filepath.Join(tempDir, "files", d.Name)
+		data, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatalf("binary for %s not downloaded: %v", d.Name, err)
+		}
+		if want := "binary of " + d.Name + "-arm64"; string(data) != want {
+			t.Errorf("%s content = %q, want %q", d.Name, data, want)
+		}
+	}
+}
+
+func TestDownloadBinaries_MissingAssetIsAnError(t *testing.T) {
+	// A release that ships only one of the two binaries would install a new
+	// bot next to an old Web UI; refuse the whole download instead.
+	// The present assets must be served for real, not stubbed with an
+	// unroutable URL: downloadBinaries downloads inside the loop, so a stub
+	// makes the subtest turn on daemon ordering and DNS behaviour — it fails
+	// on the first daemon it fetches instead of on the missing asset.
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("binary"))
+	}))
+	defer server.Close()
+
+	for _, missing := range Daemons {
+		t.Run("without "+missing.Name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			s := &Service{httpClient: server.Client(), updateDir: tempDir, archSuffix: "arm64"}
+
+			release := &Release{TagName: "v1.0.0"}
+			for _, d := range Daemons {
+				if d.Name == missing.Name {
+					continue
+				}
+				release.Assets = append(release.Assets, Asset{
+					Name:        d.Name + "-arm64",
+					DownloadURL: server.URL + "/" + d.Name + "-arm64",
+				})
+			}
+
+			err := s.downloadBinaries(context.Background(), release)
+			if err == nil {
+				t.Fatalf("downloadBinaries() must fail without asset %s-arm64", missing.Name)
+			}
+			if !strings.Contains(err.Error(), missing.Name+"-arm64") {
+				t.Errorf("error %q should name the missing asset %s-arm64", err, missing.Name)
+			}
+		})
+	}
+}
+
+// TestDownloadBinaries_RefusesAPlainHTTPAsset closes a plaintext-downgrade path
+// on a file that is written to /opt and executed as root. GitHub always answers
+// with https, so this is defence in depth against a tampered API response.
+func TestDownloadBinaries_RefusesAPlainHTTPAsset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("binary"))
+	}))
+	defer server.Close()
+
+	s := &Service{httpClient: &http.Client{}, updateDir: t.TempDir(), archSuffix: "arm64"}
+
+	release := &Release{TagName: "v1.0.0"}
+	for _, d := range Daemons {
+		release.Assets = append(release.Assets, Asset{
+			Name:        d.Name + "-arm64",
+			DownloadURL: server.URL + "/" + d.Name + "-arm64", // http://
+		})
+	}
+
+	err := s.downloadBinaries(context.Background(), release)
+	if err == nil {
+		t.Fatal("downloadBinaries() accepted a plain-http asset URL")
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Errorf("error = %v, want it to name the scheme requirement", err)
 	}
 }

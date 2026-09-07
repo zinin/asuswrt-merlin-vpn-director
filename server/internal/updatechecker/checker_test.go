@@ -28,12 +28,12 @@ func (m *mockUpdater) ShouldUpdate(current, latest string) (bool, error) {
 	return m.shouldUpdate, m.shouldErr
 }
 
-func (m *mockUpdater) IsUpdateInProgress() bool                                       { return false }
-func (m *mockUpdater) CreateLock() error                                              { return nil }
-func (m *mockUpdater) RemoveLock()                                                    {}
-func (m *mockUpdater) CleanFiles()                                                    {}
-func (m *mockUpdater) DownloadRelease(context.Context, *updater.Release) error        { return nil }
-func (m *mockUpdater) RunUpdateScript(int64, string, string) error                    { return nil }
+func (m *mockUpdater) IsUpdateInProgress() bool                                { return false }
+func (m *mockUpdater) CreateLock() error                                       { return nil }
+func (m *mockUpdater) RemoveLock()                                             {}
+func (m *mockUpdater) CleanFiles()                                             {}
+func (m *mockUpdater) DownloadRelease(context.Context, *updater.Release) error { return nil }
+func (m *mockUpdater) RunUpdateScript(updater.RunOptions) error                { return nil }
 
 // mockSender captures sent messages (implements Sender interface with SendWithKeyboard)
 type mockSender struct {
@@ -271,6 +271,66 @@ func TestChecker_NotifiesMultipleUsers(t *testing.T) {
 	msgs := sender.getMessages()
 	if len(msgs) != 2 {
 		t.Errorf("expected 2 messages for 2 users, got %d", len(msgs))
+	}
+}
+
+// TestNotifyUsers_OneMessagePerChat: two usernames sharing a ChatID are one
+// person with a renamed handle. Both records still have to be marked notified,
+// or the second one asks again on the next tick. The third record, on a chat of
+// its own, keeps the assertion honest: one message per chat, not one in total.
+func TestNotifyUsers_OneMessagePerChat(t *testing.T) {
+	store := chatstore.New(t.TempDir() + "/chats.json")
+	_ = store.RecordInteraction("oldhandle", 42)
+	_ = store.RecordInteraction("newhandle", 42)
+	_ = store.RecordInteraction("someone", 43)
+
+	sender := &mockSender{}
+	c := New(&mockUpdater{}, store, sender, &mockAuth{}, "v1.2.0")
+
+	c.notifyUsers(context.Background(), &updater.Release{TagName: "v1.3.0", Body: "notes"})
+
+	got := sender.getMessages()
+	if len(got) != 2 {
+		t.Fatalf("sent %d messages, want 2 (one per chat): %+v", len(got), got)
+	}
+	perChat := map[int64]int{}
+	for _, msg := range got {
+		perChat[msg.chatID]++
+	}
+	if perChat[42] != 1 || perChat[43] != 1 {
+		t.Errorf("messages per chat = %v, want one each for 42 and 43", perChat)
+	}
+	for _, u := range []string{"oldhandle", "newhandle"} {
+		if !store.IsNotified(u, "v1.3.0") {
+			t.Errorf("%s was not marked notified, so the next tick would ask again", u)
+		}
+	}
+}
+
+// TestNotifyUsers_OneMessagePerChatAcrossTicks: the rename normally happens
+// between two ticks, not before either of them. The first tick tells oldhandle;
+// the user renames and writes to the bot, so RecordInteraction adds a second
+// active record on the same chat. "Notified" is tracked per username, so the
+// second tick can only stay quiet by consulting the store before it sends.
+func TestNotifyUsers_OneMessagePerChatAcrossTicks(t *testing.T) {
+	store := chatstore.New(t.TempDir() + "/chats.json")
+	_ = store.RecordInteraction("oldhandle", 42)
+
+	sender := &mockSender{}
+	c := New(&mockUpdater{}, store, sender, &mockAuth{}, "v1.2.0")
+	release := &updater.Release{TagName: "v1.3.0", Body: "notes"}
+
+	c.notifyUsers(context.Background(), release)
+
+	_ = store.RecordInteraction("newhandle", 42)
+
+	c.notifyUsers(context.Background(), release)
+
+	if got := sender.getMessages(); len(got) != 1 {
+		t.Fatalf("chat 42 heard about v1.3.0 %d times, want 1: %+v", len(got), got)
+	}
+	if !store.IsNotified("newhandle", "v1.3.0") {
+		t.Error("the renamed record was not marked notified, so every later tick would ask again")
 	}
 }
 

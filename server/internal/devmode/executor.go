@@ -2,8 +2,10 @@
 package devmode
 
 import (
+	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
@@ -39,13 +41,13 @@ func NewExecutorWithReal(real service.ShellExecutor) *Executor {
 
 // Exec executes a command, routing to real executor for safe commands,
 // mock responses for router commands, or failing for unknown commands.
-func (e *Executor) Exec(name string, args ...string) (*shell.Result, error) {
+func (e *Executor) Exec(ctx context.Context, name string, args ...string) (*shell.Result, error) {
 	baseName := filepath.Base(name)
 
 	// Check if it's a safe command
 	if e.isSafe(baseName) {
 		slog.Info("DEV: executing safe command", "command", baseName, "args", args)
-		return e.real.Exec(name, args...)
+		return e.real.Exec(ctx, name, args...)
 	}
 
 	// Check if it's a vpn-director.sh command
@@ -68,6 +70,11 @@ func (e *Executor) isSafe(baseName string) bool {
 
 // mockVPNDirector returns mock responses for vpn-director.sh commands
 func (e *Executor) mockVPNDirector(args ...string) (*shell.Result, error) {
+	// Options such as --wait precede the command; the mock ignores them.
+	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
+		args = args[1:]
+	}
+
 	if len(args) == 0 {
 		slog.Info("DEV: mock command", "command", "vpn-director.sh", "args", args)
 		return &shell.Result{

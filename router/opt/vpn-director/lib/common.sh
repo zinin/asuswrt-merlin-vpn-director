@@ -25,8 +25,9 @@
 #       Levels: TRACE, DEBUG, INFO (default), WARN, ERROR
 #
 #   acquire_lock [<name>]
-#       Acquires an exclusive non-blocking lock via /var/lock/<name>.lock; exits early if another
-#       instance is already running.
+#       Acquires an exclusive lock via /var/lock/<name>.lock. Without VPD_LOCK_WAIT it exits 0 at
+#       once when another instance holds it; with VPD_LOCK_WAIT=<sec> it waits up to <sec> seconds
+#       and exits 1 on timeout.
 #
 #   tmp_file
 #       Creates a UUID-named /tmp file tied to the script and tracks it for automatic cleanup.
@@ -417,7 +418,7 @@ log_error_trace() {
 }
 
 ###################################################################################################
-# acquire_lock - acquire an exclusive, non-blocking lock for the running script
+# acquire_lock - acquire an exclusive lock for the running script
 # -------------------------------------------------------------------------------------------------
 # Usage:
 #   acquire_lock             # uses get_script_name -n for lock name
@@ -426,22 +427,63 @@ log_error_trace() {
 # Behavior:
 #   * Creates /var/lock/<name>.lock and acquires exclusive lock
 #     on file descriptor 200.
-#   * If the lock is already held, logs the fact and exits with code 0.
+#   * VPD_LOCK_WAIT unset: non-blocking. If the lock is already held, logs the
+#     fact and exits with code 0 (firewall-start, wan-event and S99vpn-director
+#     rely on this: a second apply during boot is simply redundant).
+#   * VPD_LOCK_WAIT=<sec> (set by `vpn-director.sh --wait[=SEC]`): retries
+#     `flock -n` once a second for up to <sec> seconds, because BusyBox flock
+#     has no -w, then logs an ERROR and exits with code 1 so the caller learns
+#     that nothing was applied.
+#   * VPD_LOCK_WAIT set to a non-numeric value: logs a WARN and falls back to
+#     120 seconds, so a hand-exported garbage value cannot abort the script
+#     with an arithmetic error while the lock is free.
 #   * The lock persists until the script exits, automatically releasing it.
 ###################################################################################################
 acquire_lock() {
     local name="${1:-$(get_script_name -n)}"
     local file="/var/lock/${name}.lock"
+    local waited=0
+
+    # Already ours: `exec 200>` would close the descriptor, dropping the lock,
+    # and take it again - a window another waiter can step into. cmd_restart
+    # holds the lock and calls cmd_stop and cmd_apply, which both ask for it.
+    if [[ ${_VPD_LOCK_FILE:-} == "$file" ]]; then
+        return 0
+    fi
 
     # Ensure /var/lock exists (tmpfs on most routers)
     [ -d /var/lock ] || mkdir -p /var/lock 2>/dev/null
 
     exec 200>"$file"           # FD 200 -> /var/lock/foo.lock
-    if ! flock -n 200; then
-        log "Another instance is already running (lock: $file) - exiting"
-        exit 0
+    if [[ -z ${VPD_LOCK_WAIT:-} ]]; then
+        if ! flock -n 200; then
+            log "Another instance is already running (lock: $file) - exiting"
+            exit 0
+        fi
+    else
+        # parse_option validates the value that comes from --wait, but
+        # VPD_LOCK_WAIT can also be exported by hand: garbage there must not
+        # abort the script with an arithmetic error while the lock is free.
+        if [[ ! ${VPD_LOCK_WAIT} =~ ^[0-9]+$ ]]; then
+            log -l WARN "Ignoring invalid VPD_LOCK_WAIT '${VPD_LOCK_WAIT}', using 120s"
+            VPD_LOCK_WAIT=120
+        fi
+        # A leading zero makes (( )) read the value as octal, so 08/09 are not valid
+        # numbers and the timeout check would never fire, leaving an unbounded wait.
+        # Force base 10 once, then use that bound everywhere.
+        local limit=$((10#${VPD_LOCK_WAIT}))
+        until flock -n 200; do
+            if (( waited >= limit )); then
+                log -l ERROR "Timed out waiting for lock (lock: $file, waited ${waited}s)"
+                exit 1
+            fi
+            (( waited == 0 )) && log "Another instance is running (lock: $file) - waiting up to ${limit}s"
+            sleep 1
+            waited=$((waited + 1))
+        done
     fi
     printf '%s\n' "$$" 1>&200  # store our PID for clarity
+    _VPD_LOCK_FILE="$file"
 }
 
 ###################################################################################################

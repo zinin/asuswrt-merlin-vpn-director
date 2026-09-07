@@ -2,10 +2,16 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
+
+// ExternalIPTimeout bounds the curl call behind /ip and the Status tab. curl
+// has its own --max-time 10; this is the outer safety net.
+const ExternalIPTimeout = 15 * time.Second
 
 // NetworkService handles network-related operations
 type NetworkService struct {
@@ -25,7 +31,9 @@ func NewNetworkService(executor ShellExecutor) *NetworkService {
 
 // GetExternalIP returns the external IP address
 func (s *NetworkService) GetExternalIP() (string, error) {
-	result, err := s.executor.Exec("curl", "-s", "--connect-timeout", "5", "--max-time", "10", "ifconfig.me")
+	ctx, cancel := context.WithTimeout(context.Background(), ExternalIPTimeout)
+	defer cancel()
+	result, err := s.executor.Exec(ctx, "curl", "-s", "--connect-timeout", "5", "--max-time", "10", "ifconfig.me")
 	if err != nil {
 		return "", err
 	}

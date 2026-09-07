@@ -23,16 +23,18 @@ type ServerConfig struct {
 // otherwise it requires TLS certificates. On context cancellation it performs a
 // graceful shutdown with a 5-second deadline.
 func ListenAndServe(ctx context.Context, cfg ServerConfig, deps *Deps, staticFS fs.FS) error {
-	router := NewRouter(deps, staticFS)
+	router := NewRouter(deps, staticFS, ctx)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1 MB
+		// Handlers that run vpn-director.sh extend this per request, see
+		// extendWriteDeadline; every other route answers within seconds.
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MB
 	}
 	if !cfg.DevMode {
 		server.TLSConfig = &tls.Config{

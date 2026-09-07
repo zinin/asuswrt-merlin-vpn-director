@@ -14,6 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 /opt/vpn-director/vpn-director.sh stop                # Stop all components
 /opt/vpn-director/vpn-director.sh restart             # Restart all
 /opt/vpn-director/vpn-director.sh update              # Update ipsets + reapply
+/opt/vpn-director/vpn-director.sh --wait apply        # Queue for a running instance (120 s) instead of skipping
 
 # Component-specific commands
 /opt/vpn-director/vpn-director.sh status tunnel       # Tunnel Director status only
@@ -21,6 +22,16 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 
 # Import servers
 /opt/vpn-director/import_server_list.sh
+```
+
+```bash
+# Build (from the repository root)
+make build-webui         # Vue SPA -> go:embed -> webui binary
+make build-all           # both daemons for arm64 and arm
+make -C server test      # Go tests
+
+# Web UI in development: plain HTTP, testdata/dev paths, mock shell, admin/admin
+cd server && go run ./cmd/webui --dev
 ```
 
 ## Architecture
@@ -42,7 +53,11 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 | `router/opt/vpn-director/vpn-director.json.template` | Unified config template |
 | `router/opt/etc/xray/config.json.template` | Xray server config template |
 | `install.sh` | Interactive installer |
-| `server/` | Go server: Telegram bot (+ future WebUI) for remote management |
+| `server/cmd/bot/main.go` | Telegram bot daemon: DI, signal handling |
+| `server/cmd/webui/main.go` | Web UI daemon: HTTPS server, DI, dev mode |
+| `server/internal/webapi/` | HTTP API: router, JWT middleware, handlers, response deadlines |
+| `server/internal/auth/` | Password check against `/etc/shadow`, JWT issue and validation |
+| `web/` | Vue 3 SPA, embedded into the webui binary with `go:embed` |
 | `router/opt/vpn-director/setup_telegram_bot.sh` | Bot configuration script |
 
 ## Key Concepts
@@ -75,8 +90,11 @@ curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/m
 | `/opt/vpn-director/vpn-director.json` | Unified config (Xray + Tunnel Director) |
 | `/opt/etc/xray/config.json` | Xray server configuration |
 | `/opt/vpn-director/telegram-bot.json` | Telegram bot config (token, allowed users) |
+| `/opt/vpn-director/certs/server.{crt,key}` | Self-signed TLS certificate for the Web UI |
 
 **Data storage**: `data_dir` in vpn-director.json (default: `/opt/vpn-director/data`) — servers.json, ipset dumps
+
+**Web UI settings**: the `webui` section of `vpn-director.json` — `port` (8444), `cert_file`, `key_file`, `jwt_secret` (auto-generated when empty), `log_level` (`debug|info|warn|error`).
 
 ## Shell Conventions
 
@@ -95,4 +113,5 @@ See `.claude/rules/` for detailed docs:
 - `shell-conventions.md` — utilities from lib/common.sh, lib/firewall.sh, **known pitfalls**
 - `testing.md` — Bats framework, mocks, fixtures
 - `telegram-bot.md` — Go bot architecture, commands, wizard flow
+- `webui.md` — Web UI architecture, API table, authentication, dev mode, update flow
 - `entware-init.md` — Entware init system (rc.unslung, rc.func, S* scripts)

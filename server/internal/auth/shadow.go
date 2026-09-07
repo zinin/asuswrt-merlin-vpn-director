@@ -5,6 +5,9 @@ package auth
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -26,6 +29,12 @@ type ShadowAuth struct {
 	path string
 }
 
+// ErrUserNotFound reports that the shadow file has no usable password hash for
+// the username: the account is absent, locked ("!"), disabled ("*") or has an
+// empty hash. It is distinct from a read error on purpose — a caller answers
+// 401 for this and 500 when the file itself cannot be read.
+var ErrUserNotFound = errors.New("no usable password hash for user")
+
 // NewShadowAuth creates a ShadowAuth that reads from the given shadow file path.
 func NewShadowAuth(path string) *ShadowAuth {
 	return &ShadowAuth{path: path}
@@ -46,7 +55,7 @@ func (sa *ShadowAuth) Verify(username, password string) (bool, error) {
 
 	// Locked or no-password accounts.
 	hash := entry.hash
-	if hash == "" || strings.HasPrefix(hash, "!") || strings.HasPrefix(hash, "*") {
+	if isUnusableHash(hash) {
 		return false, nil
 	}
 
@@ -64,6 +73,67 @@ func (sa *ShadowAuth) Verify(username, password string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// VerifyWithFingerprint is Verify plus the pwh fingerprint of the hash that
+// just matched, from the same shadow read. Login must not call Verify and
+// Fingerprint back-to-back: a password change between the two reads can mint a
+// token bound to the new hash for a password that is no longer valid.
+func (sa *ShadowAuth) VerifyWithFingerprint(username, password string) (bool, string, error) {
+	entry, err := sa.findEntry(username)
+	if err != nil {
+		return false, "", err
+	}
+	if entry == nil {
+		return false, "", nil
+	}
+
+	hash := entry.hash
+	if isUnusableHash(hash) {
+		return false, "", nil
+	}
+
+	crypter, err := newCrypter(hash)
+	if err != nil {
+		return false, "", err
+	}
+
+	if err := crypter.Verify(hash, []byte(password)); err != nil {
+		if err == crypt.ErrKeyMismatch {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("verify password: %w", err)
+	}
+
+	return true, fingerprintHash(hash), nil
+}
+
+// Fingerprint returns the first 8 bytes of the SHA-256 of the user's stored
+// password hash, hex encoded. The Web UI puts it in the token's pwh claim and
+// re-checks it on every request, so changing the router password invalidates
+// every session issued under the old one. It is a fingerprint of the hash, not
+// the hash: 16 hex characters are enough to notice a change and carry nothing
+// worth attacking.
+func (sa *ShadowAuth) Fingerprint(username string) (string, error) {
+	entry, err := sa.findEntry(username)
+	if err != nil {
+		return "", err
+	}
+	if entry == nil || isUnusableHash(entry.hash) {
+		return "", ErrUserNotFound
+	}
+	return fingerprintHash(entry.hash), nil
+}
+
+func fingerprintHash(hash string) string {
+	sum := sha256.Sum256([]byte(hash))
+	return hex.EncodeToString(sum[:8])
+}
+
+// isUnusableHash reports whether the shadow field carries no password that can
+// be verified: empty, "!" (locked) or "*" (login disabled).
+func isUnusableHash(hash string) bool {
+	return hash == "" || strings.HasPrefix(hash, "!") || strings.HasPrefix(hash, "*")
 }
 
 // findEntry scans the shadow file for a matching username and returns the

@@ -73,3 +73,15 @@ func TestNetworkService_GetExternalIP_InvalidIPFormat(t *testing.T) {
 		t.Error("expected error for invalid IP format, got nil")
 	}
 }
+
+func TestNetworkService_GetExternalIP_UsesTimeout(t *testing.T) {
+	mock := &mockExecutor{result: &shell.Result{Output: "1.2.3.4"}}
+	svc := NewNetworkService(mock)
+	if _, err := svc.GetExternalIP(); err != nil {
+		t.Fatalf("GetExternalIP error: %v", err)
+	}
+	if len(mock.timeouts) != 1 {
+		t.Fatalf("expected one context deadline, got %d", len(mock.timeouts))
+	}
+	assertTimeout(t, mock.timeouts[0], ExternalIPTimeout)
+}

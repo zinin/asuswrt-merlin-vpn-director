@@ -1,12 +1,19 @@
 package shell
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-func TestExec_EchoHello(t *testing.T) {
-	result, err := Exec("echo", "hello")
+func TestExecContext_EchoHello(t *testing.T) {
+	result, err := ExecContext(context.Background(), "echo", "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -21,8 +28,8 @@ func TestExec_EchoHello(t *testing.T) {
 	}
 }
 
-func TestExec_NonZeroExitCode(t *testing.T) {
-	result, err := Exec("sh", "-c", "exit 42")
+func TestExecContext_NonZeroExitCode(t *testing.T) {
+	result, err := ExecContext(context.Background(), "sh", "-c", "exit 42")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -32,8 +39,8 @@ func TestExec_NonZeroExitCode(t *testing.T) {
 	}
 }
 
-func TestExec_CommandWithOutput(t *testing.T) {
-	result, err := Exec("sh", "-c", "echo first; echo second")
+func TestExecContext_CommandWithOutput(t *testing.T) {
+	result, err := ExecContext(context.Background(), "sh", "-c", "echo first; echo second")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,8 +54,8 @@ func TestExec_CommandWithOutput(t *testing.T) {
 	}
 }
 
-func TestExec_StderrCaptured(t *testing.T) {
-	result, err := Exec("sh", "-c", "echo error >&2")
+func TestExecContext_StderrCaptured(t *testing.T) {
+	result, err := ExecContext(context.Background(), "sh", "-c", "echo error >&2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,15 +69,15 @@ func TestExec_StderrCaptured(t *testing.T) {
 	}
 }
 
-func TestExec_CommandNotFound(t *testing.T) {
-	_, err := Exec("/nonexistent/command/that/does/not/exist")
+func TestExecContext_CommandNotFound(t *testing.T) {
+	_, err := ExecContext(context.Background(), "/nonexistent/command/that/does/not/exist")
 	if err == nil {
 		t.Fatal("expected error for non-existent command")
 	}
 }
 
-func TestExec_ExitCodeWithOutput(t *testing.T) {
-	result, err := Exec("sh", "-c", "echo output; exit 5")
+func TestExecContext_ExitCodeWithOutput(t *testing.T) {
+	result, err := ExecContext(context.Background(), "sh", "-c", "echo output; exit 5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,5 +88,129 @@ func TestExec_ExitCodeWithOutput(t *testing.T) {
 
 	if !strings.Contains(result.Output, "output") {
 		t.Errorf("expected output to contain 'output', got %q", result.Output)
+	}
+}
+
+func TestExecContext_TimeoutTerminatesProcess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	// exec replaces the shell with sleep, so SIGTERM reaches sleep itself and
+	// the output pipe closes as soon as it dies.
+	_, err := ExecContext(ctx, "sh", "-c", "exec sleep 5")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if !strings.HasPrefix(err.Error(), "command timed out after ") {
+		t.Errorf("error = %q, want prefix %q", err.Error(), "command timed out after ")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("ExecContext took %s; the process was not terminated on timeout", elapsed)
+	}
+}
+
+// A command that exits by itself while something it started keeps the output
+// pipe open ends in exec.ErrWaitDelay. The command succeeded, so ExecContext
+// must not turn that into an error: the Web UI would report "apply failed"
+// for an apply that finished.
+func TestExecContext_ChildHoldingThePipeIsNotAFailure(t *testing.T) {
+	old := waitDelay
+	waitDelay = 100 * time.Millisecond
+	t.Cleanup(func() { waitDelay = old })
+
+	// The shell exits at once; the background sleep inherits its stdout.
+	result, err := ExecContext(context.Background(), "sh", "-c", "sleep 1 & echo done")
+	if err != nil {
+		t.Fatalf("ExecContext() error = %v, want nil", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", result.ExitCode)
+	}
+	if !strings.Contains(result.Output, "done") {
+		t.Errorf("Output = %q, want what the command printed", result.Output)
+	}
+}
+
+// A timeout has to end the command's children too. vpn-director.sh's wget and
+// sleep inherit FD 200 with /var/lock/vpn-director.lock, so a survivor keeps
+// the lock and every later run skips silently or waits out its --wait.
+func TestExecContext_TimeoutEndsTheChildrenToo(t *testing.T) {
+	old := waitDelay
+	waitDelay = 300 * time.Millisecond
+	t.Cleanup(func() { waitDelay = old })
+
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	// The inner shell ignores SIGTERM and outlives the one that started it.
+	_, err := ExecContext(ctx, "sh", "-c",
+		`sh -c 'trap "" TERM; echo $$ > `+pidFile+`; sleep 30' & sleep 30`)
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+
+	data, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Fatalf("child never recorded its pid: %v", readErr)
+	}
+	pid, convErr := strconv.Atoi(strings.TrimSpace(string(data)))
+	if convErr != nil {
+		t.Fatalf("child pid %q: %v", data, convErr)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); err != nil {
+			return // gone, as it must be
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL) // do not leak it into the rest of the run
+	t.Error("the child outlived the timeout, still holding what it inherited")
+}
+
+func TestExecContext_TimeoutKillsChildThatIgnoresTerm(t *testing.T) {
+	old := waitDelay
+	waitDelay = 300 * time.Millisecond
+	t.Cleanup(func() { waitDelay = old })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	// The shell ignores SIGTERM and its child inherits that; only the
+	// WaitDelay kill and pipe close can end the call.
+	_, err := ExecContext(ctx, "sh", "-c", "trap '' TERM; sleep 5")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error, got nil")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("ExecContext took %s; WaitDelay did not kill the process", elapsed)
+	}
+}
+
+// TestExecContext_TimeoutErrorUnwrapsToDeadlineExceeded: spec 5.2's wording is
+// pinned as the error's prefix, which is all this test asserts about the text,
+// but a caller that asks errors.Is(err, context.DeadlineExceeded) has to get
+// true - otherwise every future caller has to match on the string.
+func TestExecContext_TimeoutErrorUnwrapsToDeadlineExceeded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := ExecContext(ctx, "sleep", "5")
+	if err == nil {
+		t.Fatal("expected a timeout error")
+	}
+	if !strings.HasPrefix(err.Error(), "command timed out after ") {
+		t.Errorf("error = %q, want it to start with %q", err, "command timed out after ")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("errors.Is(err, context.DeadlineExceeded) = false for %v", err)
 	}
 }

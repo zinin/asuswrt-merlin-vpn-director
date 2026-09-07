@@ -2,7 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import api from '../api'
 
-const logSources = ['vpn', 'xray', 'bot'] as const
+const logSources = ['vpn', 'xray', 'webui', 'bot'] as const
 const source = ref<string>('')
 const logData = ref<Record<string, string>>({})
 const loading = ref(false)
@@ -14,10 +14,10 @@ async function loadLogs() {
   error.value = ''
   try {
     if (source.value) {
-      const resp = await api.getLogs(source.value, lines.value)
+      const resp = await api.getLog(source.value, lines.value)
       logData.value = { [resp.data.source]: resp.data.output ?? '' }
     } else {
-      const resp = await api.getLogs(undefined, lines.value)
+      const resp = await api.getAllLogs(lines.value)
       logData.value = resp.data
     }
   } catch (e: any) {

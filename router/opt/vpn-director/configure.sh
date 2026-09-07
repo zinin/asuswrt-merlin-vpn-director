@@ -19,9 +19,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Paths
-VPD_DIR="/opt/vpn-director"
-XRAY_CONFIG_DIR="/opt/etc/xray"
+# Paths (overridable so the wizard can be sourced by tests)
+VPD_DIR="${VPD_DIR:-/opt/vpn-director}"
+XRAY_CONFIG_DIR="${XRAY_CONFIG_DIR:-/opt/etc/xray}"
 
 # Library: Xray config generator (self-contained pure-jq; no common.sh needed)
 . "$VPD_DIR/lib/xrayconf.sh"
@@ -426,28 +426,6 @@ step_generate_configs() {
         exit 1
     fi
 
-    # Generate xray/config.json from template
-    print_info "Generating Xray config..."
-
-    # Generate to a temp file first, then replace atomically. A '>' redirect would
-    # truncate the live config.json before xrayconf_generate runs, so a generator
-    # failure (bad params, jq/template error) would leave the router with an empty
-    # config. Write-then-mv keeps the existing config intact on any failure.
-    _xray_cfg_tmp=$(mktemp "$XRAY_CONFIG_DIR/config.json.XXXXXX")
-    if printf '%s' "$SELECTED_SERVER_JSON" \
-        | xrayconf_generate "$XRAY_CONFIG_DIR/config.json.template" \
-        > "$_xray_cfg_tmp"; then
-        mv -f "$_xray_cfg_tmp" "$XRAY_CONFIG_DIR/config.json"
-        print_success "Generated $XRAY_CONFIG_DIR/config.json"
-    else
-        rm -f "$_xray_cfg_tmp"
-        print_error "Failed to generate Xray config (invalid server params?); kept existing config.json"
-        exit 1
-    fi
-
-    # Generate vpn-director.json
-    print_info "Generating vpn-director.json..."
-
     # Build JSON arrays
     xray_clients_json="[]"
     if [[ -n $XRAY_CLIENTS_LIST ]]; then
@@ -466,8 +444,76 @@ step_generate_configs() {
         xray_servers_json=$(jq '[.[].ips[]] | unique' "$SERVERS_FILE")
     fi
 
-    # Read template and update with jq
-    jq \
+    # The Web UI and the bot serialise their writes on this lock
+    # (service.ConfigService.LockPath). The wizard is the third writer over the
+    # same file: without the lock a daemon write landing between the read and
+    # the rename below is lost. Thirty seconds matches the Go side's timeout.
+    # BusyBox flock has no -w, hence the loop.
+    exec 9>"$VPD_DIR/.vpn-director.json.lock"
+    _cfg_lock_waited=0
+    until flock -n 9; do
+        if [[ $_cfg_lock_waited -ge ${VPD_CONFIG_LOCK_WAIT:-30} ]]; then
+            print_error "Config is locked by the Web UI or the bot; try again"
+            exec 9>&-
+            exit 1
+        fi
+        [[ $_cfg_lock_waited -eq 0 ]] && print_info "Waiting for the config lock..."
+        sleep 1
+        _cfg_lock_waited=$((_cfg_lock_waited + 1))
+    done
+
+    # The wizard owns four fields; everything else in the file belongs to the
+    # daemons and to the user: the jwt_secret the Web UI generates on its first
+    # start, exclude_ips and paused_clients written by both daemons, data_dir
+    # and the advanced section. So build on the existing config rather than on
+    # the template, and merge the template underneath it so keys added by an
+    # update still arrive. A first run has no config and takes the template as
+    # it is.
+    base_json=$(cat "$VPD_DIR/vpn-director.json.template")
+    if [[ -f $VPD_DIR/vpn-director.json ]]; then
+        if _merged=$(jq -s '.[0] * .[1]' \
+            "$VPD_DIR/vpn-director.json.template" "$VPD_DIR/vpn-director.json"); then
+            base_json="$_merged"
+        else
+            print_warning "Existing config is not valid JSON, falling back to the template"
+        fi
+    fi
+
+    # The dokodemo-door port has to match advanced.xray.tproxy_port: that is
+    # where the TPROXY rules send traffic, and the template's default would
+    # leave a preserved custom port without a listener. Same for the socks
+    # port, which setup_telegram_bot.sh reads from the config.
+    _tproxy_port=$(printf '%s' "$base_json" | jq -r '.advanced.xray.tproxy_port // empty')
+    _socks_port=$(printf '%s' "$base_json" | jq -r '.advanced.xray.socks_port // empty')
+
+    # Generate xray/config.json from template
+    print_info "Generating Xray config..."
+
+    # Generate to a temp file first, then replace atomically. A '>' redirect would
+    # truncate the live config.json before xrayconf_generate runs, so a generator
+    # failure (bad params, jq/template error) would leave the router with an empty
+    # config. Write-then-mv keeps the existing config intact on any failure.
+    _xray_cfg_tmp=$(mktemp "$XRAY_CONFIG_DIR/config.json.XXXXXX")
+    if printf '%s' "$SELECTED_SERVER_JSON" \
+        | xrayconf_generate "$XRAY_CONFIG_DIR/config.json.template" \
+            "$_tproxy_port" "$_socks_port" \
+        > "$_xray_cfg_tmp"; then
+        mv -f "$_xray_cfg_tmp" "$XRAY_CONFIG_DIR/config.json"
+        print_success "Generated $XRAY_CONFIG_DIR/config.json"
+    else
+        rm -f "$_xray_cfg_tmp"
+        flock -u 9
+        exec 9>&-
+        print_error "Failed to generate Xray config (invalid server params?); kept existing config.json"
+        exit 1
+    fi
+
+    print_info "Generating vpn-director.json..."
+
+    # Write to a temp file first: a '>' redirect truncates the live config
+    # before jq runs, so a generator failure would take the jwt_secret with it.
+    _vpd_cfg_tmp=$(mktemp "$VPD_DIR/vpn-director.json.XXXXXX")
+    if printf '%s' "$base_json" | jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
@@ -476,10 +522,19 @@ step_generate_configs() {
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
          .tunnel_director.tunnels = $tunnels' \
-        "$VPD_DIR/vpn-director.json.template" \
-        > "$VPD_DIR/vpn-director.json"
-
-    print_success "Generated $VPD_DIR/vpn-director.json"
+        > "$_vpd_cfg_tmp"; then
+        chmod 600 "$_vpd_cfg_tmp"
+        mv -f "$_vpd_cfg_tmp" "$VPD_DIR/vpn-director.json"
+        flock -u 9
+        exec 9>&-
+        print_success "Generated $VPD_DIR/vpn-director.json"
+    else
+        rm -f "$_vpd_cfg_tmp"
+        flock -u 9
+        exec 9>&-
+        print_error "Failed to generate vpn-director.json; kept the existing config"
+        exit 1
+    fi
 }
 
 ###############################################################################
@@ -521,5 +576,14 @@ main() {
     print_header "Configuration Complete"
     printf "Check status with: /opt/vpn-director/vpn-director.sh status\n"
 }
+
+###############################################################################
+# Allow sourcing for testing
+###############################################################################
+
+if [[ ${1:-} == "--source-only" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
 
 main "$@"

@@ -13,6 +13,13 @@ const countryLoading = ref(false)
 const newIP = ref('')
 const ipLoading = ref(false)
 
+async function reportError(e: any) {
+  alert('Error: ' + (e.response?.data?.error || e.message))
+  if (e.response?.data?.saved) {
+    await loadData()
+  }
+}
+
 async function loadData() {
   loading.value = true
   error.value = ''
@@ -31,12 +38,12 @@ async function loadData() {
 }
 
 async function addCountry() {
-  const code = newCountry.value.trim().toUpperCase()
-  if (!/^[A-Z]{2}$/.test(code)) {
-    alert('Please enter a valid 2-letter country code (e.g. US, DE, JP)')
+  const code = newCountry.value.trim().toLowerCase()
+  if (!/^[a-z]{2}$/.test(code)) {
+    alert('Please enter a valid 2-letter country code (e.g. us, de, jp)')
     return
   }
-  if (countrySets.value.includes(code)) {
+  if (countrySets.value.some((c) => c.toLowerCase() === code)) {
     alert('Country code already added')
     return
   }
@@ -46,7 +53,7 @@ async function addCountry() {
     newCountry.value = ''
     await loadData()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     countryLoading.value = false
   }
@@ -58,7 +65,7 @@ async function removeCountry(code: string) {
     await api.updateExcludeSets(countrySets.value.filter((c) => c !== code))
     await loadData()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     countryLoading.value = false
   }
@@ -73,7 +80,7 @@ async function addIP() {
     newIP.value = ''
     await loadData()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     ipLoading.value = false
   }
@@ -85,7 +92,7 @@ async function removeIP(ip: string) {
     await api.deleteExcludeIP(ip)
     await loadData()
   } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
+    await reportError(e)
   } finally {
     ipLoading.value = false
   }
@@ -111,9 +118,9 @@ onMounted(loadData)
       <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
         <input
           v-model="newCountry"
-          placeholder="Country code (e.g. US)"
+          placeholder="Country code (e.g. us)"
           maxlength="2"
-          style="width: 140px; text-transform: uppercase;"
+          style="width: 140px; text-transform: lowercase;"
           @keyup.enter="addCountry"
         />
         <button class="btn btn-primary" :disabled="countryLoading" @click="addCountry">
@@ -126,7 +133,7 @@ onMounted(loadData)
           v-for="code in countrySets"
           :key="code"
           class="badge badge-green"
-          style="cursor: pointer; font-size: 0.85rem;"
+          style="cursor: pointer; font-size: 0.85rem; text-transform: lowercase;"
           @click="removeCountry(code)"
         >
           {{ code }} ✕

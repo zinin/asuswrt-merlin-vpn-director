@@ -15,6 +15,7 @@ import (
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/startup"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/wizard"
 )
@@ -111,7 +112,6 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 		Commit:      commit,
 		BuildDate:   buildDate,
 		DevMode:     b.devMode,
-		Updater:     b.updater,
 	}
 
 	// Create handlers
@@ -119,7 +119,9 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 	serversHandler := handler.NewServersHandler(deps)
 	importHandler := handler.NewImportHandler(deps)
 	miscHandler := handler.NewMiscHandler(deps)
-	updateHandler := handler.NewUpdateHandler(sender, b.updater, b.devMode, version)
+	// updateflow owns every decision behind /update; the handler is an adapter.
+	updateFlow := updateflow.New(b.updater, version, b.devMode)
+	updateHandler := handler.NewUpdateHandler(sender, updateFlow, version)
 	wizardHandler := wizard.NewHandler(sender, configSvc, vpnSvc, xraySvc)
 	xrayHandler := handler.NewXrayHandler(deps)
 	excludeHandler := handler.NewExcludeHandler(deps)
@@ -162,8 +164,15 @@ func (b *Bot) RegisterCommands() error {
 
 // Run starts the bot and processes updates until context is cancelled
 func (b *Bot) Run(ctx context.Context) {
+	// b.chatStore is a typed nil in dev mode; assigning it straight into the
+	// interface would hand CheckAndSendNotify a non-nil interface over a nil
+	// pointer and panic on the first call.
+	var store startup.ChatStore
+	if b.chatStore != nil {
+		store = b.chatStore
+	}
 	// Check for pending update notification before starting polling
-	if err := startup.CheckAndSendNotify(b.sender, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
+	if err := startup.CheckAndSendNotify(b.sender, store, startup.DefaultNotifyFile, startup.DefaultUpdateDir); err != nil {
 		slog.Warn("Failed to send update notification", "error", err)
 	}
 

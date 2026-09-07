@@ -11,7 +11,8 @@ Uses [Bats](https://bats-core.readthedocs.io/) (Bash Automated Testing System) w
 ## Running Tests
 
 ```bash
-bats router/test/              # Run all tests (recursive)
+bats -r router/test/           # Run all tests (recursive)
+bats router/test/              # Top-level files only - a directory argument is not recursive
 bats router/test/unit/         # Run unit tests only
 bats router/test/integration/  # Run integration tests only
 bats router/test/common.bats   # Run specific test file

@@ -17,8 +17,11 @@ import (
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/devmode"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/logging"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/webapi"
 )
@@ -56,10 +59,27 @@ func main() {
 		p = paths.Default()
 	}
 
+	// Log file first, like the bot, so a config load failure is logged too.
+	slogger, logger, err := logging.NewSlogLogger(p.WebUILogPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logging: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Close()
+	slog.SetDefault(slogger)
+
 	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag)
 
+	// Derive scripts directory from --config path so runtime reads/writes
+	// honour the flag instead of hardcoding /opt/vpn-director.
+	scriptsDir := filepath.Dir(*configPath)
+	defaultDataDir := filepath.Join(scriptsDir, "data")
+	// The flag names the file, not its directory: --config /tmp/custom.json
+	// must read that file, not /tmp/vpn-director.json.
+	configSvc := service.NewConfigService(scriptsDir, defaultDataDir, *configPath)
+
 	// Load config
-	vpnCfg, err := vpnconfig.LoadVPNDirectorConfig(*configPath)
+	vpnCfg, err := configSvc.LoadVPNConfig()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -75,7 +95,11 @@ func main() {
 		vpnCfg.WebUI.KeyFile = "/opt/vpn-director/certs/server.key"
 	}
 
-	// Auto-generate JWT secret if empty
+	logger.SetLevel(vpnCfg.WebUI.LogLevel) // "" keeps info
+
+	// Auto-generate JWT secret if empty. The write goes through the config
+	// lock like every other writer; if another process filled the secret in
+	// the meantime, that one wins and is used here as well.
 	if vpnCfg.WebUI.JWTSecret == "" {
 		slog.Warn("jwt_secret not set, generating random secret")
 		secret := make([]byte, 32)
@@ -84,7 +108,14 @@ func main() {
 			os.Exit(1)
 		}
 		vpnCfg.WebUI.JWTSecret = base64.StdEncoding.EncodeToString(secret)
-		if err := vpnconfig.SaveVPNDirectorConfig(*configPath, vpnCfg); err != nil {
+		err := configSvc.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+			if cfg.WebUI.JWTSecret == "" {
+				cfg.WebUI.JWTSecret = vpnCfg.WebUI.JWTSecret
+			}
+			vpnCfg.WebUI.JWTSecret = cfg.WebUI.JWTSecret
+			return nil
+		})
+		if err != nil {
 			slog.Warn("failed to save auto-generated jwt_secret", "error", err)
 			// Continue anyway — secret is in memory for this session
 		}
@@ -96,12 +127,6 @@ func main() {
 		executor = devmode.NewExecutor()
 	}
 
-	// Derive scripts directory from --config path so runtime reads/writes
-	// honour the flag instead of hardcoding /opt/vpn-director.
-	scriptsDir := filepath.Dir(*configPath)
-	defaultDataDir := filepath.Join(scriptsDir, "data")
-
-	configSvc := service.NewConfigService(scriptsDir, defaultDataDir)
 	vpnSvc := service.NewVPNDirectorService(scriptsDir, executor)
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
 	networkSvc := service.NewNetworkService(executor)
@@ -111,12 +136,23 @@ func main() {
 	shadowAuth := auth.NewShadowAuth(*shadowPath)
 	jwtSvc := auth.NewJWTService(vpnCfg.WebUI.JWTSecret, 24*time.Hour)
 
+	// The Web UI updates both daemons through the same flow as the bot; the
+	// progress lines go to the Web UI log, since there is no chat to answer in.
+	updateFlow := updateflow.New(updater.New(), Version, *devFlag)
+
 	deps := &webapi.Deps{
 		Config:  configSvc,
 		VPN:     vpnSvc,
 		Xray:    xraySvc,
 		Network: networkSvc,
 		Logs:    logSvc,
+		LogPaths: map[string]string{
+			"bot":   p.BotLogPath,
+			"vpn":   p.VPNLogPath,
+			"xray":  p.XrayLogPath,
+			"webui": p.WebUILogPath,
+		},
+		Update:  updateFlow,
 		Shadow:  shadowAuth,
 		JWT:     jwtSvc,
 		Version: Version,
@@ -136,6 +172,8 @@ func main() {
 	// Start server
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	logger.StartRotation(ctx, p.RotatedLogs(), logging.DefaultMaxSize, time.Minute)
 
 	serverCfg := webapi.ServerConfig{
 		Port:     vpnCfg.WebUI.Port,
@@ -184,6 +222,7 @@ func ensureDevFiles(configPath, shadowPath, dataDir string) {
 			WebUI: vpnconfig.WebUIConfig{
 				Port:      8444,
 				JWTSecret: "dev-secret-not-for-production-use!!",
+				LogLevel:  "debug",
 			},
 			Xray: vpnconfig.XrayConfig{
 				Clients:     []string{"192.168.50.0/24"},

@@ -2,18 +2,21 @@ package wizard
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
 // mockVPNDirector for testing
 type mockVPNDirector struct {
-	applyCalled      bool
+	applyCalled       bool
 	restartXrayCalled bool
-	applyErr         error
-	restartXrayErr   error
+	applyErr          error
+	restartXrayErr    error
 }
 
 func (m *mockVPNDirector) Status() (string, error) { return "", nil }
@@ -21,21 +24,22 @@ func (m *mockVPNDirector) Apply() error {
 	m.applyCalled = true
 	return m.applyErr
 }
-func (m *mockVPNDirector) Restart() error        { return nil }
+func (m *mockVPNDirector) Restart() error { return nil }
 func (m *mockVPNDirector) RestartXray() error {
 	m.restartXrayCalled = true
 	return m.restartXrayErr
 }
-func (m *mockVPNDirector) Stop() error { return nil }
+func (m *mockVPNDirector) Stop() error   { return nil }
+func (m *mockVPNDirector) Update() error { return nil }
 
 // mockXrayGenerator for testing
 type mockXrayGenerator struct {
-	generateCalled bool
+	generateCalled  bool
 	generatedServer vpnconfig.Server
-	generateErr    error
+	generateErr     error
 }
 
-func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server) error {
+func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server, _ ...service.InboundPorts) error {
 	m.generateCalled = true
 	m.generatedServer = server
 	return m.generateErr
@@ -43,11 +47,11 @@ func (m *mockXrayGenerator) GenerateConfig(server vpnconfig.Server) error {
 
 // trackingConfigStore extends mockConfigStore to track saves
 type trackingConfigStore struct {
-	servers         []vpnconfig.Server
-	vpnConfig       *vpnconfig.VPNDirectorConfig
-	loadErr         error
-	saveErr         error
-	savedConfig     *vpnconfig.VPNDirectorConfig
+	servers          []vpnconfig.Server
+	vpnConfig        *vpnconfig.VPNDirectorConfig
+	loadErr          error
+	saveErr          error
+	savedConfig      *vpnconfig.VPNDirectorConfig
 	saveConfigCalled bool
 }
 
@@ -59,13 +63,22 @@ func (m *trackingConfigStore) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, err
 	return m.vpnConfig, m.loadErr
 }
 
-func (m *trackingConfigStore) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
-	m.saveConfigCalled = true
-	m.savedConfig = cfg
+func (m *trackingConfigStore) SaveServers([]vpnconfig.Server) error {
 	return m.saveErr
 }
 
-func (m *trackingConfigStore) SaveServers([]vpnconfig.Server) error {
+func (m *trackingConfigStore) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
+	if m.loadErr != nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, m.loadErr)
+	}
+	if m.vpnConfig == nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, os.ErrNotExist)
+	}
+	if err := fn(m.vpnConfig); err != nil {
+		return err
+	}
+	m.saveConfigCalled = true
+	m.savedConfig = m.vpnConfig
 	return m.saveErr
 }
 
@@ -176,7 +189,7 @@ func TestApplier_Apply_Success(t *testing.T) {
 
 		// Verify config was saved
 		if !configStore.saveConfigCalled {
-			t.Error("expected SaveVPNConfig to be called")
+			t.Error("expected UpdateVPNConfig to save the config")
 		}
 
 		// Verify xray clients
@@ -195,8 +208,8 @@ func TestApplier_Apply_Success(t *testing.T) {
 		if !ok {
 			t.Fatal("expected tunnel 'wgc1' to exist")
 		}
-		if len(tunnel.Clients) != 1 || tunnel.Clients[0] != "192.168.1.20/32" {
-			t.Errorf("expected tunnel client '192.168.1.20/32', got %v", tunnel.Clients)
+		if len(tunnel.Clients) != 1 || tunnel.Clients[0] != "192.168.1.20" {
+			t.Errorf("expected tunnel client '192.168.1.20', got %v", tunnel.Clients)
 		}
 
 		// Verify xray config was generated
@@ -222,6 +235,50 @@ func TestApplier_Apply_Success(t *testing.T) {
 			t.Errorf("expected at least 5 messages, got %d", len(sender.messages))
 		}
 	})
+}
+
+// The old wizard stored tunnel clients as 192.168.50.20/32 and paused them
+// under that spelling. The current one stores the address as entered, and
+// lib/config.sh subtracts paused_clients literally, so without repointing the
+// entry the client would resume on its own.
+func TestApplier_Apply_KeepsAPausedClientPausedAcrossASpellingChange(t *testing.T) {
+	manager := &trackingManager{}
+	sender := &trackingSender{}
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{
+			{Name: "Server1", IPs: []string{"1.2.3.4"}, Address: "srv1.example.com", Port: 443, UUID: "uuid-1"},
+		},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			DataDir: "/opt/vpn-director/data",
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: map[string]vpnconfig.TunnelConfig{
+					"wgc1": {Clients: []string{"192.168.50.20/32"}},
+				},
+			},
+			PausedClients: []string{"192.168.50.20/32"},
+		},
+	}
+	applier := NewApplier(manager, sender, configStore, &mockVPNDirector{}, &mockXrayGenerator{})
+
+	state := &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients:     []ClientRoute{{IP: "192.168.50.20", Route: "wgc1"}},
+	}
+
+	if err := applier.Apply(123, state); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	saved := configStore.savedConfig
+	if got := saved.TunnelDirector.Tunnels["wgc1"].Clients; len(got) != 1 || got[0] != "192.168.50.20" {
+		t.Fatalf("tunnel clients = %v, want the address as entered", got)
+	}
+	if len(saved.PausedClients) != 1 || saved.PausedClients[0] != "192.168.50.20" {
+		t.Errorf("paused_clients = %v, want it to follow the client spelling", saved.PausedClients)
+	}
 }
 
 func TestApplier_Apply_DefaultExclusions(t *testing.T) {
@@ -430,11 +487,12 @@ func TestApplier_Apply_MultipleClientsToSameTunnel(t *testing.T) {
 
 		tunnel := configStore.savedConfig.TunnelDirector.Tunnels["wgc1"]
 		if len(tunnel.Clients) != 3 {
-			t.Errorf("expected 3 clients in tunnel, got %d", len(tunnel.Clients))
+			t.Fatalf("expected 3 clients in tunnel, got %d", len(tunnel.Clients))
 		}
 
-		// Check that /32 is added only when needed
-		expected := []string{"192.168.1.10/32", "192.168.1.20/32", "192.168.1.30/24"}
+		// Addresses are stored exactly as entered — no /32 is appended, so the
+		// bot and the Web UI persist the same spelling.
+		expected := []string{"192.168.1.10", "192.168.1.20", "192.168.1.30/24"}
 		for i, exp := range expected {
 			if tunnel.Clients[i] != exp {
 				t.Errorf("expected client[%d]='%s', got '%s'", i, exp, tunnel.Clients[i])
@@ -729,7 +787,7 @@ func TestApplier_Apply_FiltersEmptyServerIPs(t *testing.T) {
 		configStore := &trackingConfigStore{
 			servers: []vpnconfig.Server{
 				{Name: "Server1", IPs: []string{"1.2.3.4"}},
-				{Name: "Server2", IPs: nil},         // No IPs
+				{Name: "Server2", IPs: nil}, // No IPs
 				{Name: "Server3", IPs: []string{"5.6.7.8"}},
 			},
 			vpnConfig: &vpnconfig.VPNDirectorConfig{

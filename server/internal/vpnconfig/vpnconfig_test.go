@@ -405,7 +405,8 @@ func TestLoadVPNDirectorConfig_WithWebUI(t *testing.T) {
 			"port": 8444,
 			"cert_file": "/opt/vpn-director/certs/server.crt",
 			"key_file": "/opt/vpn-director/certs/server.key",
-			"jwt_secret": "supersecret123"
+			"jwt_secret": "supersecret123",
+			"log_level": "debug"
 		},
 		"tunnel_director": {"tunnels": {}},
 		"xray": {"clients": [], "servers": [], "exclude_sets": []}
@@ -432,6 +433,9 @@ func TestLoadVPNDirectorConfig_WithWebUI(t *testing.T) {
 	}
 	if cfg.WebUI.JWTSecret != "supersecret123" {
 		t.Errorf("expected WebUI.JWTSecret 'supersecret123', got '%s'", cfg.WebUI.JWTSecret)
+	}
+	if cfg.WebUI.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want %q", cfg.WebUI.LogLevel, "debug")
 	}
 }
 
@@ -509,5 +513,141 @@ func TestSaveVPNDirectorConfig_FormattedJSON(t *testing.T) {
 	// Should contain newlines (pretty-printed)
 	if content[0] != '{' || content[len(content)-1] != '\n' {
 		t.Error("expected properly formatted JSON")
+	}
+}
+
+// assertNoTempFiles fails if writeFileAtomic left a temp file behind.
+func assertNoTempFiles(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestSaveVPNDirectorConfig_AtomicAndPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vpn-director.json")
+	// A pre-existing world-readable file must come back as 0600.
+	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveVPNDirectorConfig(path, &VPNDirectorConfig{DataDir: "/data"}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("mode = %o, want 0600", perm)
+	}
+	loaded, err := LoadVPNDirectorConfig(path)
+	if err != nil || loaded.DataDir != "/data" {
+		t.Fatalf("round trip failed: %v, %+v", err, loaded)
+	}
+	assertNoTempFiles(t, dir)
+}
+
+func TestSaveServers_AtomicAndPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "servers.json")
+
+	if err := SaveServers(path, []Server{{Address: "a", Port: 443, UUID: "u"}}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("mode = %o, want 0600", perm)
+	}
+	assertNoTempFiles(t, dir)
+}
+
+func TestSaveVPNDirectorConfig_FailedRenameLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	// A directory in place of the target makes the final rename fail after
+	// the temp file has already been written and synced.
+	target := filepath.Join(dir, "vpn-director.json")
+	if err := os.MkdirAll(filepath.Join(target, "occupied"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveVPNDirectorConfig(target, &VPNDirectorConfig{}); err == nil {
+		t.Fatal("expected an error when the target is a directory")
+	}
+	assertNoTempFiles(t, dir)
+}
+
+func TestXrayInboundPorts(t *testing.T) {
+	tests := []struct {
+		name          string
+		advanced      map[string]interface{}
+		tproxy, socks int
+	}{
+		{
+			name: "configured",
+			advanced: map[string]interface{}{"xray": map[string]interface{}{
+				"tproxy_port": float64(23456), "socks_port": float64(23457),
+			}},
+			tproxy: 23456, socks: 23457,
+		},
+		{
+			name:     "absent section",
+			advanced: map[string]interface{}{},
+		},
+		{
+			name: "non-numeric and non-positive are ignored",
+			advanced: map[string]interface{}{"xray": map[string]interface{}{
+				"tproxy_port": "23456", "socks_port": float64(0),
+			}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tproxy, socks := XrayInboundPorts(&VPNDirectorConfig{Advanced: tc.advanced})
+			if tproxy != tc.tproxy || socks != tc.socks {
+				t.Errorf("XrayInboundPorts() = (%d, %d), want (%d, %d)", tproxy, socks, tc.tproxy, tc.socks)
+			}
+		})
+	}
+}
+
+func TestRepointPausedClients(t *testing.T) {
+	clients := []ClientInfo{
+		{IP: "192.168.50.10", Route: "xray"},
+		{IP: "192.168.50.20", Route: "wgc1"},
+	}
+
+	got := RepointPausedClients([]string{"192.168.50.20/32", "10.0.0.1"}, clients)
+
+	want := []string{"192.168.50.20", "10.0.0.1"}
+	if len(got) != len(want) {
+		t.Fatalf("RepointPausedClients() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("RepointPausedClients()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestRepointPausedClients_DropsTheDuplicateItCreates(t *testing.T) {
+	clients := []ClientInfo{{IP: "192.168.50.20", Route: "wgc1"}}
+
+	got := RepointPausedClients([]string{"192.168.50.20", "192.168.50.20/32"}, clients)
+
+	if len(got) != 1 || got[0] != "192.168.50.20" {
+		t.Errorf("RepointPausedClients() = %v, want one entry 192.168.50.20", got)
 	}
 }

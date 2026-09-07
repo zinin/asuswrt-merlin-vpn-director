@@ -2,11 +2,11 @@ package wizard
 
 import (
 	"fmt"
-	"net"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
 // ExcludeIPsStep handles the exclude IPs wizard step
@@ -68,21 +68,29 @@ func (s *ExcludeIPsStep) HandleMessage(msg *tgbotapi.Message, state *State) bool
 		return false
 	}
 
-	if !IsValidIPOrCIDR(input) {
+	// Store the normalized form, not what was typed, so the bot and the Web UI
+	// never write two spellings of the same address into xray.exclude_ips.
+	ip, err := vpnconfig.NormalizeClientAddr(input)
+	if err != nil {
 		s.deps.Sender.SendPlain(msg.Chat.ID,
 			"Invalid format. Enter IPv4 address (1.2.3.4) or CIDR (10.0.0.0/8):")
 		return true
 	}
 
-	// Check for duplicate
+	// Check for duplicate, comparing normalized forms because the list may
+	// have been seeded from a config that stores a legacy spelling.
 	for _, existing := range state.GetExcludeIPs() {
-		if existing == input {
+		norm, normErr := vpnconfig.NormalizeClientAddr(existing)
+		if normErr != nil {
+			norm = existing
+		}
+		if norm == ip {
 			s.deps.Sender.SendPlain(msg.Chat.ID, "This IP/CIDR is already in the list")
 			return true
 		}
 	}
 
-	state.AddExcludeIP(input)
+	state.AddExcludeIP(ip)
 	s.Render(msg.Chat.ID, state)
 	return true
 }
@@ -115,17 +123,4 @@ func (s *ExcludeIPsStep) buildUI(state *State) (string, tgbotapi.InlineKeyboardM
 	}
 
 	return sb.String(), kb.Build()
-}
-
-// IsValidIPOrCIDR validates input as IPv4 or IPv4 CIDR
-func IsValidIPOrCIDR(s string) bool {
-	if strings.Contains(s, "/") {
-		ip, _, err := net.ParseCIDR(s)
-		if err != nil {
-			return false
-		}
-		return ip.To4() != nil
-	}
-	ip := net.ParseIP(s)
-	return ip != nil && ip.To4() != nil
 }

@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
 // XrayHandler handles /xray command for quick server switching
@@ -79,8 +81,18 @@ func (h *XrayHandler) HandleCallback(cb *tgbotapi.CallbackQuery) {
 
 	server := servers[idx]
 
+	// The generated inbound has to listen where the TPROXY rules send traffic,
+	// so the ports come from advanced.xray rather than from the template.
+	var ports service.InboundPorts
+	vpnCfg, err := h.deps.Config.LoadVPNConfig()
+	if err != nil {
+		h.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2(fmt.Sprintf("Ошибка: %v", err)))
+		return
+	}
+	ports.TProxy, ports.Socks = vpnconfig.XrayInboundPorts(vpnCfg)
+
 	// Generate Xray config
-	if err := h.deps.Xray.GenerateConfig(server); err != nil {
+	if err := h.deps.Xray.GenerateConfig(server, ports); err != nil {
 		h.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2(fmt.Sprintf("Ошибка: %v", err)))
 		return
 	}

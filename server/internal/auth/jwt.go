@@ -12,6 +12,10 @@ type Claims struct {
 	Subject   string
 	IssuedAt  int64
 	ExpiresAt int64
+	// PasswordHash is the pwh claim: ShadowAuth.Fingerprint of the user's
+	// password hash at the time the token was issued. Empty for tokens minted
+	// before the claim existed.
+	PasswordHash string
 }
 
 // JWTService creates and validates HS256-signed JWT tokens.
@@ -29,11 +33,14 @@ func NewJWTService(secret string, duration time.Duration) *JWTService {
 	}
 }
 
-// Create returns a signed JWT with sub, iat, and exp claims.
-func (s *JWTService) Create(subject string) (string, error) {
+// Create returns a signed JWT with sub, pwh, iat and exp claims. fingerprint
+// binds the token to the password it was issued under; see
+// ShadowAuth.Fingerprint.
+func (s *JWTService) Create(subject, fingerprint string) (string, error) {
 	now := time.Now()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": subject,
+		"pwh": fingerprint,
 		"iat": jwt.NewNumericDate(now),
 		"exp": jwt.NewNumericDate(now.Add(s.duration)),
 	})
@@ -77,9 +84,14 @@ func (s *JWTService) Validate(tokenString string) (*Claims, error) {
 		return nil, fmt.Errorf("get expiration: %w", err)
 	}
 
+	// A token issued before the pwh claim existed simply has none; the empty
+	// string never matches a real fingerprint, so the caller rejects it.
+	pwh, _ := mapClaims["pwh"].(string)
+
 	return &Claims{
-		Subject:   sub,
-		IssuedAt:  iat.Unix(),
-		ExpiresAt: exp.Unix(),
+		Subject:      sub,
+		IssuedAt:     iat.Unix(),
+		ExpiresAt:    exp.Unix(),
+		PasswordHash: pwh,
 	}, nil
 }

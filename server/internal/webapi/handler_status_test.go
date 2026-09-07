@@ -73,7 +73,7 @@ func TestHandleApply_OK(t *testing.T) {
 
 func TestHandleApply_Error(t *testing.T) {
 	deps := newTestDeps(t)
-	deps.VPN = &mockVPN{err: errors.New("apply failed")}
+	deps.VPN = &mockVPN{err: errors.New("apply failed (exit 1): [INFO] step\n[ERROR] Invalid country code 'xx'\n")}
 
 	handler := handleApply(deps)
 
@@ -84,6 +84,15 @@ func TestHandleApply_Error(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// The Status tab's Apply is the designated retry for a failed auto-apply,
+	// so it must carry the shell's last line like the mutation endpoints do.
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "failed to apply configuration: [ERROR] Invalid country code 'xx'" {
+		t.Errorf("unexpected error text: %q", resp["error"])
 	}
 }
 
@@ -112,7 +121,7 @@ func TestHandleRestart_OK(t *testing.T) {
 
 func TestHandleRestart_Error(t *testing.T) {
 	deps := newTestDeps(t)
-	deps.VPN = &mockVPN{err: errors.New("restart failed")}
+	deps.VPN = &mockVPN{err: errors.New("restart failed (exit 1): [INFO] stopping\n[ERROR] tunnel wgc1 is down\n")}
 
 	handler := handleRestart(deps)
 
@@ -123,6 +132,13 @@ func TestHandleRestart_Error(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "failed to restart: [ERROR] tunnel wgc1 is down" {
+		t.Errorf("unexpected error text: %q", resp["error"])
 	}
 }
 
@@ -151,7 +167,7 @@ func TestHandleStop_OK(t *testing.T) {
 
 func TestHandleStop_Error(t *testing.T) {
 	deps := newTestDeps(t)
-	deps.VPN = &mockVPN{err: errors.New("stop failed")}
+	deps.VPN = &mockVPN{err: errors.New("stop failed (exit 1): [INFO] flushing chains\n[ERROR] iptables: Permission denied\n")}
 
 	handler := handleStop(deps)
 
@@ -162,6 +178,13 @@ func TestHandleStop_Error(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "failed to stop: [ERROR] iptables: Permission denied" {
+		t.Errorf("unexpected error text: %q", resp["error"])
 	}
 }
 
@@ -233,8 +256,10 @@ func TestHandleVersion(t *testing.T) {
 	}
 }
 
-func TestHandleUpdateIPsets_OK(t *testing.T) {
+func TestHandleUpdateIPsets_CallsUpdate(t *testing.T) {
 	deps := newTestDeps(t)
+	vpn := &mockVPN{}
+	deps.VPN = vpn
 
 	handler := handleUpdateIPsets(deps)
 
@@ -246,6 +271,12 @@ func TestHandleUpdateIPsets_OK(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
+	if vpn.updateCalls != 1 {
+		t.Errorf("expected 1 Update() call, got %d", vpn.updateCalls)
+	}
+	if vpn.applyCalls != 0 {
+		t.Errorf("expected no Apply() call, got %d", vpn.applyCalls)
+	}
 
 	var resp map[string]bool
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
@@ -253,5 +284,28 @@ func TestHandleUpdateIPsets_OK(t *testing.T) {
 	}
 	if !resp["ok"] {
 		t.Error("expected ok: true")
+	}
+}
+
+func TestHandleUpdateIPsets_Error(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.VPN = &mockVPN{err: errors.New("update failed (exit 1): [INFO] downloading\n[ERROR] no network\n")}
+
+	handler := handleUpdateIPsets(deps)
+
+	req := httptest.NewRequest("POST", "/api/ipsets/update", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "failed to update ipsets: [ERROR] no network" {
+		t.Errorf("unexpected error text: %q", resp["error"])
 	}
 }

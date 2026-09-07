@@ -65,6 +65,13 @@ In `vpn-director.json`:
 | `advanced.xray.clients_ipset` | `XRAY_CLIENTS` | Source clients ipset |
 | `advanced.xray.bypass_ipset` | `TPROXY_BYPASS` | Bypass ipset (servers + user excludes + OpenVPN endpoints) |
 
+`advanced.xray.tproxy_port` and `socks_port` are not just read by the firewall
+rules: both generators write them into `config.json` — `xrayconf_generate` takes
+them as its second and third arguments, `XrayService.GenerateConfig` as
+`InboundPorts` — so the dokodemo-door inbound listens where the TPROXY rules
+send traffic. Regenerating `config.json` from the template alone would silently
+put the inbound back on 12345.
+
 ## IPSets Created
 
 | Name | Type | Purpose |
@@ -115,6 +122,10 @@ Script exits without changes if:
 - Required exclusion ipsets not found
 - xt_TPROXY module unavailable
 
+> An unknown country code in `xray.exclude_sets` is **not** one of those
+> reasons: `_tproxy_exclude_sets` drops it with a WARN before the check, so a
+> typo cannot abort apply.
+
 ## Extended Exclusion Sets
 
 Prefers `{set}_ext` variant if exists:
@@ -132,7 +143,7 @@ resolve_exclude_set "<country_code>"  # Returns: <country_code>_ext if exists, e
 | `tproxy_apply()` | Apply TPROXY rules (idempotent), soft-fail if unavailable |
 | `tproxy_stop()` | Remove chain and routing |
 | `tproxy_restart_process()` | Restart Xray process via Entware init script |
-| `tproxy_get_required_ipsets()` | Return list of exclude ipsets |
+| `tproxy_get_required_ipsets()` | Return list of valid exclude ipsets (unknown codes dropped with a WARN) |
 
 **Internal functions** (for testing):
 
@@ -141,6 +152,7 @@ resolve_exclude_set "<country_code>"  # Returns: <country_code>_ext if exists, e
 | `_tproxy_init()` | Initialize module state |
 | `_tproxy_check_module()` | Verify/load xt_TPROXY kernel module |
 | `_tproxy_check_required_ipsets()` | Fail-safe: exit if exclusion ipsets missing |
+| `_tproxy_exclude_sets([-q])` | Validated, lower-cased `XRAY_EXCLUDE_SETS` on one line; `-q` suppresses the WARN per dropped code |
 | `_tproxy_resolve_exclude_set(key)` | Try `{set}_ext` first, fall back to `{set}` |
 | `_tproxy_setup_routing()` | Create route table + ip rule |
 | `_tproxy_teardown_routing()` | Remove route table + ip rule |

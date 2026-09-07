@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
@@ -149,6 +150,33 @@ func TestHandleSelectServer_NegativeIndex(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSelectServer_RestartXraySurfacesTheShellLine(t *testing.T) {
+	mc := &mockConfig{
+		servers: []vpnconfig.Server{
+			{Address: "s1.example.com", Port: 443, UUID: "uuid-1", Name: "S1", IPs: []string{"1.1.1.1"}},
+		},
+		cfg: &vpnconfig.VPNDirectorConfig{},
+	}
+	deps := newTestDeps(t)
+	deps.Config = mc
+	deps.VPN = &mockVPN{err: errors.New("xray: failed\nlast line of init")}
+
+	handler := handleSelectServer(deps)
+	req := httptest.NewRequest("POST", "/api/servers/active", strings.NewReader(`{"index":0}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "last line of init") {
+		t.Errorf("body %s, want lastErrorLine of the shell error", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "failed to restart xray") {
+		t.Errorf("body %s, want the restart prefix", rec.Body.String())
 	}
 }
 
@@ -305,7 +333,7 @@ func TestSyncXrayServers_SaveError(t *testing.T) {
 	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
 
 	if err == nil {
-		t.Fatal("expected error when SaveVPNConfig fails, got nil")
+		t.Fatal("expected error when saving config fails, got nil")
 	}
 }
 
@@ -342,15 +370,35 @@ func TestSyncXrayServers_Success(t *testing.T) {
 	}
 }
 
-func TestSyncXrayServers_NilConfigSkips(t *testing.T) {
-	mc := &mockConfig{cfg: nil} // LoadVPNConfig returns (nil, nil)
+func TestSyncXrayServers_MissingConfigIsSurfaced(t *testing.T) {
+	// An absent vpn-director.json used to be skipped silently. UpdateVPNConfig
+	// reports it as service.ErrConfigLoad, and the import handler turns that
+	// into "servers saved, but xray.servers sync failed": a stale xray.servers
+	// leaves the proxy's own endpoints out of the TPROXY bypass set, which the
+	// caller must learn about rather than read as success.
+	mc := &mockConfig{cfg: nil}
 
 	err := syncXrayServers(mc, []vpnconfig.Server{{IPs: []string{"1.1.1.1"}}})
 
-	if err != nil {
-		t.Fatalf("expected nil error when config is absent, got %v", err)
+	if !errors.Is(err, service.ErrConfigLoad) {
+		t.Fatalf("expected a service.ErrConfigLoad failure when config is absent, got %v", err)
 	}
 	if mc.savedCfg != nil {
 		t.Error("expected no save when config is absent")
+	}
+}
+
+func TestNoServersMessage(t *testing.T) {
+	if got := noServersMessage(nil); got != "no VLESS servers found in subscription" {
+		t.Errorf("no errors: got %q", got)
+	}
+	two := []error{errors.New("line 1: bad scheme"), errors.New("line 2: missing uuid")}
+	want := "no VLESS servers found in subscription: line 1: bad scheme; line 2: missing uuid"
+	if got := noServersMessage(two); got != want {
+		t.Errorf("two errors: got %q, want %q", got, want)
+	}
+	five := []error{errors.New("e1"), errors.New("e2"), errors.New("e3"), errors.New("e4"), errors.New("e5")}
+	if got := noServersMessage(five); got != "no VLESS servers found in subscription: e1; e2; e3" {
+		t.Errorf("five errors must be capped at three: got %q", got)
 	}
 }

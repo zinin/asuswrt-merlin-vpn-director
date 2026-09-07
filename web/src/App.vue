@@ -12,6 +12,7 @@ import SettingsTab from './components/SettingsTab.vue'
 const authenticated = ref(false)
 const activeTab = ref('status')
 const version = ref('')
+const updateBanner = ref('')
 
 const tabs = [
   { id: 'status', label: 'Status' },
@@ -22,11 +23,23 @@ const tabs = [
   { id: 'settings', label: 'Settings' },
 ]
 
+async function loadUpdateBanner() {
+  try {
+    const resp = await api.checkUpdate()
+    if (resp.data?.update_available && resp.data?.latest) {
+      updateBanner.value = `Version ${resp.data.latest} available, see Settings`
+    }
+  } catch {
+    // a failed check must not get in the way of the UI
+  }
+}
+
 async function checkAuth() {
   try {
     const resp = await api.checkAuth()
     version.value = resp.data.version || ''
     authenticated.value = true
+    loadUpdateBanner()
   } catch {
     authenticated.value = false
   }
@@ -56,7 +69,15 @@ onMounted(() => {
     <div class="topbar">
       <div class="topbar-title">VPN Director</div>
       <div class="topbar-info">
-        <span v-if="version">v{{ version }}</span>
+        <button
+          v-if="updateBanner"
+          type="button"
+          class="update-banner"
+          @click="activeTab = 'settings'"
+        >
+          {{ updateBanner }}
+        </button>
+        <span v-if="version">{{ version }}</span>
         <button class="btn btn-red" @click="logout">Logout</button>
       </div>
     </div>

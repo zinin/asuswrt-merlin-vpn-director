@@ -1,6 +1,7 @@
 package paths
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -9,10 +10,10 @@ func TestDefault(t *testing.T) {
 	p := Default()
 
 	tests := []struct {
-		name     string
-		got      string
-		wantPfx  string
-		wantSfx  string
+		name    string
+		got     string
+		wantPfx string
+		wantSfx string
 	}{
 		{"ScriptsDir", p.ScriptsDir, "/opt/vpn-director", ""},
 		{"BotConfigPath", p.BotConfigPath, "/opt/vpn-director/", "telegram-bot.json"},
@@ -21,6 +22,8 @@ func TestDefault(t *testing.T) {
 		{"XrayConfig", p.XrayConfig, "/opt/etc/xray/", ".json"},
 		{"BotLogPath", p.BotLogPath, "/tmp/", "telegram-bot.log"},
 		{"VPNLogPath", p.VPNLogPath, "/tmp/", "vpn-director.log"},
+		{"WebUILogPath", p.WebUILogPath, "/tmp/", "vpn-director-webui.log"},
+		{"XrayLogPath", p.XrayLogPath, "/tmp/", "xray-error.log"},
 	}
 
 	for _, tt := range tests {
@@ -62,16 +65,22 @@ func TestDefaultNotEmpty(t *testing.T) {
 	if p.VPNLogPath == "" {
 		t.Error("VPNLogPath should not be empty")
 	}
+	if p.WebUILogPath == "" {
+		t.Error("WebUILogPath should not be empty")
+	}
+	if p.XrayLogPath == "" {
+		t.Error("XrayLogPath should not be empty")
+	}
 }
 
 func TestDevPaths(t *testing.T) {
 	p := DevPaths()
 
 	tests := []struct {
-		name     string
-		got      string
-		wantPfx  string
-		wantSfx  string
+		name    string
+		got     string
+		wantPfx string
+		wantSfx string
 	}{
 		{"ScriptsDir", p.ScriptsDir, "testdata/dev", ""},
 		{"BotConfigPath", p.BotConfigPath, "testdata/dev/", "telegram-bot.json"},
@@ -80,6 +89,8 @@ func TestDevPaths(t *testing.T) {
 		{"XrayConfig", p.XrayConfig, "testdata/dev/", "xray.json"},
 		{"BotLogPath", p.BotLogPath, "testdata/dev/", "bot.log"},
 		{"VPNLogPath", p.VPNLogPath, "testdata/dev/", "vpn.log"},
+		{"WebUILogPath", p.WebUILogPath, "testdata/dev/", "webui.log"},
+		{"XrayLogPath", p.XrayLogPath, "testdata/dev/", "xray-error.log"},
 	}
 
 	for _, tt := range tests {
@@ -94,5 +105,18 @@ func TestDevPaths(t *testing.T) {
 				t.Errorf("%s = %q, want suffix %q", tt.name, tt.got, tt.wantSfx)
 			}
 		})
+	}
+}
+
+func TestRotatedLogs(t *testing.T) {
+	p := Default()
+	want := []string{p.BotLogPath, p.VPNLogPath, p.WebUILogPath, p.XrayLogPath}
+	if got := p.RotatedLogs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("RotatedLogs() = %v, want %v", got, want)
+	}
+	for _, path := range p.RotatedLogs() {
+		if path == "" {
+			t.Error("RotatedLogs contains an empty path")
+		}
 	}
 }

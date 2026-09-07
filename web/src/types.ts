@@ -20,3 +20,69 @@ export interface VersionResponse {
   version: string
   commit: string
 }
+
+export interface UpdateCheckResponse {
+  current?: string
+  latest?: string
+  update_available: boolean
+  changelog?: string
+  checked_at?: string
+  dev?: boolean
+}
+
+export interface UpdateStartResponse {
+  ok: boolean
+  from?: string
+  to?: string
+  update_available?: boolean
+}
+
+/** Every mutation answers {"ok": true}. */
+export interface OkResponse {
+  ok: boolean
+}
+
+export interface ImportResponse {
+  ok: boolean
+  count: number
+}
+
+export interface IPResponse {
+  ip: string
+}
+
+/** Go marshals a nil slice as null and none of these four fields carry
+ *  omitempty, so an empty router answers with null, not []. The `?? []` guards
+ *  at the call sites are load-bearing; the nullable type keeps them that way. */
+export interface ServersResponse {
+  servers: Server[] | null
+}
+
+export interface ClientsResponse {
+  clients: ClientInfo[] | null
+}
+
+export interface ExcludeSetsResponse {
+  sets: string[] | null
+}
+
+export interface ExcludeIPsResponse {
+  ips: string[] | null
+}
+
+/** GET /api/logs?source=... — one file. */
+export interface LogResponse {
+  output: string
+  source: string
+}
+
+/** GET /api/logs — source name to contents, for every configured source. */
+export type AllLogsResponse = Record<string, string>
+
+export interface UpdateStatusResponse {
+  in_progress: boolean
+}
+
+/** GET /api/config returns the whole vpn-director.json with jwt_secret blanked;
+ *  the Settings tab only ever re-serialises it. */
+export type ConfigResponse = Record<string, unknown>

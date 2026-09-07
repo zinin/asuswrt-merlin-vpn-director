@@ -90,6 +90,7 @@ After installation, configs are located at:
 /opt/vpn-director/vpn-director.sh -v status           # Verbose output
 /opt/vpn-director/vpn-director.sh -f apply            # Force reapply
 /opt/vpn-director/vpn-director.sh --dry-run apply     # Show what would be done
+/opt/vpn-director/vpn-director.sh --wait apply        # Wait up to 120 s for a running instance instead of skipping
 
 # Import servers
 /opt/vpn-director/import_server_list.sh
@@ -113,8 +114,8 @@ A self-signed TLS certificate is generated automatically during installation. Yo
 | **Servers** | Xray server management, switch active server |
 | **Clients** | LAN client routing assignment (pause/resume/delete) |
 | **Exclusions** | Country and IP/CIDR exclusion lists |
-| **Logs** | Real-time log viewer (bot, vpn, all) |
-| **Settings** | Configuration and system settings |
+| **Logs** | Log viewer (bot, vpn, xray, webui) |
+| **Settings** | Version, self-update, configuration |
 
 ### Configuration
 
@@ -126,12 +127,13 @@ Web UI settings are in `/opt/vpn-director/vpn-director.json` under the `webui` s
     "port": 8444,
     "cert_file": "/opt/vpn-director/certs/server.crt",
     "key_file": "/opt/vpn-director/certs/server.key",
-    "jwt_secret": ""
+    "jwt_secret": "",
+    "log_level": "info"
   }
 }
 ```
 
-`jwt_secret` is auto-generated on first start if left empty.
+`jwt_secret` is auto-generated on first start if left empty. `log_level` accepts `debug`, `info`, `warn`, `error` (default `info`). The Web UI logs to `/tmp/vpn-director-webui.log`; all logs are truncated at 200 KB.
 
 ### Service Management
 
@@ -140,6 +142,16 @@ Web UI settings are in `/opt/vpn-director/vpn-director.json` under the `webui` s
 /opt/etc/init.d/S98vpn-director-webui stop
 /opt/etc/init.d/S98vpn-director-webui restart
 ```
+
+### Updates
+
+The **Settings** tab shows the running version, the latest GitHub release and its changelog. «Update to vX» downloads the release and updates both the Web UI and the Telegram bot, restarting the ones that were running; the page polls for the new version and reloads itself when it comes up. The login session survives the update.
+
+An update started from the Web UI is announced in Telegram to every active chat. `/update` in the bot does the same thing from the other side — both paths update both daemons.
+
+Updates are authenticated by TLS to github.com and nothing else — there is no signature and no checksum on the binaries or the scripts, and they are installed and run as root. This is the same trust model as the `curl … | bash` install command above; anyone who can publish a release to this repository can run code on your router.
+
+> Upgrading **to** the first release with the unified updater is still done by the old bot-only updater, which does not know about the Web UI. Re-run the [Quick Install](#quick-install) command once after that upgrade; every later update handles both.
 
 ## Telegram Bot
 
@@ -167,7 +179,7 @@ Remote management via Telegram with username-based authorization.
 | `/configure` | Configuration wizard |
 | `/restart` | Restart VPN Director |
 | `/stop` | Stop VPN Director |
-| `/logs [bot\|vpn\|all] [N]` | Recent logs (default: all, 20 lines) |
+| `/logs [bot\|vpn\|xray\|webui\|all] [N]` | Recent logs (default: all, 20 lines) |
 | `/ip` | External IP |
 | `/update` | Update to latest release |
 | `/version` | Bot version |

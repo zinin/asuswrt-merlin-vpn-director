@@ -10,8 +10,10 @@ Go-based Telegram bot for remote VPN Director management.
 
 ```
 server/
-├── cmd/bot/main.go           # Entry point, signal handling, DI setup
+├── cmd/bot/main.go           # Bot entry point, signal handling, DI setup
+├── cmd/webui/main.go         # Web UI entry point — see webui.md
 ├── internal/
+│   ├── auth/                 # /etc/shadow verification and JWT — see webui.md
 │   ├── bot/                  # Core bot orchestration
 │   │   ├── bot.go            # Bot struct, Run(), message dispatch
 │   │   ├── router.go         # Command and callback routing
@@ -40,21 +42,28 @@ server/
 │   │   └── interfaces.go     # ShellExecutor, Network, etc.
 │   ├── shell/                # Shell command execution
 │   │   └── shell.go          # Real command executor
+│   ├── ssrf/                 # Dial guard: refuse private and reserved addresses
 │   ├── startup/              # Startup notifications
 │   │   └── notify.go         # Post-update notification
 │   ├── telegram/             # Telegram API helpers
 │   │   └── sender.go         # Message sending, escaping
 │   ├── updatechecker/        # Automatic update notifications
 │   │   └── checker.go        # Background goroutine, per-user tracking
+│   ├── updateflow/           # Update orchestration shared by the bot and the Web UI
+│   │   ├── flow.go           # Check with a 30-minute cache, typed errors
+│   │   └── start.go          # Pre-flight, lock, background download and script
 │   ├── updater/              # Self-update logic
-│   │   ├── updater.go        # GitHub API, lock file, downloads
+│   │   ├── updater.go        # Daemon table (asset names, binaries, init scripts), GitHub API, lock file
 │   │   ├── github.go         # GitHub release fetching
 │   │   ├── downloader.go     # Asset downloading
-│   │   └── script.go         # Update script generation
+│   │   ├── script.go         # Update script generation
+│   │   ├── version.go        # Semantic version comparison and validation
+│   │   └── update_script.sh.tmpl # The script rendered from the daemon table
 │   ├── vless/                # VLESS protocol
 │   │   └── parser.go         # VLESS URL parser, subscription decoder
 │   ├── vpnconfig/            # VPN Director config
 │   │   └── vpnconfig.go      # vpn-director.json, servers.json
+│   ├── webapi/               # Web UI HTTP API — see webui.md
 │   └── wizard/               # Configuration wizard
 │       ├── state.go          # Thread-safe state storage
 │       └── wizard.go         # Wizard manager
@@ -73,7 +82,7 @@ server/
 | `/configure` | `WizardHandler.HandleConfigure` | Configuration wizard |
 | `/restart` | `StatusHandler.HandleRestart` | Restart VPN Director |
 | `/stop` | `StatusHandler.HandleStop` | Stop VPN Director |
-| `/logs [bot\|vpn\|all] [N]` | `MiscHandler.HandleLogs` | Recent logs (default: all, 20 lines) |
+| `/logs [bot\|vpn\|xray\|webui\|all] [N]` | `MiscHandler.HandleLogs` | Recent logs (default: all, 20 lines) |
 | `/ip` | `MiscHandler.HandleIP` | External IP |
 | `/update` | `UpdateHandler.HandleUpdate` | Self-update to latest GitHub release |
 | `/version` | `MiscHandler.HandleVersion` | Bot version |
@@ -95,15 +104,25 @@ On apply:
 
 ## Self-Update (`/update`)
 
-Downloads latest release from GitHub and applies it:
+Both daemons — `telegram-bot` and `webui` — are updated together, from the bot or from the Web UI. The orchestration lives in `internal/updateflow`; the bot command and the Web UI handlers are adapters over it.
 
-1. Checks for newer version via GitHub API
-2. Creates lock file (`/tmp/vpn-director-update/lock`)
-3. Downloads release assets to `/tmp/vpn-director-update/files/`
-4. Generates and runs `update.sh` script
-5. Script copies files, restarts bot, sends notification
+1. `Flow.Check` asks the GitHub API for the latest release (result cached for 30 minutes; a forced check pierces the cache at most once a minute)
+2. `Flow.Start` creates the lock file (`/tmp/vpn-director-update/lock`)
+3. Downloads go to `/tmp/vpn-director-update/files/`: every script from `scriptFiles`, taken from the repository at the release tag, plus one binary per daemon (`telegram-bot-<arch>`, `webui-<arch>`) from the release assets. A release missing either binary is a download error.
+4. `update.sh` is generated from the daemon table and run detached
+5. The script remembers which daemons were running, stops them, copies everything, writes `notify.json` and starts back exactly those daemons
+6. On failure an `EXIT` trap restarts the daemons that were running and writes `notify.json` with `"status": "failed"`
 
-**Dev mode**: Command disabled when `DEV=true` environment variable is set.
+`notify.json`:
+
+```json
+{"chat_id": 0, "old_version": "v1.2.0", "new_version": "v1.3.0",
+ "status": "ok", "initiator": "webui"}
+```
+
+`chat_id` 0 marks an update started from the Web UI: on its next start the bot notifies every active chat. A successful update clears `/tmp/vpn-director-update`; a failed one keeps `update.log`, because the message points at it.
+
+**Dev mode**: `/update` is disabled with `--dev` and for a `dev` build.
 
 ## Config File
 
@@ -170,6 +189,13 @@ go test ./... -cover
 
 Binary: `bin/telegram-bot-{arch}`
 
+```bash
+# Web UI (from the repository root: needs the SPA embedded first)
+make build-webui
+make build-webui-arm64
+make build-webui-arm
+```
+
 ## Test Commands
 
 ```bash
@@ -202,7 +228,7 @@ go test -run TestHandleStatus ./internal/bot/
 
 **Graceful shutdown**: Context cancellation on SIGINT/SIGTERM
 
-**Dev mode**: `DEV=true` enables mock executor (safe commands only, blocks destructive ops)
+**Dev mode**: `--dev` enables mock executor (safe commands only, blocks destructive ops)
 
 ## Dependencies
 

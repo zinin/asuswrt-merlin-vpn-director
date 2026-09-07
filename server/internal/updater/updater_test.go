@@ -1,9 +1,11 @@
 package updater
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -110,8 +112,8 @@ func TestCreateLock_AlreadyExists(t *testing.T) {
 
 	// Try to create lock - should fail
 	err := s.CreateLock()
-	if err == nil {
-		t.Error("CreateLock() should fail when lock already exists")
+	if !errors.Is(err, ErrLockExists) {
+		t.Errorf("CreateLock() error = %v, want ErrLockExists", err)
 	}
 
 	// Original content should be preserved
@@ -138,6 +140,60 @@ func TestCreateLock_AtomicRaceCondition(t *testing.T) {
 	err := s2.CreateLock()
 	if err == nil {
 		t.Error("Second CreateLock() should fail (race condition protection)")
+	}
+}
+
+// The Web UI polls /api/update/status every three seconds while an update
+// runs, and Start checks it too. A poll landing inside CreateLock used to find
+// the lock created but not yet written, parse no PID, judge it garbage and
+// delete it: CreateLock then reported success on a lock that was already gone,
+// and the next Start began a second update that wipes the shared files/
+// directory under the first.
+func TestCreateLock_SurvivesAConcurrentProgressCheck(t *testing.T) {
+	dir := t.TempDir()
+	s := &Service{lockFile: filepath.Join(dir, "lock")}
+
+	for i := 0; i < 500; i++ {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for j := 0; j < 200; j++ {
+				s.IsUpdateInProgress()
+			}
+		}()
+
+		if err := s.CreateLock(); err != nil {
+			t.Fatalf("CreateLock() error = %v", err)
+		}
+		<-done
+
+		if _, err := os.Stat(s.getLockFile()); err != nil {
+			t.Fatalf("round %d: the lock did not survive a status check beside it: %v", i, err)
+		}
+		s.RemoveLock()
+	}
+}
+
+// The lock is published by linking a written temp file into place, so nothing
+// of that mechanism may be left behind.
+func TestCreateLock_LeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	s := &Service{lockFile: filepath.Join(dir, "lock")}
+
+	if err := s.CreateLock(); err != nil {
+		t.Fatalf("CreateLock() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read lock directory: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "lock" {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("lock directory holds %v, want just the lock", names)
 	}
 }
 
@@ -233,5 +289,32 @@ func TestGetters_Custom(t *testing.T) {
 	}
 	if got := s.getScriptFile(); got != "/custom/script.sh" {
 		t.Errorf("getScriptFile() = %q, want %q", got, "/custom/script.sh")
+	}
+}
+
+// TestDaemons_CarryNoShellMetacharacters pins the assumption update_script.sh
+// makes about this table: the entries are pasted into one space-separated
+// DAEMONS string and iterated with word splitting, so a space would split an
+// entry in two and a glob character would expand against the router's
+// filesystem. The script cannot defend itself with `set -f`, because steps 4
+// and 5 copy and chmod through globs of their own, so the invariant is pinned
+// here, where the table is written.
+func TestDaemons_CarryNoShellMetacharacters(t *testing.T) {
+	const forbidden = " \t\n|*?[]$`\"'\\"
+	for _, d := range Daemons {
+		fields := []struct{ name, value string }{
+			{"Name", d.Name},
+			{"Binary", d.Binary},
+			{"InitScript", d.InitScript},
+		}
+		for _, f := range fields {
+			if strings.ContainsAny(f.value, forbidden) {
+				t.Errorf("Daemon %q field %s = %q contains a character the update script's word splitting cannot survive",
+					d.Name, f.name, f.value)
+			}
+			if f.value == "" {
+				t.Errorf("Daemon %q field %s is empty", d.Name, f.name)
+			}
+		}
 	}
 }

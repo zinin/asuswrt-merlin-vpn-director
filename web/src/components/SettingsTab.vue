@@ -1,16 +1,32 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import api from '../api'
-import type { VersionResponse } from '../types'
+import type { VersionResponse, UpdateCheckResponse } from '../types'
+import {
+  claimPolling,
+  releasePolling,
+  updateBaseline,
+  updateMessage,
+  updateTarget,
+  updating,
+} from '../updateState'
 
 const versionInfo = ref<VersionResponse | null>(null)
+const updateInfo = ref<UpdateCheckResponse | null>(null)
 const config = ref('')
 const showConfig = ref(false)
+const showChangelog = ref(false)
 const loading = ref(false)
-const updateLoading = ref(false)
+const checking = ref(false)
 const error = ref('')
 
+// checking is part of the guard: during a forced check updateInfo still holds
+// the previous answer, so the button would offer to install a version the
+// server is at that moment re-checking.
+const canUpdate = computed(() => !!updateInfo.value?.update_available && !updating.value && !checking.value)
+
 async function loadVersion() {
+  error.value = ''
   try {
     const resp = await api.getVersion()
     versionInfo.value = resp.data
@@ -19,7 +35,27 @@ async function loadVersion() {
   }
 }
 
+async function loadUpdate(force = false) {
+  error.value = ''
+  // Only a check the user asked for clears the message: updateMessage is module
+  // state now, and the other two callers are a remount - which must show the
+  // message it left behind - and doUpdate, which overwrites it a line later.
+  if (force) {
+    updateMessage.value = ''
+  }
+  checking.value = true
+  try {
+    const resp = await api.checkUpdate(force)
+    updateInfo.value = resp.data
+  } catch (e: any) {
+    error.value = e.response?.data?.error || e.message
+  } finally {
+    checking.value = false
+  }
+}
+
 async function loadConfig() {
+  error.value = ''
   loading.value = true
   try {
     const resp = await api.getConfig()
@@ -38,20 +74,164 @@ async function toggleConfig() {
   }
 }
 
-async function doUpdate() {
-  if (!confirm('Update VPN Director to the latest version?')) return
-  updateLoading.value = true
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const pollIntervalMs = 3000
+const softWaitMs = 5 * 60 * 1000
+const hardWaitMs = 20 * 60 * 1000
+
+async function updateStillRunning(): Promise<boolean | 'unknown'> {
   try {
-    await api.update()
-    alert('Update completed. Please reload the page.')
-  } catch (e: any) {
-    alert('Error: ' + (e.response?.data?.error || e.message))
-  } finally {
-    updateLoading.value = false
+    const st = await api.updateStatus()
+    return !!st.data?.in_progress
+  } catch {
+    return 'unknown'
   }
 }
 
-onMounted(loadVersion)
+type PollOutcome = 'updated' | 'unchanged' | 'timeout'
+
+// waitForVersion polls /api/version until the new build answers. Five minutes
+// is the spec's restart window; past that we keep going while
+// /api/update/status says the script is still running (a slow download), up
+// to twenty minutes so a hung router cannot pin the tab forever.
+async function waitForVersion(target: string, baseline: string): Promise<PollOutcome> {
+  const started = Date.now()
+  while (Date.now() - started < hardWaitMs) {
+    await sleep(pollIntervalMs)
+    try {
+      const resp = await api.pollVersion()
+      const version = resp.data?.version
+      if (target && version === target) {
+        return 'updated'
+      }
+      if (!target && version) {
+        const running = await updateStillRunning()
+        if (running === false) {
+          // Without a target the version changing is the only evidence of a
+          // new build: a failed update looks exactly the same from here, since
+          // the script's EXIT trap restarts the old binaries and drops the
+          // lock. Reloading on that would present the old build as updated.
+          return baseline && version === baseline ? 'unchanged' : 'updated'
+        }
+      }
+    } catch {
+      // server is down mid-restart, keep waiting
+    }
+    if (Date.now() - started < softWaitMs) {
+      continue
+    }
+    const running = await updateStillRunning()
+    if (running === true || running === 'unknown') {
+      continue
+    }
+    return 'timeout'
+  }
+  return 'timeout'
+}
+
+// runPolling owns the waiting screen. It survives this component: if the user
+// leaves the tab the loop keeps going against the module state, and a remount
+// re-renders the same screen instead of starting a second loop.
+async function runPolling() {
+  if (!claimPolling()) return
+  try {
+    updateMessage.value = 'Updating, the server is restarting...'
+    const outcome = await waitForVersion(updateTarget.value, updateBaseline.value)
+    if (outcome === 'updated') {
+      // Reload so the browser picks up the new bundle.
+      window.location.reload()
+      return
+    }
+    updateMessage.value =
+      outcome === 'unchanged'
+        ? 'The update finished without installing a new version. Check the logs.'
+        : 'The new version did not come up within 20 minutes. Check the logs.'
+  } finally {
+    updating.value = false
+    // Both producers write the target before calling this, so clearing it here
+    // - not in doUpdate - keeps a timed-out attempt from leaving a stale
+    // version behind for the next attempt or for the onMounted rejoin to poll.
+    updateTarget.value = ''
+    updateBaseline.value = ''
+    releasePolling()
+  }
+}
+
+async function doUpdate() {
+  const target = updateInfo.value?.latest
+  if (!target) return
+  if (!confirm(`Update VPN Director to ${target}?`)) return
+
+  updating.value = true
+  error.value = ''
+  updateMessage.value = 'Starting update...'
+  try {
+    const resp = await api.update()
+    if (resp.data.update_available === false) {
+      await loadUpdate()
+      updateMessage.value = 'Already running the latest version.'
+      updating.value = false
+      return
+    }
+    updateTarget.value = resp.data.to || target
+  } catch (e: any) {
+    updateMessage.value = 'Error: ' + (e.response?.data?.error || e.message)
+    updating.value = false
+    return
+  }
+  await runPolling()
+}
+
+// resumeFromServer covers the case the module state cannot: a page reload, or a
+// second browser, meeting an update it never started. /api/update/status is the
+// only way to tell "still updating" from "done".
+async function resumeFromServer() {
+  try {
+    const resp = await api.updateStatus()
+    if (!resp.data.in_progress) return
+  } catch {
+    // The server is unreachable; the normal error paths already say so.
+    return
+  }
+  // The target does not come from the cached check: it can name the version
+  // this router already runs while the bot updates to a newer one, and the
+  // first /api/version answer would then end the poll and reload onto the old
+  // SPA while the script is still going. With no target the loop waits for the
+  // version to change instead.
+  if (!updateTarget.value && !updateBaseline.value) {
+    // No target to wait for, so record what is running now: that is the only
+    // thing a later answer can be compared against.
+    try {
+      const cur = await api.pollVersion()
+      updateBaseline.value = cur.data?.version || ''
+    } catch {
+      // Mid-restart. Without a baseline the loop keeps its old behaviour.
+    }
+  }
+  updating.value = true
+  void runPolling()
+}
+
+onMounted(async () => {
+  if (updating.value) {
+    // An update started before the tab was left. Rejoin its screen instead of
+    // asking a restarting server for a version and a release list.
+    //
+    // With no target yet there is nothing to poll for: doUpdate is still
+    // awaiting /api/update, the answer that carries the version to wait for.
+    // That call outlives this component - an in-flight async call keeps its
+    // closure alive - so it starts the real loop itself once the answer lands.
+    // Claiming the loop here would poll for '' and lock doUpdate out of it.
+    if (updateTarget.value) {
+      void runPolling()
+    }
+    return
+  }
+  await loadVersion()
+  await loadUpdate()
+  await resumeFromServer()
+})
 </script>
 
 <template>
@@ -67,14 +247,37 @@ onMounted(loadVersion)
         <span class="kv-label">Commit</span>
         <span style="font-family: monospace; font-size: 0.85rem;">{{ versionInfo.commit }}</span>
       </div>
+      <div class="kv" v-if="updateInfo && !updateInfo.dev">
+        <span class="kv-label">Latest</span>
+        <span>{{ updateInfo.latest || '—' }}</span>
+      </div>
+      <div class="kv" v-if="updateInfo?.dev">
+        <span class="kv-label">Latest</span>
+        <span>dev build, updates disabled</span>
+      </div>
     </div>
     <p v-else style="color: #999; font-size: 0.875rem;">Loading...</p>
-  </div>
 
-  <div class="actions">
-    <button class="btn btn-primary" :disabled="updateLoading" @click="doUpdate">
-      {{ updateLoading ? 'Updating...' : '⬆ Update' }}
-    </button>
+    <div class="actions">
+      <button class="btn" :disabled="checking || updating" @click="loadUpdate(true)">
+        {{ checking ? '...' : '⟳ Check for updates' }}
+      </button>
+      <button class="btn btn-primary" :disabled="!canUpdate" @click="doUpdate">
+        {{ updating ? 'Updating...' : (updateInfo?.latest ? `⬆ Update to ${updateInfo.latest}` : '⬆ Update') }}
+      </button>
+      <button
+        v-if="updateInfo?.changelog"
+        class="btn btn-blue"
+        @click="showChangelog = !showChangelog"
+      >
+        {{ showChangelog ? 'Hide changelog' : 'Changelog' }}
+      </button>
+    </div>
+    <p v-if="updateMessage" style="font-size: 0.875rem;">{{ updateMessage }}</p>
+    <pre
+      v-if="showChangelog && updateInfo?.changelog"
+      style="font-size: 12px; white-space: pre-wrap; line-height: 1.5; max-height: 300px; overflow-y: auto; background: #1a1a2e; padding: 0.75rem; border-radius: 4px; border: 1px solid #333;"
+    >{{ updateInfo.changelog }}</pre>
   </div>
 
   <div class="card">

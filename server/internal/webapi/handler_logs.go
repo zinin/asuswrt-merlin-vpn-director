@@ -2,21 +2,18 @@ package webapi
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 )
 
-// logPaths maps log source names to their file paths on disk.
-var logPaths = map[string]string{
-	"vpn":  "/tmp/vpn-director.log",
-	"xray": "/tmp/xray-access.log",
-	"bot":  "/tmp/telegram-bot.log",
-}
-
-// handleLogs returns a handler that reads log files.
-// Query params: source (vpn|xray|bot), lines (default 50, max 500).
+// handleLogs returns a handler that reads log files listed in deps.LogPaths.
+// Query params: source (one of the map keys), lines (default 50, max 500).
 // If source is specified, returns that single log. Otherwise returns all.
 func handleLogs(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		extendWriteDeadline(w, logsDeadline(deps))
+
 		source := r.URL.Query().Get("source")
 		linesStr := r.URL.Query().Get("lines")
 
@@ -34,9 +31,10 @@ func handleLogs(deps *Deps) http.HandlerFunc {
 		}
 
 		if source != "" {
-			path, ok := logPaths[source]
+			path, ok := deps.LogPaths[source]
 			if !ok {
-				jsonError(w, http.StatusBadRequest, "unknown source: valid values are vpn, xray, bot")
+				jsonError(w, http.StatusBadRequest,
+					"unknown source: valid values are "+strings.Join(logSourceNames(deps.LogPaths), ", "))
 				return
 			}
 
@@ -51,8 +49,8 @@ func handleLogs(deps *Deps) http.HandlerFunc {
 		}
 
 		// No source specified: return all logs.
-		result := make(map[string]string, len(logPaths))
-		for name, path := range logPaths {
+		result := make(map[string]string, len(deps.LogPaths))
+		for name, path := range deps.LogPaths {
 			output, err := deps.Logs.Read(path, lines)
 			if err != nil {
 				result[name] = "error: " + err.Error()
@@ -63,6 +61,16 @@ func handleLogs(deps *Deps) http.HandlerFunc {
 
 		jsonOK(w, result)
 	}
+}
+
+// logSourceNames returns the log source names in sorted order for messages.
+func logSourceNames(logPaths map[string]string) []string {
+	names := make([]string, 0, len(logPaths))
+	for name := range logPaths {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // handleConfig returns a handler that returns the VPN Director configuration
@@ -80,13 +88,5 @@ func handleConfig(deps *Deps) http.HandlerFunc {
 		redacted.WebUI.JWTSecret = ""
 
 		jsonOK(w, &redacted)
-	}
-}
-
-// handleUpdate returns a handler for the self-update endpoint.
-// Currently returns a not-supported message.
-func handleUpdate(deps *Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		jsonOK(w, map[string]interface{}{"ok": false, "error": "self-update via web UI not yet supported"})
 	}
 }

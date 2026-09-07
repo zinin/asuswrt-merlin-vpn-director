@@ -97,3 +97,27 @@ setup() {
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.realitySettings.publicKey')" = "P" ]
     [ "$(printf '%s' "$output" | jq -r '.streamSettings.realitySettings | has("shortId")')" = "false" ]
 }
+
+@test "generate: real template keeps the log section" {
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"reality","sni":"s","fingerprint":"firefox","public_key":"PBK","short_id":"sid"}'
+    run xrayconf_generate "$PROJECT_ROOT/opt/etc/xray/config.json.template" <<< "$server"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.log.error')" = "/tmp/xray-error.log" ]
+    [ "$(printf '%s' "$output" | jq -r '.outbounds | length')" = "1" ]
+}
+
+@test "generate: given ports, the inbounds follow advanced.xray" {
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"tls","sni":"s","fingerprint":"chrome"}'
+    run xrayconf_generate "$PROJECT_ROOT/opt/etc/xray/config.json.template" 23456 23457 <<< "$server"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.inbounds[] | select(.tag == "tproxy-in") | .port')" = "23456" ]
+    [ "$(printf '%s' "$output" | jq -r '.inbounds[] | select(.tag == "socks-in") | .port')" = "23457" ]
+}
+
+@test "generate: without ports the template values stay" {
+    server='{"address":"1.2.3.4","port":443,"uuid":"u1","security":"tls","sni":"s","fingerprint":"chrome"}'
+    run xrayconf_generate "$PROJECT_ROOT/opt/etc/xray/config.json.template" <<< "$server"
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | jq -r '.inbounds[] | select(.tag == "tproxy-in") | .port')" = "12345" ]
+    [ "$(printf '%s' "$output" | jq -r '.inbounds[] | select(.tag == "socks-in") | .port')" = "12346" ]
+}

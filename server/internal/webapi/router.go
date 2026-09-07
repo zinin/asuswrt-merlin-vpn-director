@@ -1,14 +1,25 @@
 package webapi
 
 import (
+	"context"
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
 )
+
+// UpdateFlow is the subset of updateflow.Flow the API handlers use. Declared
+// here so the handler tests can drive every outcome without a fake GitHub.
+type UpdateFlow interface {
+	Check(ctx context.Context, force bool) (updateflow.CheckResult, error)
+	Start(ctx context.Context, initiator string, chatID int64, progress func(string)) (updateflow.StartResult, error)
+	InProgress() bool
+}
 
 // Deps holds all dependencies required by the HTTP API handlers.
 type Deps struct {
@@ -17,6 +28,8 @@ type Deps struct {
 	Xray         service.XrayGenerator
 	Network      service.NetworkInfo
 	Logs         service.LogReader
+	LogPaths     map[string]string // log source name -> file path, built by main from paths.Paths
+	Update       UpdateFlow        // self-update orchestration, shared with the bot
 	Shadow       *auth.ShadowAuth
 	JWT          *auth.JWTService
 	Version      string
@@ -27,10 +40,12 @@ type Deps struct {
 
 // NewRouter creates the top-level HTTP handler with all routes registered.
 // staticFS provides the embedded Vue SPA assets; pass nil to disable SPA serving.
-func NewRouter(deps *Deps, staticFS fs.FS) http.Handler {
+// The variadic ctx stops the login limiter's cleanup goroutine; tests that do
+// not care leave it out, as newRateLimiter does.
+func NewRouter(deps *Deps, staticFS fs.FS, ctx ...context.Context) http.Handler {
 	mux := http.NewServeMux()
 
-	deps.loginLimiter = newRateLimiter(5, 1*time.Minute, 30*time.Second)
+	deps.loginLimiter = newRateLimiter(5, 1*time.Minute, 30*time.Second, ctx...)
 
 	// Public routes (no auth required).
 	mux.HandleFunc("POST /api/login", handleLogin(deps))
@@ -39,7 +54,7 @@ func NewRouter(deps *Deps, staticFS fs.FS) http.Handler {
 	protectedMux := http.NewServeMux()
 	registerProtectedRoutes(protectedMux, deps)
 
-	authMW := authMiddleware(deps.JWT)
+	authMW := authMiddleware(deps.JWT, deps.Shadow)
 	mux.Handle("/api/", authMW(protectedMux))
 
 	// SPA fallback: serve static files and fall back to index.html.
@@ -94,34 +109,44 @@ func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
 	mux.HandleFunc("GET /api/config", handleConfig(deps))
 
 	// Self-update
-	mux.HandleFunc("POST /api/update", handleUpdate(deps))
+	mux.HandleFunc("GET /api/update/check", handleUpdateCheck(deps))
+	mux.HandleFunc("POST /api/update", handleUpdateStart(deps))
+	mux.HandleFunc("GET /api/update/status", handleUpdateStatus(deps))
+
+	// Fallback for unknown API paths: JSON 404 instead of the mux's text/plain.
+	// Auth still runs first because this mux sits behind authMiddleware.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		jsonError(w, http.StatusNotFound, "not found")
+	})
 }
 
 // spaHandler serves static files from the embedded filesystem. If a file is
 // not found and the request path does not start with "/api/", it falls back to
-// index.html so the Vue SPA router can handle the path.
+// index.html so the Vue SPA router can handle the path. Hashed bundles under
+// assets/ are immutable; index.html must be revalidated so a new binary's
+// bundle names are picked up after an update.
 func spaHandler(staticFS fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(staticFS))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Try to open the requested file.
-		path := r.URL.Path
-		if path == "/" {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
 			path = "index.html"
-		} else {
-			// Strip leading slash for fs.Open.
-			path = path[1:]
 		}
 
-		f, err := staticFS.Open(path)
-		if err == nil {
+		if f, err := staticFS.Open(path); err == nil {
 			f.Close()
-			fileServer.ServeHTTP(w, r)
-			return
+		} else {
+			// File not found — serve index.html for SPA routing.
+			path = "index.html"
+			r.URL.Path = "/"
 		}
 
-		// File not found — serve index.html for SPA routing.
-		r.URL.Path = "/"
+		if strings.HasPrefix(path, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 }

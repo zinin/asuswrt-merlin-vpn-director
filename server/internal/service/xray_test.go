@@ -113,6 +113,77 @@ func TestGenerateConfig_Legacy(t *testing.T) {
 	}
 }
 
+// The TPROXY rules send traffic to advanced.xray.tproxy_port, so the
+// dokodemo-door inbound has to listen there: a template default left in place
+// leaves that port without a listener and proxying stops.
+func TestGenerateConfig_InboundPortsFollowTheConfig(t *testing.T) {
+	templatePath, outputPath := writeTemplate(t)
+	server := vpnconfig.Server{Address: "1.2.3.4", Port: 443, UUID: "u", Security: "tls", SNI: "s", Fingerprint: "chrome"}
+
+	if err := NewXrayService(templatePath, outputPath).GenerateConfig(server, InboundPorts{TProxy: 23456, Socks: 23457}); err != nil {
+		t.Fatalf("GenerateConfig() error = %v", err)
+	}
+
+	got := readInboundPorts(t, outputPath)
+	if got["tproxy-in"] != 23456 || got["socks-in"] != 23457 {
+		t.Errorf("inbound ports = %v, want tproxy-in 23456 and socks-in 23457", got)
+	}
+}
+
+func TestGenerateConfig_WithoutPortsKeepsTheTemplate(t *testing.T) {
+	templatePath, outputPath := writeTemplate(t)
+	server := vpnconfig.Server{Address: "1.2.3.4", Port: 443, UUID: "u", Security: "tls", SNI: "s", Fingerprint: "chrome"}
+
+	if err := NewXrayService(templatePath, outputPath).GenerateConfig(server); err != nil {
+		t.Fatalf("GenerateConfig() error = %v", err)
+	}
+
+	got := readInboundPorts(t, outputPath)
+	if got["tproxy-in"] != 12345 || got["socks-in"] != 12346 {
+		t.Errorf("inbound ports = %v, want the template's 12345 and 12346", got)
+	}
+}
+
+// writeTemplate drops the repository's Xray template next to a fresh output
+// path, so the ports under test are the ones the router really ships with.
+func writeTemplate(t *testing.T) (templatePath, outputPath string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	templatePath = filepath.Join(dir, "config.json.template")
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "router", "opt", "etc", "xray", "config.json.template"))
+	if err != nil {
+		t.Fatalf("read repository template: %v", err)
+	}
+	if err := os.WriteFile(templatePath, src, 0644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+	return templatePath, filepath.Join(dir, "config.json")
+}
+
+func readInboundPorts(t *testing.T, path string) map[string]int {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	var cfg struct {
+		Inbounds []struct {
+			Tag  string `json:"tag"`
+			Port int    `json:"port"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse generated config: %v", err)
+	}
+	ports := make(map[string]int, len(cfg.Inbounds))
+	for _, in := range cfg.Inbounds {
+		ports[in.Tag] = in.Port
+	}
+	return ports
+}
+
 func TestGenerateConfig_MissingTemplate(t *testing.T) {
 	tmpDir := t.TempDir()
 	svc := NewXrayService(filepath.Join(tmpDir, "nonexistent"), filepath.Join(tmpDir, "out"))
@@ -177,5 +248,65 @@ func TestGenerateConfig_RealityMissingRequiredFields(t *testing.T) {
 	s.ShortID = ""
 	if err := mkSvc().GenerateConfig(s); err != nil {
 		t.Errorf("reality without shortId should succeed, got %v", err)
+	}
+}
+
+func TestGenerateConfig_KeepsTemplateLogSection(t *testing.T) {
+	tmpDir := t.TempDir()
+	templatePath := filepath.Join(tmpDir, "config.json.template")
+	outputPath := filepath.Join(tmpDir, "config.json")
+	tmpl := `{"log":{"loglevel":"warning","access":"none","error":"/tmp/xray-error.log"},"inbounds":[],"outbounds":[],"routing":{}}`
+	if err := os.WriteFile(templatePath, []byte(tmpl), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := vpnconfig.Server{Address: "1.2.3.4", Port: 443, UUID: "u1", Security: "tls"}
+	if err := NewXrayService(templatePath, outputPath).GenerateConfig(server); err != nil {
+		t.Fatalf("GenerateConfig error: %v", err)
+	}
+
+	content, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(content, &cfg); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	logSection, ok := cfg["log"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected log section to be preserved, got %v", cfg["log"])
+	}
+	if logSection["error"] != "/tmp/xray-error.log" || logSection["access"] != "none" {
+		t.Errorf("log section altered: %v", logSection)
+	}
+}
+
+// TestDevTemplateLogSection pins the log section of the real dev-mode template
+// shipped at server/testdata/dev/xray.template.json. Without this, deleting the
+// section would leave every suite green while dev-mode Xray silently stopped
+// writing the error log the Logs tab reads.
+func TestDevTemplateLogSection(t *testing.T) {
+	// Go runs a test with the package directory as its working directory.
+	path := filepath.Join("..", "..", "testdata", "dev", "xray.template.json")
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var tmpl map[string]interface{}
+	if err := json.Unmarshal(content, &tmpl); err != nil {
+		t.Fatalf("%s is not valid JSON: %v", path, err)
+	}
+
+	logSection, ok := tmpl["log"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected a log section in %s, got %v", path, tmpl["log"])
+	}
+	if got := logSection["error"]; got != "testdata/dev/xray-error.log" {
+		t.Errorf("log.error = %v, want %q", got, "testdata/dev/xray-error.log")
+	}
+	if got := logSection["access"]; got != "none" {
+		t.Errorf("log.access = %v, want %q", got, "none")
 	}
 }

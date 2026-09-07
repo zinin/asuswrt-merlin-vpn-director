@@ -1,0 +1,86 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          # setup-go caches by default and looks for go.sum at the repository
+          # root, where there is none: without this the cache never hits.
+          cache-dependency-path: server/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # cmd/webui/embed.go embeds web/dist, which is generated and gitignored,
+      # so a fresh checkout cannot compile the package without it. web-embed
+      # depends on web, which runs npm ci and the Vite build.
+      - name: Prepare embed
+        run: make web-embed
+
+      - name: Vet
+        run: go vet ./...
+        working-directory: server
+
+      - name: Test
+        run: go test ./... -count=1
+        working-directory: server
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      # npm run build is `vue-tsc -b && vite build`: this is the type check too.
+      - name: Build
+        run: npm run build
+        working-directory: web
+
+  bats:
+    name: Bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # test_helper.bash loads the helper libraries from absolute paths under
+      # /usr/lib/bats, so they are installed exactly there. Same step as
+      # ipset-sources.yml.
+      - name: Install Bats and helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+          sudo mkdir -p /usr/lib/bats
+          sudo git clone https://github.com/bats-core/bats-support.git /usr/lib/bats/bats-support
+          sudo git clone https://github.com/bats-core/bats-assert.git /usr/lib/bats/bats-assert
+
+      - name: Unit tests
+        run: bats router/test/unit
+
+      # vpn_director.bats covers the --wait option every Web UI and bot
+      # mutation depends on, and nothing else in CI runs it.
+      - name: Integration tests
+        run: bats router/test/integration

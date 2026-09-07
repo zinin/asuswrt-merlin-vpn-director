@@ -146,9 +146,40 @@ func validateStreamParams(s vpnconfig.Server) error {
 	return nil
 }
 
+// InboundPorts overrides the ports the template gives its inbounds. A zero
+// field keeps the template's value.
+type InboundPorts struct {
+	TProxy int
+	Socks  int
+}
+
+// applyInboundPorts rewrites the ports of the tagged inbounds in place. The
+// dokodemo-door port must match advanced.xray.tproxy_port: that is where the
+// TPROXY rules send traffic, and a template default left there would leave a
+// configured port without a listener.
+func applyInboundPorts(cfg map[string]interface{}, ports InboundPorts) {
+	byTag := map[string]int{"tproxy-in": ports.TProxy, "socks-in": ports.Socks}
+	inbounds, ok := cfg["inbounds"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, entry := range inbounds {
+		inbound, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		tag, _ := inbound["tag"].(string)
+		if port := byTag[tag]; port > 0 {
+			inbound["port"] = port
+		}
+	}
+}
+
 // GenerateConfig parses the (valid-JSON) template and replaces outbounds
 // with a single proxy-out outbound built from the server's stream params.
-func (s *XrayService) GenerateConfig(server vpnconfig.Server) error {
+// The optional ports keep the inbounds in step with advanced.xray in
+// vpn-director.json; without them the template's ports stand.
+func (s *XrayService) GenerateConfig(server vpnconfig.Server, ports ...InboundPorts) error {
 	if err := validateStreamParams(server); err != nil {
 		return err
 	}
@@ -161,6 +192,9 @@ func (s *XrayService) GenerateConfig(server vpnconfig.Server) error {
 		return fmt.Errorf("parse template: %w", err)
 	}
 	cfg["outbounds"] = []xrayOutbound{buildOutbound(server)}
+	if len(ports) > 0 {
+		applyInboundPorts(cfg, ports[0])
+	}
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)

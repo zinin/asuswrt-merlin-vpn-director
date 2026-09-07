@@ -30,8 +30,10 @@ func handleLogin(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Verify credentials.
-		ok, err := deps.Shadow.Verify(req.Username, req.Password)
+		// One shadow read: the pwh claim must fingerprint the hash that just
+		// matched. A second read can see a password change and mint a token
+		// for credentials that are no longer valid.
+		ok, fingerprint, err := deps.Shadow.VerifyWithFingerprint(req.Username, req.Password)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "authentication error")
 			return
@@ -43,7 +45,7 @@ func handleLogin(deps *Deps) http.HandlerFunc {
 		}
 
 		// Create JWT.
-		token, err := deps.JWT.Create(req.Username)
+		token, err := deps.JWT.Create(req.Username, fingerprint)
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "create token")
 			return

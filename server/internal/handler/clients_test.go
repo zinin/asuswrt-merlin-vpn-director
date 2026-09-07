@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
 )
 
@@ -56,15 +59,23 @@ type mockConfigClients struct {
 func (m *mockConfigClients) LoadVPNConfig() (*vpnconfig.VPNDirectorConfig, error) {
 	return m.vpnConfig, m.loadErr
 }
-func (m *mockConfigClients) SaveVPNConfig(cfg *vpnconfig.VPNDirectorConfig) error {
-	m.savedConfig = cfg
+
+func (m *mockConfigClients) UpdateVPNConfig(fn func(*vpnconfig.VPNDirectorConfig) error) error {
+	if m.loadErr != nil {
+		return fmt.Errorf("%w: %w", service.ErrConfigLoad, m.loadErr)
+	}
+	if err := fn(m.vpnConfig); err != nil {
+		return err
+	}
+	m.savedConfig = m.vpnConfig
 	return m.saveErr
 }
-func (m *mockConfigClients) LoadServers() ([]vpnconfig.Server, error)   { return nil, nil }
-func (m *mockConfigClients) SaveServers(s []vpnconfig.Server) error     { return nil }
-func (m *mockConfigClients) DataDir() (string, error)                   { return "/data", nil }
-func (m *mockConfigClients) DataDirOrDefault() string                   { return "/data" }
-func (m *mockConfigClients) ScriptsDir() string                         { return "/scripts" }
+
+func (m *mockConfigClients) LoadServers() ([]vpnconfig.Server, error) { return nil, nil }
+func (m *mockConfigClients) SaveServers(s []vpnconfig.Server) error   { return nil }
+func (m *mockConfigClients) DataDir() (string, error)                 { return "/data", nil }
+func (m *mockConfigClients) DataDirOrDefault() string                 { return "/data" }
+func (m *mockConfigClients) ScriptsDir() string                       { return "/scripts" }
 
 type mockVPNClients struct {
 	applyErr error
@@ -75,6 +86,7 @@ func (m *mockVPNClients) Apply() error            { return m.applyErr }
 func (m *mockVPNClients) Restart() error          { return nil }
 func (m *mockVPNClients) RestartXray() error      { return nil }
 func (m *mockVPNClients) Stop() error             { return nil }
+func (m *mockVPNClients) Update() error           { return nil }
 
 func TestClientsHandler_HandleClients_WithClients(t *testing.T) {
 	sender := &mockSenderClients{}
@@ -409,7 +421,9 @@ func TestClientsHandler_HandleAddRoute_Tunnel(t *testing.T) {
 	h := NewClientsHandler(deps)
 
 	h.mu.Lock()
-	h.addState[100] = "192.168.50.30"
+	// Seeded with the /32 spelling so the assertion below actually exercises
+	// the normalization handleAddRoute performs.
+	h.addState[100] = "192.168.50.30/32"
 	h.mu.Unlock()
 
 	cb := &tgbotapi.CallbackQuery{
@@ -441,5 +455,24 @@ func TestClientsHandler_HandleTextInput_NotInAddState(t *testing.T) {
 
 	if sender.lastChatID != 0 {
 		t.Error("expected no message sent when not in add state")
+	}
+}
+
+func TestClientsHandler_Pause_SaveErrorIsReported(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{
+		vpnConfig: &vpnconfig.VPNDirectorConfig{Xray: vpnconfig.XrayConfig{Clients: []string{"192.168.50.10"}}},
+		saveErr:   errors.New("disk full"),
+	}
+	vpn := &mockVPNClients{}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: config, VPN: vpn})
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		Data:    "clients:pause:192.168.50.10",
+		Message: &tgbotapi.Message{MessageID: 7, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	if n := len(sender.plainTexts); n == 0 || !strings.Contains(sender.plainTexts[n-1], "Save error: disk full") {
+		t.Errorf("expected the save error to reach the user, got %v", sender.plainTexts)
 	}
 }

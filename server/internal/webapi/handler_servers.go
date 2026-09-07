@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
@@ -47,6 +48,14 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		unlock, ok := lockLongOp(w, r, deps, applyDeadline)
+		if !ok {
+			return
+		}
+		defer unlock()
+
+		// Load the list after the lock so a concurrent import cannot change
+		// which server this index names between the bounds check and the write.
 		servers, err := deps.Config.LoadServers()
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to load servers")
@@ -58,33 +67,35 @@ func handleSelectServer(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
-
 		server := servers[*req.Index]
 
-		if err := deps.Xray.GenerateConfig(server); err != nil {
+		// Persist xray.servers before rewriting config.json. Generating first
+		// left a new outbound on disk if the save then failed, and the next
+		// xray restart would pick it up against the old vpn-director.json.
+		var ports service.InboundPorts
+		err = deps.Config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+			cfg.Xray.Servers = collectServerIPs(servers)
+			// Read here, where the config is already in hand: the generated
+			// inbound has to listen where the TPROXY rules send traffic.
+			ports.TProxy, ports.Socks = vpnconfig.XrayInboundPorts(cfg)
+			return nil
+		})
+		if err != nil {
+			if errors.Is(err, service.ErrConfigLoad) {
+				jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
+			} else {
+				jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
+			}
+			return
+		}
+
+		if err := deps.Xray.GenerateConfig(server, ports); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to generate xray config")
 			return
 		}
 
-		cfg, err := deps.Config.LoadVPNConfig()
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to load vpn config")
-			return
-		}
-
-		// Set xray.servers to ALL servers' IPs, not just the selected one
-		// (parity with the import path). xray.servers feeds the TPROXY bypass
-		// set; dropping the other endpoints on a switch can cause a routing loop.
-		cfg.Xray.Servers = collectServerIPs(servers)
-		if err := deps.Config.SaveVPNConfig(cfg); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to save vpn config")
-			return
-		}
-
 		if err := deps.VPN.RestartXray(); err != nil {
-			jsonError(w, http.StatusInternalServerError, "failed to restart xray")
+			jsonError(w, http.StatusInternalServerError, "failed to restart xray: "+lastErrorLine(err))
 			return
 		}
 
@@ -101,6 +112,8 @@ type importServersRequest struct {
 // subscription URL. It enforces HTTPS-only and SSRF protections.
 func handleImportServers(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		extendWriteDeadline(w, importDeadline)
+
 		var req importServersRequest
 		if err := decodeJSON(r, &req); err != nil {
 			jsonError(w, http.StatusBadRequest, "invalid request body")
@@ -154,10 +167,11 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Decode VLESS subscription.
-		vlessServers, _ := vless.DecodeSubscription(string(body))
+		// Decode VLESS subscription. Parse errors travel back to the user so a
+		// rejected link explains itself, as the bot's /import does.
+		vlessServers, parseErrs := vless.DecodeSubscription(string(body))
 		if len(vlessServers) == 0 {
-			jsonError(w, http.StatusBadRequest, "no VLESS servers found in subscription")
+			jsonError(w, http.StatusBadRequest, noServersMessage(parseErrs))
 			return
 		}
 
@@ -175,8 +189,11 @@ func handleImportServers(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		deps.OpMutex.Lock()
-		defer deps.OpMutex.Unlock()
+		unlock, ok := lockLongOp(w, r, deps, importDeadline)
+		if !ok {
+			return
+		}
+		defer unlock()
 
 		if err := deps.Config.SaveServers(resolved); err != nil {
 			jsonError(w, http.StatusInternalServerError, "failed to save servers")
@@ -229,20 +246,31 @@ func collectServerIPs(servers []vpnconfig.Server) []string {
 	return ips
 }
 
-// syncXrayServers updates xray.servers with the IPs of all given servers and
-// persists the config. A load or save failure is returned so the caller can
-// surface it instead of silently leaving xray.servers stale.
+// syncXrayServers updates xray.servers with the IPs of all given servers under
+// the config lock. The error is returned unwrapped: the only caller already
+// prefixes it with "xray.servers sync failed", and wrapping here produced
+// "servers saved, but xray.servers sync failed: sync xray.servers: ..." in the
+// user's face.
 func syncXrayServers(config service.ConfigStore, servers []vpnconfig.Server) error {
-	vpnCfg, err := config.LoadVPNConfig()
-	if err != nil {
-		return fmt.Errorf("load vpn config: %w", err)
-	}
-	if vpnCfg == nil {
+	return config.UpdateVPNConfig(func(cfg *vpnconfig.VPNDirectorConfig) error {
+		cfg.Xray.Servers = collectServerIPs(servers)
 		return nil
+	})
+}
+
+// noServersMessage explains an empty subscription. Up to three parse errors
+// are appended so the user learns why the link was rejected.
+func noServersMessage(errs []error) string {
+	const msg = "no VLESS servers found in subscription"
+	if len(errs) == 0 {
+		return msg
 	}
-	vpnCfg.Xray.Servers = collectServerIPs(servers)
-	if err := config.SaveVPNConfig(vpnCfg); err != nil {
-		return fmt.Errorf("save vpn config: %w", err)
+	parts := make([]string, 0, 3)
+	for _, e := range errs {
+		if len(parts) == 3 {
+			break
+		}
+		parts = append(parts, e.Error())
 	}
-	return nil
+	return msg + ": " + strings.Join(parts, "; ")
 }

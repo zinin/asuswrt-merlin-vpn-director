@@ -53,3 +53,10 @@ func TestTruncateIfNeeded_ExactSize(t *testing.T) {
 		t.Errorf("should not truncate at exact size, size = %d", info.Size())
 	}
 }
+
+func TestDefaultMaxSize(t *testing.T) {
+	// Documented in README: logs are truncated at 200 KB.
+	if DefaultMaxSize != 200*1024 {
+		t.Errorf("DefaultMaxSize = %d, want %d", DefaultMaxSize, 200*1024)
+	}
+}
