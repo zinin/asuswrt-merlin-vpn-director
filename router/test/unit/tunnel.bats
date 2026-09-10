@@ -100,15 +100,16 @@ load '../test_helper'
 }
 
 # ============================================================================
-# _tunnel_get_prerouting_base_pos - find insert position
+# PREROUTING insert position comes from the platform
 # ============================================================================
 
-@test "_tunnel_get_prerouting_base_pos: returns position after system rules" {
+@test "tunnel_apply: inserts the PREROUTING jump at platform_prerouting_base_pos" {
     load_tunnel_module
-    run _tunnel_get_prerouting_base_pos
+    platform_prerouting_base_pos() { printf '4\n'; }
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
     assert_success
-    # Should return a positive integer
-    [[ "$output" =~ ^[0-9]+$ ]]
+    grep -q -- '-t mangle -I PREROUTING 4 -i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
 }
 
 # ============================================================================
@@ -322,4 +323,90 @@ load '../test_helper'
     # But should still create the MARK rule for the client
     assert_output --partial "192.168.50.0/24"
     assert_output --partial "mark="
+}
+
+# ============================================================================
+# Tunnel tables and routes through the platform contract
+# ============================================================================
+
+@test "_tunnel_init: valid tables come from platform_tunnels" {
+    load_tunnel_module
+    platform_tunnels() { printf '%s\n' OpenVPN0 Wireguard0 main; }
+    _tunnel_init
+    [ "$_tunnel_valid_tables" = "OpenVPN0 Wireguard0 main" ]
+}
+
+@test "tunnel_apply: looks the ip rule up in the platform's table" {
+    load_tunnel_module
+    platform_tunnel_table() { printf '2000\n'; }
+    : > /tmp/bats_ip_calls.log
+    run tunnel_apply
+    assert_success
+    grep -q 'ip rule add pref 16384 fwmark 0x10000/0xff0000 lookup 2000' /tmp/bats_ip_calls.log
+}
+
+@test "tunnel_apply: records applied tunnels as '<idx> <id>' in TUN_DIR_TABLES" {
+    load_tunnel_module
+    run tunnel_apply
+    assert_success
+    [ -f "$TUN_DIR_TABLES" ]
+    run cat "$TUN_DIR_TABLES"
+    assert_output "0 wgc1"
+}
+
+@test "tunnel_apply: ensures the route and still installs the ip rule when the route fails" {
+    load_tunnel_module
+    platform_tunnel_route_ensure() { echo "ensure $1 $2" >> "$BATS_TEST_TMPDIR/ensure.log"; return 1; }
+    : > /tmp/bats_ip_calls.log
+    run tunnel_apply
+    assert_success
+    assert_output --partial "route not installed"
+    grep -q "ensure wgc1 0" "$BATS_TEST_TMPDIR/ensure.log"
+    grep -q 'ip rule add pref 16384 fwmark 0x10000/0xff0000 lookup wgc1' /tmp/bats_ip_calls.log
+}
+
+@test "tunnel_apply: up-to-date path re-ensures every recorded route" {
+    load_tunnel_module
+    run tunnel_apply
+    assert_success
+    platform_tunnel_route_ensure() { echo "ensure $1 $2" >> "$BATS_TEST_TMPDIR/ensure.log"; return 0; }
+    # The chain exists as far as the mock is concerned once the hash matches
+    fw_chain_exists() { return 0; }
+    run tunnel_apply
+    assert_success
+    assert_output --partial "up-to-date"
+    grep -q "ensure wgc1 0" "$BATS_TEST_TMPDIR/ensure.log"
+}
+
+@test "tunnel_apply: a missing TUN_DIR_TABLES forces a rebuild even when the hash matches" {
+    load_tunnel_module
+    run tunnel_apply
+    assert_success
+    rm -f "$TUN_DIR_TABLES"
+    fw_chain_exists() { return 0; }
+    run tunnel_apply
+    assert_success
+    refute_output --partial "up-to-date"
+    [ -f "$TUN_DIR_TABLES" ]
+}
+
+@test "tunnel_stop: releases every recorded table and removes the state file" {
+    load_tunnel_module
+    run tunnel_apply
+    assert_success
+    platform_tunnel_table_release() { echo "release $1 $2" >> "$BATS_TEST_TMPDIR/release.log"; }
+    run tunnel_stop
+    assert_success
+    grep -q "release wgc1 0" "$BATS_TEST_TMPDIR/release.log"
+    [ ! -e "$TUN_DIR_TABLES" ]
+}
+
+@test "tunnel_apply: one PREROUTING jump per platform LAN interface" {
+    load_tunnel_module
+    platform_lan_ifaces() { printf 'br0\nbr1\n'; }
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_success
+    grep -q -- '-i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
+    grep -q -- '-i br1 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
 }

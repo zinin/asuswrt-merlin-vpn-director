@@ -59,11 +59,15 @@ TUN_DIRECTOR_DIR="/tmp/tunnel_director"
 # State files
 TUN_DIR_HASH="$TUN_DIRECTOR_DIR/tun_dir_rules.sha256"
 
+# Applied tunnels as "<idx> <id>" lines; tunnel.sh re-ensures their routes on
+# every apply and releases their tables on stop.
+TUN_DIR_TABLES="$TUN_DIRECTOR_DIR/tun_dir_tables"
+
 # Ensure directories exist
 mkdir -p "$IPS_BUILDER_DIR" "$TUN_DIRECTOR_DIR"
 
 # Export for use by other modules
-export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_HASH
+export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_HASH TUN_DIR_TABLES
 
 ###################################################################################################
 # Constants (defined before --source-only for testability)

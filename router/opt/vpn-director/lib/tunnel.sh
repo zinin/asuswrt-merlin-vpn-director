@@ -8,23 +8,26 @@
 #   Routes LAN client traffic through VPN tunnels with exclusion-based routing.
 #
 # Dependencies:
-#   - common.sh (log, tmp_file, compute_hash, is_lan_ip)
+#   - common.sh (log, tmp_file, compute_hash, is_lan_ip) and, through it, the
+#     platform contract (platform_tunnels, platform_tunnel_table,
+#     platform_tunnel_route_ensure, platform_tunnel_table_release,
+#     platform_prerouting_base_pos, platform_lan_ifaces)
 #   - firewall.sh (create_fw_chain, delete_fw_chain, ensure_fw_rule, sync_fw_rule,
 #                  purge_fw_rules, fw_chain_exists)
 #   - config.sh (TUN_DIR_TUNNELS_JSON, TUN_DIR_CHAIN, TUN_DIR_PREF_BASE,
 #                TUN_DIR_MARK_MASK, TUN_DIR_MARK_SHIFT)
-#   - ipset.sh (_ipset_exists, parse_exclude_sets_from_json, TUN_DIR_HASH)
+#   - ipset.sh (_ipset_exists, parse_exclude_sets_from_json, TUN_DIR_HASH, TUN_DIR_TABLES)
 #
 # Public API:
 #   tunnel_status()              - show TUN_DIR chain, ip rules, configured tunnels
 #   tunnel_apply()               - apply rules from config (idempotent)
-#   tunnel_stop()                - remove chain and ip rules
+#   tunnel_stop()                - remove chain, ip rules and tunnel tables
 #   tunnel_get_required_ipsets() - return list of ipsets needed for rules
 #
 # Internal functions (for testing):
-#   _tunnel_table_allowed()         - check if routing table is valid (wgcN, ovpncN, main)
-#   _tunnel_get_prerouting_base_pos() - find insert position after system rules
-#   _tunnel_init()                  - initialize module state
+#   _tunnel_table_allowed()      - check if a tunnel id is one the platform lists
+#   _tunnel_ensure_routes()      - re-install the routes of every applied tunnel
+#   _tunnel_init()               - initialize module state
 #
 # Usage:
 #   source lib/tunnel.sh              # source and run main if any
@@ -73,26 +76,17 @@ _tunnel_initialized=0
 # -------------------------------------------------------------------------------------------------
 # _tunnel_init - initialize module state
 # -------------------------------------------------------------------------------------------------
-# Builds valid_tables list from rt_tables and computes fwmark helpers.
+# Builds the valid_tables list from platform_tunnels and computes fwmark helpers.
 # Safe to call multiple times (idempotent).
 # -------------------------------------------------------------------------------------------------
 _tunnel_init() {
     # Skip if already initialized
     [[ $_tunnel_initialized -eq 1 ]] && return 0
 
-    # Allow override for testing
-    local rt_tables="${RT_TABLES_FILE:-/etc/iproute2/rt_tables}"
-
-    # Extract valid routing tables (from rt_tables):
-    # - wgcN first
-    # - ovpncN next
-    # - main always included at the end
+    # Valid tunnel ids come from the platform (Merlin: wgcN and ovpncN tables
+    # from rt_tables; Keenetic: OpenVPN*/Wireguard* interfaces), "main" last.
     local tables_list
-    tables_list="$(
-        awk '$0!~/^#/ && $2 ~ /^wgc[0-9]+$/ { print $2 }' "$rt_tables" 2>/dev/null | sort
-        awk '$0!~/^#/ && $2 ~ /^ovpnc[0-9]+$/ { print $2 }' "$rt_tables" 2>/dev/null | sort
-        printf '%s\n' main
-    )"
+    tables_list="$(platform_tunnels || true)"
 
     # Single-line, space-separated (for matching)
     _tunnel_valid_tables="$(printf '%s\n' "$tables_list" | xargs)"
@@ -125,23 +119,21 @@ _tunnel_table_allowed() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _tunnel_get_prerouting_base_pos - find insert position after system rules
+# _tunnel_ensure_routes - re-install the routes of every applied tunnel
 # -------------------------------------------------------------------------------------------------
-# Returns the 1-based insert position in mangle/PREROUTING immediately
-# after the last system iface-mark rule.
+# Reads TUN_DIR_TABLES ("<idx> <id>" per line, written by tunnel_apply) and calls
+# platform_tunnel_route_ensure for each. A no-op on Merlin, where the firmware
+# keeps the tunnel tables; on Keenetic the route follows the interface state.
 # -------------------------------------------------------------------------------------------------
-_tunnel_get_prerouting_base_pos() {
-    iptables -t mangle -S PREROUTING 2>/dev/null |
-    awk '
-        $1 == "-A" {
-          i++
-          if ( ($0 ~ /-i wgc[0-9]+/ || $0 ~ /-i tun[0-9]+/) &&
-               $0 ~ /-j MARK/ && $0 ~ /--set-/ ) {
-            last = i
-          }
-        }
-        END { print (last ? last + 1 : 1) }
-    '
+_tunnel_ensure_routes() {
+    local idx tunnel
+    [[ -f $TUN_DIR_TABLES ]] || return 0
+    while read -r idx tunnel; do
+        [[ -n $tunnel ]] || continue
+        if ! platform_tunnel_route_ensure "$tunnel" "$idx"; then
+            log -l WARN "Tunnel '$tunnel': route not installed (interface down?); traffic falls through to main"
+        fi
+    done < "$TUN_DIR_TABLES"
 }
 
 ###################################################################################################
@@ -209,9 +201,10 @@ tunnel_get_required_ipsets() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# tunnel_stop - remove chain and ip rules
+# tunnel_stop - remove chain, ip rules and tunnel tables
 # -------------------------------------------------------------------------------------------------
-# Removes TUN_DIR chain and all associated ip rules.
+# Removes TUN_DIR chain, all associated ip rules and the tunnel tables this
+# module owns (a no-op on a platform whose firmware owns them).
 # -------------------------------------------------------------------------------------------------
 tunnel_stop() {
     _tunnel_init
@@ -235,6 +228,16 @@ tunnel_stop() {
     for ((i = 0; i < max_rules; i++)); do
         ip rule del pref $((pref_base + i)) 2>/dev/null || true
     done
+
+    # Release the tunnel tables this module owns (no-op on Merlin)
+    local idx tunnel
+    if [[ -f $TUN_DIR_TABLES ]]; then
+        while read -r idx tunnel; do
+            [[ -n $tunnel ]] || continue
+            platform_tunnel_table_release "$tunnel" "$idx" || true
+        done < "$TUN_DIR_TABLES"
+        rm -f "$TUN_DIR_TABLES"
+    fi
 
     # Clear hash file
     rm -f "$TUN_DIR_HASH"
@@ -278,9 +281,12 @@ tunnel_apply() {
         rebuild=1
     elif ! fw_chain_exists mangle "$TUN_DIR_CHAIN"; then
         rebuild=1
+    elif [[ ! -f $TUN_DIR_TABLES ]]; then
+        rebuild=1
     fi
 
     if [[ $rebuild -eq 0 ]]; then
+        _tunnel_ensure_routes
         log "Rules are applied and up-to-date"
         return 0
     fi
@@ -297,10 +303,12 @@ tunnel_apply() {
 
     # Get base position in PREROUTING
     local base_pos
-    base_pos=$(_tunnel_get_prerouting_base_pos)
+    base_pos=$(platform_prerouting_base_pos)
 
     # Process each tunnel
     local tunnel_idx=0
+    local tables_tmp
+    tables_tmp="$(tmp_file)"
     local tunnels
     # Use keys_unsorted to preserve JSON file order (not alphabetical sorting)
     tunnels=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r 'keys_unsorted[]')
@@ -308,9 +316,9 @@ tunnel_apply() {
     while IFS= read -r tunnel; do
         [[ -n $tunnel ]] || continue
 
-        # Validate tunnel exists in rt_tables
+        # Validate the tunnel is one the platform knows
         if ! _tunnel_table_allowed "$tunnel"; then
-            log -l WARN "Tunnel '$tunnel' not in rt_tables; skipping"
+            log -l WARN "Tunnel '$tunnel' is not a tunnel this platform knows; skipping"
             warnings=1
             continue
         fi
@@ -406,24 +414,39 @@ tunnel_apply() {
             changes=1
         done <<< "$clients"
 
-        # Add ip rule for this tunnel
-        local pref=$((TUN_DIR_PREF_BASE + tunnel_idx))
-        ip rule del pref "$pref" 2>/dev/null || true
-        if ! ip rule add pref "$pref" fwmark "$mark_hex/$_tunnel_mark_mask_hex" lookup "$tunnel" 2>/dev/null; then
-            log -l ERROR "Failed to add ip rule: pref=$pref fwmark=$mark_hex lookup=$tunnel"
+        # Routing table for this tunnel: a firmware table on Merlin, one this
+        # module owns on Keenetic. The ip rule is installed even when the route
+        # is not: a lookup in an empty table falls through to main.
+        local table
+        table="$(platform_tunnel_table "$tunnel" "$tunnel_idx")"
+        if ! platform_tunnel_route_ensure "$tunnel" "$tunnel_idx"; then
+            log -l WARN "Tunnel '$tunnel': route not installed (interface down?); traffic falls through to main"
             warnings=1
         fi
 
+        local pref=$((TUN_DIR_PREF_BASE + tunnel_idx))
+        ip rule del pref "$pref" 2>/dev/null || true
+        if ! ip rule add pref "$pref" fwmark "$mark_hex/$_tunnel_mark_mask_hex" lookup "$table" 2>/dev/null; then
+            log -l ERROR "Failed to add ip rule: pref=$pref fwmark=$mark_hex lookup=$table"
+            warnings=1
+        fi
+
+        printf '%s %s\n' "$tunnel_idx" "$tunnel" >> "$tables_tmp"
         tunnel_idx=$((tunnel_idx + 1))
     done <<< "$tunnels"
 
-    # Add jump from PREROUTING to TUN_DIR chain (filter LAN traffic via br0)
-    sync_fw_rule -q mangle PREROUTING "-j ${TUN_DIR_CHAIN}\$" \
-        "-i br0 -m mark --mark 0x0/$_tunnel_mark_mask_hex -j $TUN_DIR_CHAIN" "$base_pos"
+    # Jump from PREROUTING to TUN_DIR for traffic from every LAN interface
+    local lan_if
+    while IFS= read -r lan_if; do
+        [[ -n $lan_if ]] || continue
+        sync_fw_rule -q mangle PREROUTING "-i $lan_if .*-j ${TUN_DIR_CHAIN}\$" \
+            "-i $lan_if -m mark --mark 0x0/$_tunnel_mark_mask_hex -j $TUN_DIR_CHAIN" "$base_pos"
+    done < <(platform_lan_ifaces)
 
-    # Save hash
+    # Save hash and the applied tunnel table
     mkdir -p "$(dirname "$TUN_DIR_HASH")"
     printf '%s\n' "$new_hash" > "$TUN_DIR_HASH"
+    cp -f "$tables_tmp" "$TUN_DIR_TABLES"
 
     if [[ $changes -eq 0 ]]; then
         log "No changes applied"
