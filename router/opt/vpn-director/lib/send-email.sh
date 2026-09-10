@@ -32,6 +32,14 @@ set -euo pipefail
 . /opt/vpn-director/lib/common.sh
 
 ###############################################################################
+# 0a'. Platforms without amtm email have nothing to send
+###############################################################################
+if [[ "$(platform_email_supported)" != "1" ]]; then
+    log -l DEBUG "Email notifications are not supported on this platform; skipping"
+    exit 0
+fi
+
+###############################################################################
 # 0b. Define constants
 ###############################################################################
 AMTM_EMAIL_DIR="/jffs/addons/amtm/mail"
@@ -89,7 +97,7 @@ PASSWORD="$(/usr/sbin/openssl aes-256-cbc "$emailPwEnc" \
 ###############################################################################
 TMP_MAIL=$(tmp_file)
 
-FROM_NAME="ASUS $(nvram get model)"   # router name shown in "From:"
+FROM_NAME="ASUS $(platform_model || true)"   # router name shown in "From:"
 
 {
     printf 'From: "%s"<%s>\n'       "$FROM_NAME" "$FROM_ADDRESS"

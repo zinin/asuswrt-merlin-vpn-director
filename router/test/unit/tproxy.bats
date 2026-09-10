@@ -428,3 +428,53 @@ EOF
     assert_success
     refute_output
 }
+
+# ============================================================================
+# Platform contract in tproxy.sh
+# ============================================================================
+
+@test "_tproxy_check_module: loads xt_TPROXY through platform_load_module" {
+    load_tproxy_module
+    platform_load_module() { echo "load $1" >> "$BATS_TEST_TMPDIR/load.log"; return 0; }
+    run _tproxy_check_module
+    assert_success
+    grep -q "load xt_TPROXY" "$BATS_TEST_TMPDIR/load.log"
+}
+
+@test "_tproxy_check_module: fails with an ERROR when the platform cannot load the module" {
+    load_tproxy_module
+    platform_load_module() { return 1; }
+    run _tproxy_check_module
+    assert_failure
+    assert_output --partial "xt_TPROXY module not available"
+}
+
+@test "_tproxy_setup_bypass_ipset: adds every platform VPN endpoint" {
+    load_tproxy_module
+    platform_vpn_endpoints() { printf '%s\n' 203.0.113.7 198.51.100.9; }
+    : > /tmp/bats_ipset_calls.log
+    run _tproxy_setup_bypass_ipset
+    assert_success
+    grep -q "ipset add TPROXY_BYPASS 203.0.113.7" /tmp/bats_ipset_calls.log
+    grep -q "ipset add TPROXY_BYPASS 198.51.100.9" /tmp/bats_ipset_calls.log
+}
+
+@test "_tproxy_setup_iptables: applies platform extra rules and one jump per LAN interface" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { echo "extra $1" >> "$BATS_TEST_TMPDIR/extra.log"; }
+    platform_lan_ifaces() { printf 'br0\nbr1\n'; }
+    : > /tmp/bats_iptables_calls.log
+    run _tproxy_setup_iptables
+    assert_success
+    grep -q "extra apply" "$BATS_TEST_TMPDIR/extra.log"
+    grep -q -- '-I PREROUTING 1 -i br0 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
+    grep -q -- '-I PREROUTING 1 -i br1 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
+}
+
+@test "_tproxy_teardown_iptables: removes platform extra rules" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { echo "extra $1" >> "$BATS_TEST_TMPDIR/extra.log"; }
+    run _tproxy_teardown_iptables
+    assert_success
+    grep -q "extra stop" "$BATS_TEST_TMPDIR/extra.log"
+}

@@ -8,7 +8,9 @@
 #   Migrated from xray_tproxy.sh to provide independent, testable functions.
 #
 # Dependencies:
-#   - common.sh (log, tmp_file)
+#   - common.sh (log, tmp_file) and, through it, the platform contract
+#     (platform_load_module, platform_vpn_endpoints, platform_tproxy_extra_rules,
+#      platform_lan_ifaces)
 #   - firewall.sh (create_fw_chain, delete_fw_chain, ensure_fw_rule, sync_fw_rule, purge_fw_rules)
 #   - config.sh (XRAY_* variables)
 #   - ipset.sh (_is_valid_country_code)
@@ -82,16 +84,14 @@ _tproxy_init() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _tproxy_check_module - check if xt_TPROXY kernel module is available
+# _tproxy_check_module - make sure the xt_TPROXY kernel module is loaded
 # -------------------------------------------------------------------------------------------------
-# Returns 0 if module is loaded or can be loaded, 1 otherwise.
+# Returns 0 if the platform loaded (or had loaded) the module, 1 otherwise.
 # -------------------------------------------------------------------------------------------------
 _tproxy_check_module() {
-    if ! lsmod | grep -q xt_TPROXY; then
-        modprobe xt_TPROXY 2>/dev/null || {
-            log -l ERROR "xt_TPROXY module not available"
-            return 1
-        }
+    if ! platform_load_module xt_TPROXY; then
+        log -l ERROR "xt_TPROXY module not available"
+        return 1
     fi
     return 0
 }
@@ -326,7 +326,7 @@ _tproxy_validate_ipv4_cidr() {
 # Merges three sources into the bypass ipset:
 #   1. Xray server IPs from config (xray.servers)
 #   2. User-defined exclude IPs from config (xray.exclude_ips)
-#   3. OpenVPN client endpoints from nvram (resolved on the fly)
+#   3. Firmware VPN client endpoints from platform_vpn_endpoints (resolved on the fly)
 # Always creates the ipset (even if empty) so iptables rules can reference it.
 # -------------------------------------------------------------------------------------------------
 _tproxy_setup_bypass_ipset() {
@@ -371,14 +371,13 @@ _tproxy_setup_bypass_ipset() {
         done
     fi
 
-    # Source 3: OpenVPN client endpoints from nvram (resolved on the fly)
-    local slot
-    for slot in 1 2 3 4 5; do
-        addr=$(nvram get "vpn_client${slot}_addr" 2>/dev/null) || addr=""
+    # Source 3: endpoints of the firmware's own VPN clients, so their traffic
+    # never enters the proxy (resolved on the fly)
+    while IFS= read -r addr; do
         [[ -n $addr ]] || continue
 
         resolved=$(resolve_ip -a -q "$addr" 2>/dev/null) || {
-            log -l WARN "Cannot resolve OpenVPN endpoint vpn_client${slot}_addr=$addr"
+            log -l WARN "Cannot resolve VPN endpoint $addr"
             continue
         }
 
@@ -386,7 +385,7 @@ _tproxy_setup_bypass_ipset() {
             [[ -n $ip ]] || continue
             ipset add "$XRAY_BYPASS_IPSET" "$ip" 2>/dev/null && ovpn_count=$((ovpn_count + 1)) || true
         done <<< "$resolved"
-    done
+    done < <(platform_vpn_endpoints || true)
 
     local total=$((xray_count + user_count + ovpn_count))
     log "Populated $XRAY_BYPASS_IPSET ipset: $xray_count xray, $user_count user, $ovpn_count openvpn = $total total"
@@ -460,9 +459,17 @@ _tproxy_setup_iptables() {
         -p udp -j TPROXY --on-port "$XRAY_TPROXY_PORT" \
         --tproxy-mark "$XRAY_FWMARK/$XRAY_FWMARK_MASK"
 
-    # Jump from PREROUTING to our chain (position 1 = before Tunnel Director)
-    sync_fw_rule -q mangle PREROUTING "-j $XRAY_CHAIN\$" \
-        "-i br0 -j $XRAY_CHAIN" 1
+    # Rules the platform needs outside our chain (Keenetic: mangle INPUT accept)
+    platform_tproxy_extra_rules apply
+
+    # Jump from PREROUTING to our chain for every LAN interface
+    # (position 1 = before Tunnel Director)
+    local lan_if
+    while IFS= read -r lan_if; do
+        [[ -n $lan_if ]] || continue
+        sync_fw_rule -q mangle PREROUTING "-i $lan_if -j $XRAY_CHAIN\$" \
+            "-i $lan_if -j $XRAY_CHAIN" 1
+    done < <(platform_lan_ifaces)
 
     log "Applied TPROXY iptables rules"
 }
@@ -471,6 +478,7 @@ _tproxy_setup_iptables() {
 # _tproxy_teardown_iptables - remove all iptables rules
 # -------------------------------------------------------------------------------------------------
 _tproxy_teardown_iptables() {
+    platform_tproxy_extra_rules stop
     purge_fw_rules -q "mangle PREROUTING" "-j $XRAY_CHAIN\$"
     delete_fw_chain -q mangle "$XRAY_CHAIN"
 
