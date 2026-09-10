@@ -3,6 +3,10 @@
 # test/integration/vpn_director.bats
 # Integration tests for vpn-director.sh CLI
 
+# The platform tests below pass a flag to `run`, which bats only guarantees
+# from 1.5.0; without this the suite prints a BW02 warning for each of them.
+bats_require_minimum_version 1.5.0
+
 load '../test_helper'
 
 setup() {
@@ -10,6 +14,10 @@ setup() {
     export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director.json"
     export LOG_FILE="/tmp/bats_test_vpn_director.log"
     export TEST_MODE=1
+    # This setup() overrides the helper's, so the fixture path it exports has to
+    # be repeated here: without it platform_tunnels reads the real
+    # /etc/iproute2/rt_tables, which the machine running the suite need not have.
+    export RT_TABLES_FILE="$TEST_ROOT/fixtures/rt_tables"
     : > "$LOG_FILE"
 }
 
@@ -302,4 +310,72 @@ setup() {
     run "$SCRIPTS_DIR/vpn-director.sh" --help
     assert_success
     assert_output --partial "--wait"
+}
+
+# ============================================================================
+# platform subcommand
+# ============================================================================
+
+# log() writes to stderr, which bats folds into $output unless the streams are
+# kept apart. --separate-stderr leaves $output as stdout alone, so a WARN about
+# one tunnel could never break jq's parse of the document.
+
+@test "vpn-director: platform prints the platform facts as JSON" {
+    run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    echo "$output" | jq -e '.platform == "merlin"' >/dev/null
+    echo "$output" | jq -e '.password_file == "/etc/shadow"' >/dev/null
+    echo "$output" | jq -e '.lan_ifaces == ["br0"]' >/dev/null
+    echo "$output" | jq -e '.wan_if == "eth0"' >/dev/null
+    echo "$output" | jq -e '.arch | length > 0' >/dev/null
+}
+
+@test "vpn-director: platform lists every tunnel except main" {
+    run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    echo "$output" | jq -e '[.tunnels[].id] == ["wgc1","wgc2","ovpnc1","ovpnc2"]' >/dev/null
+    echo "$output" | jq -e '.tunnels[0] == {id:"wgc1", iface:"wgc1", type:"wireguard", connected:false, description:"Office WG"}' >/dev/null
+    echo "$output" | jq -e '.tunnels[2] == {id:"ovpnc1", iface:"tun11", type:"openvpn", connected:false, description:"Office OVPN"}' >/dev/null
+}
+
+@test "vpn-director: platform reports wan_if as empty when the platform has no answer" {
+    mkdir -p "$BATS_TEST_TMPDIR/mock"
+    printf '#!/bin/bash\necho ""\n' > "$BATS_TEST_TMPDIR/mock/nvram"
+    chmod +x "$BATS_TEST_TMPDIR/mock/nvram"
+    PATH="$BATS_TEST_TMPDIR/mock:$PATH" run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    echo "$output" | jq -e '.wan_if == ""' >/dev/null
+}
+
+# ============================================================================
+# cron subcommand
+# ============================================================================
+
+@test "vpn-director: cron install schedules the daily update through the platform" {
+    : > /tmp/bats_cru_calls.log
+    run "$SCRIPTS_DIR/vpn-director.sh" cron install
+    assert_success
+    # The CLI resolves its own directory with pwd; SCRIPTS_DIR still contains "test/.."
+    local vpd_dir
+    vpd_dir="$(cd "$SCRIPTS_DIR" && pwd)"
+    grep -qF "cru a vpn_director_update 0 3 * * * $vpd_dir/vpn-director.sh update" /tmp/bats_cru_calls.log
+}
+
+@test "vpn-director: cron remove drops the job" {
+    : > /tmp/bats_cru_calls.log
+    run "$SCRIPTS_DIR/vpn-director.sh" cron remove
+    assert_success
+    grep -qF "cru d vpn_director_update" /tmp/bats_cru_calls.log
+}
+
+@test "vpn-director: cron without install|remove fails with usage" {
+    run "$SCRIPTS_DIR/vpn-director.sh" cron
+    assert_failure
+    assert_output --partial "cron install|remove"
+}
+
+@test "vpn-director: help lists platform and cron" {
+    run "$SCRIPTS_DIR/vpn-director.sh" --help
+    assert_output --partial "platform"
+    assert_output --partial "cron install|remove"
 }

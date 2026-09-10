@@ -18,9 +18,9 @@ fi
 start() {
     echo "Starting $DESC..."
     if "$VPD" apply; then
-        # Remove legacy cron job from previous versions
+        # Remove legacy cron job from previous versions (Merlin only; harmless elsewhere)
         cru d update_ipsets 2>/dev/null
-        cru a vpn_director_update "0 3 * * * $VPD update"
+        "$VPD" cron install
         /opt/vpn-director/lib/send-email.sh "Startup" "VPN Director started" 2>/dev/null || true
     else
         echo "Failed to start $DESC"
@@ -31,8 +31,8 @@ start() {
 stop() {
     echo "Stopping $DESC..."
     "$VPD" stop
-    cru d vpn_director_update
-    # Also remove legacy cron job if present
+    "$VPD" cron remove
+    # Also remove legacy cron job if present (Merlin only; harmless elsewhere)
     cru d update_ipsets 2>/dev/null
 }
 

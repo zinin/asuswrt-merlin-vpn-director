@@ -9,6 +9,8 @@
 #   vpn-director stop [tunnel|xray]          - Stop components
 #   vpn-director restart [tunnel|xray]       - Restart components
 #   vpn-director update                      - Update ipsets and reapply all
+#   vpn-director platform                    - Print platform facts as JSON (for the daemons)
+#   vpn-director cron install|remove         - Schedule or drop the daily ipset update
 #
 # Options:
 #   -f, --force    Force operation (ignore hash checks)
@@ -84,7 +86,7 @@ fi
 ###################################################################################################
 show_help() {
     cat <<'EOF'
-VPN Director - Unified traffic routing for Asuswrt-Merlin
+VPN Director - Unified traffic routing for Asuswrt-Merlin and Keenetic
 
 Usage:
   vpn-director <command> [component] [options]
@@ -95,6 +97,8 @@ Commands:
   stop [tunnel|xray]          Stop components
   restart [tunnel|xray]       Restart (stop + apply)
   update                      Download fresh ipsets and reapply all
+  platform                    Print platform facts as JSON (used by the Web UI and the bot)
+  cron install|remove         Schedule or drop the daily "update" job
 
 Options:
   -f, --force    Force operation (ignore hash checks)
@@ -330,6 +334,76 @@ cmd_update() {
     log "Update complete"
 }
 
+# -------------------------------------------------------------------------------------------------
+# cmd_platform - print the platform facts the daemons need, as one JSON document
+# -------------------------------------------------------------------------------------------------
+# Tunnels are listed without "main"; a tunnel whose interface or info lookup
+# fails is omitted with a WARN so the rest of the document stays usable.
+# -------------------------------------------------------------------------------------------------
+cmd_platform() {
+    _load_common
+
+    local arch wan pw_file lan_json tunnels_json
+    arch="$(uname -m)"
+    wan="$(platform_wan_if)" || wan=""
+    pw_file="$(platform_password_file)"
+    lan_json="$(platform_lan_ifaces | jq -R . | jq -s -c .)"
+
+    tunnels_json="[]"
+    local id iface info type connected desc
+    while IFS= read -r id; do
+        [[ -n $id ]] || continue
+        [[ $id == main ]] && continue
+        if ! iface="$(platform_tunnel_iface "$id")"; then
+            log -l WARN "platform: cannot map tunnel '$id' to an interface; omitted"
+            continue
+        fi
+        if ! info="$(platform_tunnel_info "$id")"; then
+            log -l WARN "platform: no info for tunnel '$id'; omitted"
+            continue
+        fi
+        type="$(printf '%s\n' "$info" | sed -n 1p)"
+        connected="$(printf '%s\n' "$info" | sed -n 2p)"
+        desc="$(printf '%s\n' "$info" | sed -n 3p)"
+        tunnels_json="$(jq -c --argjson list "$tunnels_json" \
+            --arg id "$id" --arg iface "$iface" --arg type "$type" \
+            --argjson connected "$([[ $connected == 1 ]] && echo true || echo false)" \
+            --arg desc "$desc" \
+            -n '$list + [{id:$id, iface:$iface, type:$type, connected:$connected, description:$desc}]')"
+    done < <(platform_tunnels || true)
+
+    jq -n \
+        --arg platform "$(platform_name)" \
+        --arg arch "$arch" \
+        --arg password_file "$pw_file" \
+        --argjson lan_ifaces "$lan_json" \
+        --arg wan_if "$wan" \
+        --argjson tunnels "$tunnels_json" \
+        '{platform:$platform, arch:$arch, password_file:$password_file,
+          lan_ifaces:$lan_ifaces, wan_if:$wan_if, tunnels:$tunnels}'
+}
+
+# -------------------------------------------------------------------------------------------------
+# cmd_cron - schedule or drop the daily "update" job through the platform's cron
+# -------------------------------------------------------------------------------------------------
+cmd_cron() {
+    _load_common
+    case "$COMPONENT" in
+        install)
+            platform_cron_add vpn_director_update "0 3 * * *" "$SCRIPT_DIR/vpn-director.sh update"
+            log "Scheduled daily ipset update"
+            ;;
+        remove)
+            platform_cron_del vpn_director_update
+            log "Removed daily ipset update"
+            ;;
+        *)
+            echo "Usage: vpn-director cron install|remove" >&2
+            exit 1
+            ;;
+    esac
+}
+
 ###################################################################################################
 # Main
 ###################################################################################################
@@ -355,6 +429,12 @@ case "$COMMAND" in
         ;;
     update)
         cmd_update
+        ;;
+    platform)
+        cmd_platform
+        ;;
+    cron)
+        cmd_cron
         ;;
     *)
         echo "Unknown command: $COMMAND" >&2
