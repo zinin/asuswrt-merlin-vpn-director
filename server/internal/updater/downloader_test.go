@@ -269,6 +269,76 @@ func TestDownloadRelease_FailsWithoutManifest(t *testing.T) {
 	}
 }
 
+// TestDownloadRelease_RefusesAManifestWithNoFileForThePlatform closes the one
+// hole that a zero-entry selection would turn into a silent success: the
+// binaries get swapped while every script and init file stays at the old
+// version. downloadFile has no minimum-size check, so a zero-byte HTTP 200 is
+// a manifest as far as the parser is concerned. The releases below carry
+// working assets over TLS on purpose - without the guard downloadBinaries
+// fetches them both and DownloadRelease returns nil.
+func TestDownloadRelease_RefusesAManifestWithNoFileForThePlatform(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{name: "empty", body: ""},
+		{name: "comments only", body: "# VPN Director file manifest\n\n# nothing here yet\n"},
+		{name: "other platforms only", body: "keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var paths []string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				if strings.HasSuffix(r.URL.Path, "/"+manifestPath) {
+					w.Write([]byte(tt.body))
+					return
+				}
+				w.Write([]byte("content"))
+			}))
+			defer server.Close()
+
+			tempDir := t.TempDir()
+			s := &Service{
+				httpClient: server.Client(),
+				baseURL:    server.URL,
+				rawBaseURL: server.URL,
+				updateDir:  tempDir,
+				archSuffix: "arm64",
+				platform:   "merlin",
+			}
+
+			release := &Release{TagName: "v1.0.0"}
+			for _, d := range Daemons {
+				release.Assets = append(release.Assets, Asset{
+					Name:        d.Name + "-arm64",
+					DownloadURL: server.URL + "/" + d.Name + "-arm64",
+				})
+			}
+
+			err := s.DownloadRelease(context.Background(), release)
+			if err == nil {
+				t.Fatal("DownloadRelease() accepted a manifest that lists no file for this platform")
+			}
+			if !strings.Contains(err.Error(), "merlin") {
+				t.Errorf("error = %v, want it to name the platform", err)
+			}
+			for _, d := range Daemons {
+				if _, err := os.Stat(filepath.Join(tempDir, "files", d.Name)); !os.IsNotExist(err) {
+					t.Errorf("binary %s was downloaded on top of scripts that were not", d.Name)
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(paths) != 1 || !strings.HasSuffix(paths[0], "/"+manifestPath) {
+				t.Errorf("request paths = %v, want the manifest and nothing else", paths)
+			}
+		})
+	}
+}
+
 func TestGetPlatform_DefaultsToMerlin(t *testing.T) {
 	if got := (&Service{}).getPlatform(); got != "merlin" {
 		t.Errorf("getPlatform() = %q, want merlin", got)

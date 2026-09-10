@@ -39,7 +39,16 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 		return err
 	}
 
-	for _, file := range manifestFilesFor(entries, s.getPlatform()) {
+	// A selection of nothing would swap the daemon binaries and refresh no
+	// script and no init file - worse than no update, and silent, because
+	// downloadFile accepts a zero-byte HTTP 200 as a manifest. install.sh
+	// refuses the same state on its side.
+	files := manifestFilesFor(entries, s.getPlatform())
+	if len(files) == 0 {
+		return fmt.Errorf("release %s: files.manifest lists no file for platform %s", release.TagName, s.getPlatform())
+	}
+
+	for _, file := range files {
 		if err := s.downloadScriptFile(ctx, release.TagName, file); err != nil {
 			return fmt.Errorf("download %s: %w", file, err)
 		}
