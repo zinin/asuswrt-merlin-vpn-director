@@ -401,6 +401,48 @@ load '../test_helper'
     [ ! -e "$TUN_DIR_TABLES" ]
 }
 
+# The jump is the whole point of the chain. A platform that cannot name its LAN
+# interfaces used to run the loop zero times, leaving a fully populated chain
+# with nothing jumping to it and tunnel_apply returning 0 - every client routed
+# direct instead of through its tunnel. Unreachable on Merlin, where
+# platform_lan_ifaces is a constant.
+@test "tunnel_apply: fails and touches no firewall state when the platform names no LAN interface" {
+    load_tunnel_module
+    platform_lan_ifaces() { return 1; }
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_failure
+    assert_output --partial "Cannot determine the LAN interfaces"
+    refute grep -q -- "-j TUN_DIR" /tmp/bats_iptables_calls.log
+    refute grep -q -- "-N TUN_DIR" /tmp/bats_iptables_calls.log
+}
+
+# An empty answer with rc 0 is the same failure: zero jumps installed.
+@test "tunnel_apply: fails when the platform prints no LAN interface" {
+    load_tunnel_module
+    platform_lan_ifaces() { return 0; }
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_failure
+    assert_output --partial "Cannot determine the LAN interfaces"
+    refute grep -q -- "-j TUN_DIR" /tmp/bats_iptables_calls.log
+}
+
+# Unguarded, an rc 1 from platform_prerouting_base_pos tripped errexit and ended
+# the whole CLI run with no log line at all - and tproxy_apply, which runs after
+# tunnel_apply, never ran either.
+@test "tunnel_apply: fails with an ERROR when the platform has no PREROUTING position" {
+    load_tunnel_module
+    platform_prerouting_base_pos() { return 1; }
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_failure
+    assert_output --partial "Cannot determine the PREROUTING insert position"
+    refute grep -q -- "-j TUN_DIR" /tmp/bats_iptables_calls.log
+    # No hash written, so the next apply rebuilds instead of reporting up-to-date.
+    [ ! -e "$TUN_DIR_HASH" ]
+}
+
 @test "tunnel_apply: one PREROUTING jump per platform LAN interface" {
     load_tunnel_module
     platform_prerouting_base_pos() { printf '4\n'; }

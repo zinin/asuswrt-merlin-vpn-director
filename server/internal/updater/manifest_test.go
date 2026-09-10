@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,6 +132,68 @@ func TestRepoManifest_ShipsUpdateCriticalFiles(t *testing.T) {
 	}
 	if have["router/jffs/scripts/firewall-start"] != "merlin" {
 		t.Errorf("firewall-start must be tagged merlin, got %q", have["router/jffs/scripts/firewall-start"])
+	}
+}
+
+// TestRepoManifest_ShipsEveryRouterFile pins the tree to the manifest - the
+// direction TestRepoManifest_EntriesExist does not cover. The manifest is now
+// the only list of shipped files, so a file added under router/ and forgotten
+// here ships to nobody, on every platform, and nothing else notices.
+func TestRepoManifest_ShipsEveryRouterFile(t *testing.T) {
+	root := filepath.Join("..", "..", "..")
+	f, err := os.Open(filepath.Join(root, manifestPath))
+	if err != nil {
+		t.Fatalf("open repo manifest: %v", err)
+	}
+	defer f.Close()
+	entries, err := parseManifest(f)
+	if err != nil {
+		t.Fatalf("parse repo manifest: %v", err)
+	}
+	listed := map[string]int{}
+	for _, e := range entries {
+		listed[e.Path]++
+	}
+
+	routerDir := filepath.Join(root, "router")
+	testDir := filepath.Join(routerDir, "test")
+	walked := 0
+	err = filepath.WalkDir(routerDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// The Bats suite is not shipped to routers.
+			if path == testDir {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel := filepath.ToSlash(path[len(root)+1:])
+		if rel == manifestPath {
+			return nil
+		}
+		walked++
+		switch n := listed[rel]; n {
+		case 1:
+		case 0:
+			t.Errorf("%s is not listed in %s, so no router would ever receive it", rel, manifestPath)
+		default:
+			t.Errorf("%s is listed %d times in %s, want once", rel, n, manifestPath)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk router/: %v", err)
+	}
+	if walked == 0 {
+		t.Fatalf("walked no files under %s", routerDir)
+	}
+	// Every entry exists (TestRepoManifest_EntriesExist) and every shipped file
+	// is listed once, so the two counts can only differ if the manifest lists
+	// something this walk skips: a file under router/test/, or the manifest.
+	if walked != len(entries) {
+		t.Errorf("%d shipped files under router/, %d manifest entries", walked, len(entries))
 	}
 }
 

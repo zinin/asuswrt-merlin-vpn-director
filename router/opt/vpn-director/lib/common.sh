@@ -861,5 +861,16 @@ download_file() {
 ###################################################################################################
 # Platform contract - detection and platform_* functions (lib/platform.sh)
 ###################################################################################################
+# Not optional: without it every platform_* call in the modules below would be a
+# command-not-found in the middle of an apply. A router that got this common.sh
+# without platform.sh - an update delivered by an updater that predates the
+# platform layer - would otherwise die on the shell's own "No such file or
+# directory", which names no way out. Say what is missing and how to get it, and
+# still fail.
+if [[ ! -f "${BASH_SOURCE[0]%/*}/platform.sh" ]]; then
+    log -l ERROR "Platform library not found: ${BASH_SOURCE[0]%/*}/platform.sh - re-run install.sh to reinstall it"
+    # shellcheck disable=SC2317
+    return 1 2>/dev/null || exit 1
+fi
 # shellcheck source=platform.sh
 . "${BASH_SOURCE[0]%/*}/platform.sh"

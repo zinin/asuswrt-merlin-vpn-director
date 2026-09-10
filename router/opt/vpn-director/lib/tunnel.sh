@@ -291,6 +291,19 @@ tunnel_apply() {
         return 0
     fi
 
+    # The PREROUTING jumps below are what make the chain matter, so ask for the
+    # LAN interfaces before touching any firewall state. A platform that cannot
+    # name them would otherwise leave a fully populated chain with nothing
+    # jumping to it - every client routed direct instead of through its tunnel -
+    # and tunnel_apply would still return 0. Asking first leaves the rules that
+    # are already installed alone.
+    local lan_ifaces
+    lan_ifaces="$(platform_lan_ifaces)" || lan_ifaces=""
+    if [[ -z $lan_ifaces ]]; then
+        log -l ERROR "Cannot determine the LAN interfaces; Tunnel Director rules not applied"
+        return 1
+    fi
+
     # Stop existing rules if config changed
     if [[ $old_hash != "$empty_hash" ]]; then
         log "Configuration changed; removing existing rules..."
@@ -301,9 +314,17 @@ tunnel_apply() {
     # Create the single chain
     create_fw_chain -q -f mangle "$TUN_DIR_CHAIN"
 
-    # Get base position in PREROUTING
+    # Get base position in PREROUTING. Unguarded, an rc 1 here would trip
+    # errexit and end the whole CLI run without a log line - after tunnel_stop
+    # and create_fw_chain, and before tproxy_apply. An empty base_pos would be
+    # worse than the abort: the first jump would keep append semantics, but the
+    # second would land at position 1, ahead of the firmware's iface-mark rules.
     local base_pos
-    base_pos=$(platform_prerouting_base_pos)
+    base_pos=$(platform_prerouting_base_pos) || base_pos=""
+    if [[ -z $base_pos ]]; then
+        log -l ERROR "Cannot determine the PREROUTING insert position; Tunnel Director rules not applied"
+        return 1
+    fi
 
     # Process each tunnel
     local tunnel_idx=0
@@ -447,7 +468,7 @@ tunnel_apply() {
         sync_fw_rule -q mangle PREROUTING "-i $lan_if .*-j ${TUN_DIR_CHAIN}\$" \
             "-i $lan_if -m mark --mark 0x0/$_tunnel_mark_mask_hex -j $TUN_DIR_CHAIN" "$pos"
         pos=$((pos + 1))
-    done < <(platform_lan_ifaces)
+    done <<< "$lan_ifaces"
 
     # Save hash and the applied tunnel table
     mkdir -p "$(dirname "$TUN_DIR_HASH")"

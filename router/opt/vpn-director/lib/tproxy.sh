@@ -398,6 +398,18 @@ _tproxy_setup_iptables() {
     local exclude_set resolved_set
     local -a exclude_sets_array
 
+    # The PREROUTING jumps below are what make this chain matter, so ask for the
+    # LAN interfaces before touching any firewall state. A platform that cannot
+    # name them would otherwise leave a fully populated chain with nothing
+    # jumping to it: every packet the proxy exists to carry goes direct, and the
+    # function still ends in "Applied TPROXY iptables rules".
+    local lan_ifaces
+    lan_ifaces="$(platform_lan_ifaces)" || lan_ifaces=""
+    if [[ -z $lan_ifaces ]]; then
+        log -l ERROR "Cannot determine the LAN interfaces; TPROXY rules not applied"
+        return 1
+    fi
+
     read -ra exclude_sets_array <<< "$(_tproxy_exclude_sets -q)"
 
     # Create chain
@@ -478,7 +490,7 @@ _tproxy_setup_iptables() {
         sync_fw_rule -q mangle PREROUTING "-i $lan_if -j $XRAY_CHAIN\$" \
             "-i $lan_if -j $XRAY_CHAIN" "$pos"
         pos=$((pos + 1))
-    done < <(platform_lan_ifaces)
+    done <<< "$lan_ifaces"
 
     log "Applied TPROXY iptables rules"
 }

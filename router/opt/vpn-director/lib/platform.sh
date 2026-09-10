@@ -36,6 +36,18 @@
 #   platform_lan_ip, platform_hostname, platform_model
 #   platform_email_supported               1 | 0
 #
+# What the core relies on beyond those signatures:
+#   * platform_tunnel_route has no caller in the core. It is there for the
+#     implementation's own use, as the source of the spec that
+#     platform_tunnel_route_ensure applies; a platform whose firmware owns the
+#     tunnel tables has no spec to print and returns 1.
+#   * platform_tunnel_route_ensure must be idempotent: tunnel.sh calls it for
+#     every recorded tunnel on every apply that finds the configuration already
+#     up to date, not only when something changed.
+#   * platform_tunnel_table_release may be called for an index that was never
+#     ensured. tunnel_stop walks the recorded state file unconditionally, and
+#     tunnel_apply records an index even when its route_ensure failed.
+#
 # Testing: VPD_PROBE_ROOT prefixes every path platform_detect looks at.
 ###################################################################################################
 

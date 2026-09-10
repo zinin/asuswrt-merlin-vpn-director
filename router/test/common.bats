@@ -231,6 +231,22 @@ load 'test_helper'
     assert_output "merlin"
 }
 
+# A router that got this common.sh without platform.sh - the shape of an update
+# delivered by an updater that predates the platform layer - used to die on the
+# shell's own "No such file or directory", naming no way out. It must say what
+# is missing and how to get it, and still fail: without the contract every
+# platform_* call below would be a command-not-found mid-apply.
+@test "common.sh: names the missing platform.sh and still fails" {
+    local lib="$BATS_TEST_TMPDIR/lib"
+    mkdir -p "$lib"
+    cp "$LIB_DIR/common.sh" "$lib/common.sh"
+    run bash -c "set -e; source '$lib/common.sh'; echo reached"
+    assert_failure
+    assert_output --partial "$lib/platform.sh"
+    assert_output --partial "install.sh"
+    refute_output --partial "reached"
+}
+
 @test "get_active_wan_if: wraps platform_wan_if" {
     load_common
     run get_active_wan_if

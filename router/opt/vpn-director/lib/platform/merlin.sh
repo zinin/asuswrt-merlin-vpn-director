@@ -93,6 +93,10 @@ platform_tunnel_table() {
     esac
 }
 
+# The firmware owns the tunnel tables, so there is no route spec to print and
+# nothing to install or release. Both _ensure and _release still have to answer
+# for any call the core makes: _ensure on every apply of an unchanged config,
+# _release for a recorded index whose route was never installed.
 platform_tunnel_route() {
     return 1
 }
@@ -132,8 +136,14 @@ platform_cron_del() {
     cru d "$1"
 }
 
+# Nothing to add outside our own chain on Merlin. The verb is still checked:
+# accepting anything would let a typo in a future call site pass as a clean
+# no-op on this platform and only surface on the one that acts on it.
 platform_tproxy_extra_rules() {
-    return 0
+    case "${1:-}" in
+        apply|stop) return 0 ;;
+        *)          return 1 ;;
+    esac
 }
 
 # Position right after the firmware's own iface-mark rules (-i wgcN / -i tunN

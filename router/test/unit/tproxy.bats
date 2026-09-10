@@ -473,6 +473,33 @@ EOF
     grep -q -- '-I PREROUTING 2 -i br1 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
 }
 
+# The jump is the whole point of the chain. A platform that cannot name its LAN
+# interfaces used to run the loop zero times, leaving a fully populated chain
+# with nothing jumping to it and logging "Applied TPROXY iptables rules" - every
+# packet the proxy exists to carry silently going direct. Unreachable on Merlin,
+# where platform_lan_ifaces is a constant.
+@test "_tproxy_setup_iptables: fails and builds no chain when the platform names no LAN interface" {
+    load_tproxy_module
+    platform_lan_ifaces() { return 1; }
+    : > /tmp/bats_iptables_calls.log
+    run _tproxy_setup_iptables
+    assert_failure
+    assert_output --partial "Cannot determine the LAN interfaces"
+    refute grep -q -- "-j XRAY_TPROXY" /tmp/bats_iptables_calls.log
+    refute grep -q -- "-N XRAY_TPROXY" /tmp/bats_iptables_calls.log
+}
+
+# An empty answer with rc 0 is the same failure: zero jumps installed.
+@test "_tproxy_setup_iptables: fails when the platform prints no LAN interface" {
+    load_tproxy_module
+    platform_lan_ifaces() { return 0; }
+    : > /tmp/bats_iptables_calls.log
+    run _tproxy_setup_iptables
+    assert_failure
+    assert_output --partial "Cannot determine the LAN interfaces"
+    refute grep -q -- "-j XRAY_TPROXY" /tmp/bats_iptables_calls.log
+}
+
 # _tproxy_setup_iptables runs as "if ! _tproxy_setup_iptables", which turns
 # errexit off for its whole body, and its last command is a log - so a platform
 # that cannot install its own rules would otherwise be reported as a clean apply.

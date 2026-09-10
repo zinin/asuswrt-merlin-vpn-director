@@ -113,8 +113,9 @@ cd server && go run ./cmd/webui --dev
 - Debug: `DEBUG=1 ./script.sh` enables tracing with informative PS4
 - Conditionals: Use `[[ ]]` instead of `[ ]`
 - Logging: `log -l ERROR|WARN|INFO|DEBUG|TRACE "message"`
-- Platform facts (WAN, tunnels, cron, kernel modules) come only from `platform_*` functions; core
-  modules never test the platform name. Tests set `VPD_PLATFORM=merlin` through `test_helper.bash`
+- Platform facts (WAN, tunnels, cron, kernel modules) belong behind the `platform_*` functions;
+  core modules never test the platform name. Tests set `VPD_PLATFORM=merlin` through
+  `test_helper.bash`
 
 ## Modular Docs
 

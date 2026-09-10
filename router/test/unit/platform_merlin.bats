@@ -156,12 +156,19 @@ with_mock() {
     refute_output
 }
 
+# _ensure has to be idempotent (tunnel.sh calls it on every up-to-date apply)
+# and _release has to answer for an index that was never ensured (tunnel_stop
+# walks the recorded state file unconditionally). Both hold trivially here.
 @test "platform_tunnel_route_ensure and _table_release: no-ops that succeed" {
     load_platform
     : > /tmp/bats_ip_calls.log
     run platform_tunnel_route_ensure wgc1 0
     assert_success
+    run platform_tunnel_route_ensure wgc1 0
+    assert_success
     run platform_tunnel_table_release wgc1 0
+    assert_success
+    run platform_tunnel_table_release wgc9 7
     assert_success
     [ ! -s /tmp/bats_ip_calls.log ]
 }
@@ -221,6 +228,19 @@ with_mock() {
     run platform_tproxy_extra_rules stop
     assert_success
     [ ! -s /tmp/bats_iptables_calls.log ]
+}
+
+# The contract documents the verb as apply|stop. Accepting anything would let a
+# typo in a future call site read as a clean no-op here and only break on the
+# platform that acts on the verb.
+@test "platform_tproxy_extra_rules: rejects a verb that is not apply or stop" {
+    load_platform
+    run platform_tproxy_extra_rules
+    assert_failure
+    refute_output
+    run platform_tproxy_extra_rules aply
+    assert_failure
+    refute_output
 }
 
 @test "platform_prerouting_base_pos: 1 when PREROUTING has no firmware mark rules" {
