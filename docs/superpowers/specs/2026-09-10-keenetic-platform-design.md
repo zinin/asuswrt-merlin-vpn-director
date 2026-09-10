@@ -140,8 +140,9 @@ script that sources `common.sh` gets the contract.
 | `platform_tunnels` | `wgcN` then `ovpncN` from `/etc/iproute2/rt_tables`, plus `main` last; one id per line | interfaces of type `OpenVPN` and `Wireguard` from RCI `show/interface`, plus `main` last; one id per line |
 | `platform_tunnel_iface <id>` | `wgcN` for `wgcN`, `tun1N` for `ovpncN` | `ovpn_brN` for `OpenVPNN`, `nwgN` for `WireguardN` |
 | `platform_tunnel_info <id>` | three lines: `type` (from the prefix), `connected` (`1` when the Linux interface exists and carries the `UP` flag, else `0`), `description` (`nvram get wgcN_desc` / `vpn_clientN_desc`) | three lines: `type`, `connected` (`1` when RCI `connected` is `yes`), `description`, from RCI `show/interface/<id>` |
-| `platform_tunnel_table <id> <idx>` | prints `<id>` | ensures table `2000+idx` holds the route from `platform_tunnel_route`, prints `2000+idx` (`main` prints `main`) |
+| `platform_tunnel_table <id> <idx>` | prints `<id>` | prints `2000+idx` (`main` prints `main`). Pure mapping, always succeeds for ids from `platform_tunnels` |
 | `platform_tunnel_route <id>` | unused | prints the route spec (section 6.5) as the arguments of `ip route replace <spec> table N` |
+| `platform_tunnel_route_ensure <id> <idx>` | no-op, returns 0 | `ip route replace <spec> table 2000+idx` with the spec from `platform_tunnel_route`; returns 1 when the spec is unavailable (interface down) |
 | `platform_tunnel_table_release <id> <idx>` | no-op | `ip route flush table 2000+idx` |
 | `platform_vpn_endpoints` | `nvram get vpn_client{1..5}_addr`; one host per line | `remote-endpoint-address` of every OpenVPN interface and `peer[].endpoint` hosts of every Wireguard interface, from RCI; one host per line, resolved by the caller as today |
 | `platform_load_module <name>` | `modprobe <name>` | `insmod /lib/modules/$(uname -r)/<name>.ko` unless `/proc/modules` lists it |
@@ -153,7 +154,7 @@ script that sources `common.sh` gets the contract.
 | `platform_lan_ip` | `nvram get lan_ipaddr` | first IPv4 of `br0` |
 | `platform_hostname` | `nvram get lan_hostname` | `hostname` from RCI `show/system` |
 | `platform_model` | `nvram get model` | `model` from RCI `show/version` |
-| `platform_email_supported` | `1` when the amtm mail config exists | `0` |
+| `platform_email_supported` | `1` (amtm email is a Merlin feature; whether it is configured stays `send-email.sh`'s check) | `0` |
 
 Every function prints its result on stdout and returns 0; a function that
 cannot answer prints nothing and returns 1, and the caller decides (log and
@@ -266,9 +267,12 @@ Keenetic has no per-tunnel routing tables, so Tunnel Director owns them:
     (`10.73.149.113/255.255.255.0` gives `10.73.149.1`).
   - When the interface is down or RCI reports no address, the function
     prints nothing and returns 1.
-- `platform_tunnel_table` applies the spec with `ip route replace ... table N`
-  on every apply, so the route survives interface flaps once the
-  `ifstatechanged.d` hook fires.
+- `platform_tunnel_route_ensure` applies the spec with
+  `ip route replace ... table N` on every apply, including the "up-to-date"
+  path that skips the firewall rebuild, so the route survives interface flaps
+  once the `ifstatechanged.d` hook fires. The `ip rule` for the tunnel is
+  installed even when the route is not: a lookup in an empty table falls
+  through to `main`.
 - `tunnel_stop` calls `platform_tunnel_table_release` for each tunnel.
 
 Interface name mapping is a convention (`OpenVPNN` to `ovpn_brN`,
@@ -341,8 +345,13 @@ changing behaviour:
 
 - `common.sh`: sources `platform.sh`; wrappers as above.
 - `tunnel.sh`: uses `platform_tunnels`, `platform_tunnel_table`,
-  `platform_tunnel_table_release`, `platform_prerouting_base_pos`,
-  `platform_lan_ifaces` (one PREROUTING jump per LAN interface).
+  `platform_tunnel_route_ensure`, `platform_tunnel_table_release`,
+  `platform_prerouting_base_pos`, `platform_lan_ifaces` (one PREROUTING jump
+  per LAN interface). `tunnel_apply` records the applied tunnels as
+  `<idx> <id>` lines in `/tmp/tunnel_director/tun_dir_tables`; the
+  up-to-date path re-runs `platform_tunnel_route_ensure` for each line, and
+  `tunnel_stop` calls `platform_tunnel_table_release` for each line before
+  removing the file.
 - `tproxy.sh`: uses `platform_load_module`, `platform_vpn_endpoints`,
   `platform_tproxy_extra_rules`, `platform_lan_ifaces`.
 - `firewall.sh`: uses `platform_wan_if`, `platform_ipv6_enabled`.
@@ -492,7 +501,7 @@ ignored with a DEBUG log line. `config.sh` validates it as an IPv4 address.
 | Unsupported platform | Every CLI command exits 1 with `unsupported platform`; the installer exits 1 before downloading. |
 | `xt_TPROXY.ko` missing on Keenetic | Xray TPROXY apply fails with an ERROR naming the component; other components apply. `status` shows `TPROXY module not loaded`. |
 | RCI unreachable | `platform_tunnels` prints only `main`; `platform` subcommand emits an empty tunnel list and a WARN; TD apply reports every configured tunnel as invalid, as it does today for an unknown table. |
-| Tunnel interface down | Route add fails, WARN logged, `ip rule` stays, traffic uses `main`. Next `ifstatechanged.d` call re-applies. |
+| Tunnel interface down | `platform_tunnel_route_ensure` fails, WARN logged, the `ip rule` is installed anyway, traffic uses `main`. The next `ifstatechanged.d` call re-applies and installs the route. |
 | NDM rebuild | Chains vanish; the `netfilter.d` hook re-applies within seconds. The gap equals the hook plus apply runtime, comparable to Merlin's `firewall-start`. |
 | Package missing (`flock`, `ip-full`, …) | The installer refuses to proceed and names the packages; at runtime the existing "command not found" errors surface in the log. |
 | Old Merlin binary after the rename | GitHub redirects the API and raw requests; the update completes with the new manifest. |
