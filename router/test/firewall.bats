@@ -153,3 +153,36 @@ load 'test_helper'
     assert_success
     assert_output "dest=1.2.3.4 proto=tcp port=443 -> ACCEPT"
 }
+
+# ============================================================================
+# block_wan_for_host / allow_wan_for_host take the WAN interface from the platform
+# ============================================================================
+
+@test "block_wan_for_host: blocks both directions on the platform WAN interface" {
+    load_firewall
+    platform_ipv6_enabled() { printf '0\n'; }
+    : > /tmp/bats_iptables_calls.log
+    run block_wan_for_host 192.168.50.10
+    assert_success
+    grep -q -- '-i eth0 -d 192.168.50.10 -j DROP' /tmp/bats_iptables_calls.log
+    grep -q -- '-s 192.168.50.10 -o eth0 -j REJECT' /tmp/bats_iptables_calls.log
+}
+
+@test "block_wan_for_host: fails when the platform reports no WAN interface" {
+    load_firewall
+    platform_wan_if() { return 1; }
+    run block_wan_for_host 192.168.50.10
+    assert_failure
+    assert_output --partial "WAN interface name is empty"
+}
+
+@test "allow_wan_for_host: looks the rules up on the platform WAN interface" {
+    load_firewall
+    platform_ipv6_enabled() { printf '0\n'; }
+    : > /tmp/bats_iptables_calls.log
+    run allow_wan_for_host 192.168.50.10
+    assert_success
+    # The iptables mock answers -C with "absent", so ensure_fw_rule -D stops at
+    # the check; the check itself must already name the platform's WAN interface.
+    grep -q -- '-C FORWARD -i eth0 -d 192.168.50.10 -j DROP' /tmp/bats_iptables_calls.log
+}

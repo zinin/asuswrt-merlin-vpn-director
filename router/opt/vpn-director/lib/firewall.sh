@@ -54,14 +54,14 @@
 #       With --count, print the number of changes (deleted + inserted) to stdout.
 #       -6 uses ip6tables; -q suppresses informational logs (errors still logged).
 #
-#   block_wan_for_host <hostname|ip> [wan_id]
+#   block_wan_for_host <hostname|ip>
 #       Resolve host to a LAN IPv4 and (if IPv6 is enabled) to all global IPv6.
 #       Add filter/FORWARD REJECT/DROP rules to block both outbound-to and inbound-from
-#       the specified WAN. Defaults to wan_id=0.
+#       the WAN interface reported by platform_wan_if.
 #
-#   allow_wan_for_host <hostname|ip> [wan_id]
+#   allow_wan_for_host <hostname|ip>
 #       Resolve host to a LAN IPv4 and (if IPv6 is enabled) to all global IPv6.
-#       Remove the corresponding REJECT/DROP rules, restoring access. Defaults to wan_id=0.
+#       Remove the corresponding REJECT/DROP rules, restoring access.
 #
 #   chg <command ...>
 #       Runs a command and returns success (0) if its stdout is a non-zero integer;
@@ -841,16 +841,16 @@ sync_fw_rule() {
 }
 
 ###################################################################################################
-# block_wan_for_host - block a LAN device from using a specific WAN interface
+# block_wan_for_host - block a LAN device from using the WAN
 # -------------------------------------------------------------------------------------------------
 # Usage:
-#   block_wan_for_host <hostname|ip> [wan_id]
-#     - wan_id: ASUS WAN index (0 = primary, 1 = secondary). Defaults to 0.
+#   block_wan_for_host <hostname|ip>
 #
 # Behavior:
 #   * Tries to resolve a single LAN IPv4 (RFC1918). If present, blocks it.
 #   * If IPv6 is enabled, resolves all global IPv6 for the host and blocks each
 #     (ULAs / link-local are ignored).
+#   * The WAN interface comes from platform_wan_if.
 #   * Inserts rules at the top of filter / FORWARD:
 #       - WAN -> host:  DROP
 #       - host -> WAN:  REJECT (icmp-admin-prohibited / icmp6-adm-prohibited)
@@ -859,14 +859,14 @@ sync_fw_rule() {
 #     or if the WAN interface name is empty.
 ###################################################################################################
 block_wan_for_host() {
-    local host="$1" wan_id="${2:-0}"
+    local host="$1"
     local host_ip4="" wan_if v6_list="" ip6
     local any_blocked=0
 
     # WAN interface
-    wan_if="$(nvram get wan${wan_id}_ifname)"
+    wan_if="$(platform_wan_if)" || wan_if=""
     if [[ -z $wan_if ]]; then
-        log -l ERROR "wan${wan_id} interface name is empty; cannot block WAN for host"
+        log -l ERROR "WAN interface name is empty; cannot block WAN for host"
         return 1
     fi
 
@@ -882,7 +882,7 @@ block_wan_for_host() {
     fi
 
     # IPv6: only if enabled; block all global v6 addresses (ignore ULA / link-local)
-    if [[ $(get_ipv6_enabled) -eq 1 ]]; then
+    if [[ $(platform_ipv6_enabled) -eq 1 ]]; then
         v6_list="$(resolve_ip -6 -q -g -a "$host" || true)"
         if [[ -n $v6_list ]]; then
             while IFS= read -r ip6; do
@@ -909,12 +909,12 @@ EOF
     if [[ -n $host_ip4 ]] && [[ -n $v6_list ]]; then
         log "Blocked WAN for host=$host (ipv4=$host_ip4" \
             "ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
-            "on iface=$wan_if (wan_id=$wan_id)"
+            "on iface=$wan_if"
     elif [[ -n $host_ip4 ]]; then
-        log "Blocked WAN for host=$host (ipv4=$host_ip4) on iface=$wan_if (wan_id=$wan_id)"
+        log "Blocked WAN for host=$host (ipv4=$host_ip4) on iface=$wan_if"
     else
         log "Blocked WAN for host=$host (ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
-            "on iface=$wan_if (wan_id=$wan_id)"
+            "on iface=$wan_if"
     fi
 }
 
@@ -922,26 +922,26 @@ EOF
 # allow_wan_for_host - restore WAN access for a previously blocked LAN device
 # -------------------------------------------------------------------------------------------------
 # Usage:
-#   allow_wan_for_host <hostname|ip> [wan_id]
-#     - wan_id: ASUS WAN index (0 = primary, 1 = secondary). Defaults to 0.
+#   allow_wan_for_host <hostname|ip>
 #
 # Behavior:
 #   * Tries to resolve a single LAN IPv4; if present, removes IPv4 DROP/REJECT rules.
 #   * If IPv6 is enabled, resolves all global IPv6 for the host and removes the
 #     corresponding ip6tables rules as well (ULAs / link-local are ignored).
+#   * The WAN interface comes from platform_wan_if.
 #   * Succeeds if at least one address family was processed.
 #   * Fails (returns 1) only if neither IPv4 LAN nor global IPv6 could be resolved,
 #     or if the WAN interface name is empty.
 ###################################################################################################
 allow_wan_for_host() {
-    local host="$1" wan_id="${2:-0}"
+    local host="$1"
     local host_ip4="" wan_if v6_list="" ip6
     local any_processed=0
 
     # WAN interface
-    wan_if="$(nvram get wan${wan_id}_ifname)"
+    wan_if="$(platform_wan_if)" || wan_if=""
     if [[ -z $wan_if ]]; then
-        log -l ERROR "wan${wan_id} interface name is empty; cannot unblock WAN for host"
+        log -l ERROR "WAN interface name is empty; cannot unblock WAN for host"
         return 1
     fi
 
@@ -955,7 +955,7 @@ allow_wan_for_host() {
     fi
 
     # IPv6: only if enabled; remove rules for all global v6 addresses (ignore ULA / link-local)
-    if [[ $(get_ipv6_enabled) -eq 1 ]]; then
+    if [[ $(platform_ipv6_enabled) -eq 1 ]]; then
         v6_list="$(resolve_ip -6 -q -g -a "$host" || true)"
         if [[ -n $v6_list ]]; then
             while IFS= read -r ip6; do
@@ -980,12 +980,12 @@ EOF
     if [[ -n $host_ip4 ]] && [[ -n $v6_list ]]; then
         log "Allowed WAN for host=$host (ipv4=$host_ip4" \
             "ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
-            "on iface=$wan_if (wan_id=$wan_id)"
+            "on iface=$wan_if"
     elif [[ -n $host_ip4 ]]; then
-        log "Allowed WAN for host=$host (ipv4=$host_ip4) on iface=$wan_if (wan_id=$wan_id)"
+        log "Allowed WAN for host=$host (ipv4=$host_ip4) on iface=$wan_if"
     else
         log "Allowed WAN for host=$host (ipv6_global=$(printf '%s' "$v6_list" | tr '\n' ' '))" \
-            "on iface=$wan_if (wan_id=$wan_id)"
+            "on iface=$wan_if"
     fi
 }
 

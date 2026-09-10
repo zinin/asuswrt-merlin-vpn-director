@@ -219,3 +219,38 @@ load 'test_helper'
 
     rm -f /tmp/bats_test_dl2
 }
+
+# ============================================================================
+# Platform contract is available through common.sh
+# ============================================================================
+
+@test "common.sh: sourcing it loads the platform contract" {
+    load_common
+    run platform_name
+    assert_success
+    assert_output "merlin"
+}
+
+@test "get_active_wan_if: wraps platform_wan_if" {
+    load_common
+    run get_active_wan_if
+    assert_success
+    assert_output "eth0"
+}
+
+@test "get_active_wan_if: prints nothing and still succeeds when the platform has no answer" {
+    load_common
+    platform_wan_if() { return 1; }
+    run get_active_wan_if
+    assert_success
+    refute_output
+}
+
+@test "get_ipv6_enabled: wraps platform_ipv6_enabled" {
+    load_common
+    run get_ipv6_enabled
+    assert_output "1"
+    platform_ipv6_enabled() { printf '0\n'; }
+    run get_ipv6_enabled
+    assert_output "0"
+}

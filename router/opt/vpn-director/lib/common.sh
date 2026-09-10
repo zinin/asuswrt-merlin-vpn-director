@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ###################################################################################################
-# common.sh  -  shared functions library for Asuswrt-Merlin shell scripts
+# common.sh  -  shared functions library for VPN Director shell scripts
 # -------------------------------------------------------------------------------------------------
 # Public API
 # ----------
@@ -55,10 +55,14 @@
 #         -a : return ALL LAN matches (default: first only)
 #
 #   get_ipv6_enabled
-#       Prints 1 if IPv6 is enabled in NVRAM (ipv6_service != disabled), otherwise 0.
+#       Prints 1 if the platform reports IPv6 enabled, otherwise 0. Wrapper over platform_ipv6_enabled.
 #
 #   get_active_wan_if
-#       Returns the name of the currently active WAN interface (e.g., eth0, eth10).
+#       Prints the active WAN interface name, or nothing. Wrapper over platform_wan_if.
+#
+#   platform_* (see lib/platform.sh)
+#       The platform contract; common.sh sources lib/platform.sh at the end, so every script that
+#       sources common.sh can call it.
 #
 #   strip_comments [<text>]
 #       Removes leading/trailing whitespace, drops blank/# lines, and strips inline '#' comments.
@@ -728,55 +732,23 @@ resolve_lan_ip() {
 }
 
 ###################################################################################################
-# get_ipv6_enabled - check if IPv6 is enabled in router settings
+# get_ipv6_enabled - print 1 when IPv6 is enabled on this router, else 0
 # -------------------------------------------------------------------------------------------------
-# Usage:
-#   IPV6_ENABLED="$(get_ipv6_enabled)"
-#
-# Behavior:
-#   * Reads the NVRAM variable "ipv6_service".
-#   * Prints "1" if set and not "disabled"; otherwise prints "0".
-#
-# Output / Returns:
-#   * Prints: 1 (enabled) or 0 (disabled)
-#   * Exit status: always 0 (safe under `set -e`)
+# Wrapper over platform_ipv6_enabled, kept under its old name for callers outside this repository.
+# Exit status is always 0.
 ###################################################################################################
 get_ipv6_enabled() {
-    local s
-    s="$(nvram get ipv6_service 2>/dev/null || true)"
-    if [ -n "$s" ] && [ "$s" != "disabled" ]; then
-        printf '1\n'
-    else
-        printf '0\n'
-    fi
+    platform_ipv6_enabled || printf '0\n'
 }
 
 ###################################################################################################
-# get_active_wan_if - return the name of the currently active WAN interface
+# get_active_wan_if - print the active WAN interface name
 # -------------------------------------------------------------------------------------------------
-# Usage:
-#   WAN_IF=$(get_active_wan_if)  # -> eth0, eth10, ...
-#
-# Behavior:
-#   * ASUSWRT stores a "primary" flag per WAN (wan0_primary, wan1_primary, ...).
-#   * The flag is 1 for the interface that's up / in use, 0 otherwise.
-#   * We loop through the known WAN slots in order and return the first one
-#     whose _primary flag is 1.
-#   * Falls back to wan0_ifname if none are marked primary.
+# Wrapper over platform_wan_if, kept under its old name for callers outside this repository.
+# Prints nothing when the platform has no answer; exit status is always 0.
 ###################################################################################################
 get_active_wan_if() {
-    local idx
-
-    # Adjust the 0 1 2 sequence if you have more than three WANs configured
-    for idx in 0 1 2; do
-        if [ "$(nvram get wan${idx}_primary)" = "1" ]; then
-            nvram get wan${idx}_ifname
-            return
-        fi
-    done
-
-    # Fallback: default to wan0 if nothing is flagged primary
-    nvram get wan0_ifname
+    platform_wan_if || true
 }
 
 ###################################################################################################
@@ -885,3 +857,9 @@ download_file() {
 
     return 0
 }
+
+###################################################################################################
+# Platform contract - detection and platform_* functions (lib/platform.sh)
+###################################################################################################
+# shellcheck source=platform.sh
+. "${BASH_SOURCE[0]%/*}/platform.sh"
