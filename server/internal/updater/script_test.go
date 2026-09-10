@@ -44,11 +44,16 @@ func assertExecRefused(t *testing.T, s *Service, err error) {
 	}
 }
 
-// testManifest is the payload manifest the script tests install from.
+// testManifest is the payload manifest the script tests install from. It has
+// the shape of the real router/files.manifest, the daemon init scripts
+// included: those land in both the FILES table, which installs them, and the
+// DAEMONS table, which starts and stops them.
 const testManifest = "common router/opt/vpn-director/vpn-director.sh\n" +
 	"common router/opt/vpn-director/lib/common.sh\n" +
 	"common router/opt/vpn-director/vpn-director.json.template\n" +
 	"common router/opt/etc/init.d/S99vpn-director\n" +
+	"common router/opt/etc/init.d/S98telegram-bot\n" +
+	"common router/opt/etc/init.d/S98vpn-director-webui\n" +
 	"merlin router/jffs/scripts/firewall-start\n" +
 	"keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh\n"
 
@@ -154,6 +159,7 @@ func TestGenerateScript_FileTableInstallsWhatItNames(t *testing.T) {
 		"opt/vpn-director/vpn-director.sh":            true,
 		"opt/vpn-director/lib/common.sh":              true,
 		"opt/etc/init.d/S99vpn-director":              true,
+		"opt/etc/init.d/S98telegram-bot":              true,
 		"jffs/scripts/firewall-start":                 true,
 		"opt/vpn-director/vpn-director.json.template": false,
 	} {
@@ -323,12 +329,22 @@ func TestGenerateScript_CoversEveryDaemon(t *testing.T) {
 		}
 	}
 
-	// The daemon table drives every loop, so it is the only place an init
-	// script may be named. A second mention is a hardcoded call, and a
-	// hardcoded call silently skips the other daemon.
-	for _, d := range Daemons {
-		if n := strings.Count(script, d.InitScript); n != 1 {
-			t.Errorf("init script %s named %d times, want exactly 1 (only in the DAEMONS table)", d.InitScript, n)
+	// The tables drive every loop, and both reach an init script only through
+	// parameter expansion - ${entry##*|} in the daemon loops, $dst in the copy
+	// loop. So an init script spelled out in a line the shell executes is a
+	// hardcoded call, and a hardcoded call silently skips the other daemon.
+	// The two table lines are where the names belong; comments, as elsewhere
+	// in this file, are free to name what they explain.
+	for i, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, `DAEMONS="`) || strings.HasPrefix(trimmed, `FILES="`) {
+			continue
+		}
+		for _, d := range Daemons {
+			if strings.Contains(line, d.InitScript) {
+				t.Errorf("line %d spells out the init script %s instead of taking it from a table: %s", i+1, d.InitScript, line)
+			}
 		}
 	}
 }

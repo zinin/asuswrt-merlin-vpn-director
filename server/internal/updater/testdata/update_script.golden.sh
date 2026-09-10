@@ -22,7 +22,7 @@ DAEMONS="telegram-bot|/opt/vpn-director/telegram-bot|S98telegram-bot webui|/opt/
 # File table: "src|dst|mode" entries separated by spaces, src relative to
 # FILES_DIR, mode "x" for executable or "-" for data. Word splitting again, so
 # no field may contain a space; the manifest parser guarantees that.
-FILES="opt/vpn-director/vpn-director.sh|/opt/vpn-director/vpn-director.sh|x opt/vpn-director/lib/common.sh|/opt/vpn-director/lib/common.sh|x opt/vpn-director/vpn-director.json.template|/opt/vpn-director/vpn-director.json.template|- opt/etc/init.d/S99vpn-director|/opt/etc/init.d/S99vpn-director|x jffs/scripts/firewall-start|/jffs/scripts/firewall-start|x"
+FILES="opt/vpn-director/vpn-director.sh|/opt/vpn-director/vpn-director.sh|x opt/vpn-director/lib/common.sh|/opt/vpn-director/lib/common.sh|x opt/vpn-director/vpn-director.json.template|/opt/vpn-director/vpn-director.json.template|- opt/etc/init.d/S99vpn-director|/opt/etc/init.d/S99vpn-director|x opt/etc/init.d/S98telegram-bot|/opt/etc/init.d/S98telegram-bot|x opt/etc/init.d/S98vpn-director-webui|/opt/etc/init.d/S98vpn-director-webui|x jffs/scripts/firewall-start|/jffs/scripts/firewall-start|x"
 
 # Init scripts of the daemons that were running when the update started. The
 # EXIT trap reads it, so it must exist before anything can fail.
