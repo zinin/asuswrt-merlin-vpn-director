@@ -467,8 +467,21 @@ EOF
     run _tproxy_setup_iptables
     assert_success
     grep -q "extra apply" "$BATS_TEST_TMPDIR/extra.log"
+    # Each interface asks for its own position, so no jump displaces another and
+    # the next apply finds both already in place instead of rewriting them.
     grep -q -- '-I PREROUTING 1 -i br0 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
-    grep -q -- '-I PREROUTING 1 -i br1 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
+    grep -q -- '-I PREROUTING 2 -i br1 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
+}
+
+# _tproxy_setup_iptables runs as "if ! _tproxy_setup_iptables", which turns
+# errexit off for its whole body, and its last command is a log - so a platform
+# that cannot install its own rules would otherwise be reported as a clean apply.
+@test "_tproxy_setup_iptables: warns when the platform cannot apply its extra rules" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { return 1; }
+    run _tproxy_setup_iptables
+    assert_success
+    assert_output --partial "Failed to apply platform TPROXY rules"
 }
 
 @test "_tproxy_teardown_iptables: removes platform extra rules" {
@@ -477,4 +490,20 @@ EOF
     run _tproxy_teardown_iptables
     assert_success
     grep -q "extra stop" "$BATS_TEST_TMPDIR/extra.log"
+}
+
+# tproxy_stop calls this bare under set -euo pipefail, so a platform whose
+# cleanup fails must not abort the teardown at its first line: the PREROUTING
+# purge, the chain deletion and the ipsets matter more than the platform's own
+# rules. Called without "run" on purpose - "run" turns errexit off, and errexit
+# is exactly what the real caller has on.
+@test "_tproxy_teardown_iptables: finishes the teardown when the platform stop fails" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { return 1; }
+    : > /tmp/bats_iptables_calls.log
+
+    _tproxy_teardown_iptables
+
+    grep -q -- '-t mangle -S PREROUTING' /tmp/bats_iptables_calls.log
+    grep -q -- '-t mangle -X XRAY_TPROXY' /tmp/bats_iptables_calls.log
 }

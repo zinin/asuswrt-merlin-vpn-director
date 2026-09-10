@@ -435,12 +435,18 @@ tunnel_apply() {
         tunnel_idx=$((tunnel_idx + 1))
     done <<< "$tunnels"
 
-    # Jump from PREROUTING to TUN_DIR for traffic from every LAN interface
-    local lan_if
+    # Jump from PREROUTING to TUN_DIR for traffic from every LAN interface, each
+    # at its own position (base_pos, base_pos + 1, ...). One shared position
+    # would make every interface displace the one before it, so sync_fw_rule
+    # would find each jump off its position and purge-and-re-insert all of them
+    # on every apply - and each rewrite is a window with no jump for that
+    # interface.
+    local lan_if pos="$base_pos"
     while IFS= read -r lan_if; do
         [[ -n $lan_if ]] || continue
         sync_fw_rule -q mangle PREROUTING "-i $lan_if .*-j ${TUN_DIR_CHAIN}\$" \
-            "-i $lan_if -m mark --mark 0x0/$_tunnel_mark_mask_hex -j $TUN_DIR_CHAIN" "$base_pos"
+            "-i $lan_if -m mark --mark 0x0/$_tunnel_mark_mask_hex -j $TUN_DIR_CHAIN" "$pos"
+        pos=$((pos + 1))
     done < <(platform_lan_ifaces)
 
     # Save hash and the applied tunnel table

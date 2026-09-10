@@ -403,10 +403,14 @@ load '../test_helper'
 
 @test "tunnel_apply: one PREROUTING jump per platform LAN interface" {
     load_tunnel_module
+    platform_prerouting_base_pos() { printf '4\n'; }
     platform_lan_ifaces() { printf 'br0\nbr1\n'; }
     : > /tmp/bats_iptables_calls.log
     run tunnel_apply
     assert_success
-    grep -q -- '-i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
-    grep -q -- '-i br1 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
+    # Each interface asks for its own position (base_pos, base_pos + 1, ...), so
+    # no jump displaces another and the next apply finds both already in place
+    # instead of purging and re-inserting every one of them.
+    grep -q -- '-I PREROUTING 4 -i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
+    grep -q -- '-I PREROUTING 5 -i br1 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
 }

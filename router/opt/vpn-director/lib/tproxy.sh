@@ -459,16 +459,25 @@ _tproxy_setup_iptables() {
         -p udp -j TPROXY --on-port "$XRAY_TPROXY_PORT" \
         --tproxy-mark "$XRAY_FWMARK/$XRAY_FWMARK_MASK"
 
-    # Rules the platform needs outside our chain (Keenetic: mangle INPUT accept)
-    platform_tproxy_extra_rules apply
+    # Rules the platform needs outside our chain (Keenetic: mangle INPUT accept).
+    # The status is ours to report: this function runs under "if !", which turns
+    # errexit off for its whole body, and it ends in a log - so a failure here
+    # would otherwise be an apply that says "successfully" while the firmware
+    # drops the proxied traffic.
+    platform_tproxy_extra_rules apply ||
+        log -l WARN "Failed to apply platform TPROXY rules; proxied traffic may be dropped"
 
-    # Jump from PREROUTING to our chain for every LAN interface
-    # (position 1 = before Tunnel Director)
-    local lan_if
+    # Jump from PREROUTING to our chain for every LAN interface, each at its own
+    # position (the first = before Tunnel Director). One shared position would
+    # make every interface displace the one before it, so sync_fw_rule would
+    # find each jump off its position and purge-and-re-insert all of them on
+    # every apply - and each rewrite is a window with no jump for that interface.
+    local lan_if pos=1
     while IFS= read -r lan_if; do
         [[ -n $lan_if ]] || continue
         sync_fw_rule -q mangle PREROUTING "-i $lan_if -j $XRAY_CHAIN\$" \
-            "-i $lan_if -j $XRAY_CHAIN" 1
+            "-i $lan_if -j $XRAY_CHAIN" "$pos"
+        pos=$((pos + 1))
     done < <(platform_lan_ifaces)
 
     log "Applied TPROXY iptables rules"
@@ -478,7 +487,9 @@ _tproxy_setup_iptables() {
 # _tproxy_teardown_iptables - remove all iptables rules
 # -------------------------------------------------------------------------------------------------
 _tproxy_teardown_iptables() {
-    platform_tproxy_extra_rules stop
+    # Best effort: tproxy_stop calls this bare under errexit, so a platform whose
+    # cleanup fails must not abort the teardown before the jump and the chain go.
+    platform_tproxy_extra_rules stop || true
     purge_fw_rules -q "mangle PREROUTING" "-j $XRAY_CHAIN\$"
     delete_fw_chain -q mangle "$XRAY_CHAIN"
 
