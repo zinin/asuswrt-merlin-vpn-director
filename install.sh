@@ -142,11 +142,28 @@ create_directories() {
 
 # manifest_files <manifest> <platform>
 #   Prints the repository paths tagged "common" or <platform>, one per line,
-#   in manifest order. Blank lines and "#" comments are skipped.
+#   in manifest order. Blank lines and "#" comments are skipped. An
+#   unrecognised tag is an error, not something to skip: a typo like "comon"
+#   would drop that file from every install, and no "the path exists" check
+#   can see it. The Go updater tolerates an unknown tag because an old binary
+#   can meet a newer release; this parser ships with the manifest it reads.
 manifest_files() {
-    local manifest="$1" platform="$2" tag path
-    while read -r tag path _; do
+    local manifest="$1" platform="$2" line="" lineno=0 tag path
+    # `|| [[ -n $line ]]` keeps a last line with no trailing newline. The Go
+    # parser's bufio.Scanner reads it, and the two must not disagree about
+    # what a release ships.
+    while read -r line || [[ -n $line ]]; do
+        lineno=$((lineno + 1))
+        read -r tag path _ <<< "$line"
         case "$tag" in ''|'#'*) continue ;; esac
+        case "$tag" in
+            common|merlin|keenetic) ;;
+            *)
+                # stderr: the caller reads this function's stdout as the list.
+                print_error "files.manifest line $lineno: unknown tag \"$tag\" in \"$line\"" >&2
+                return 1
+                ;;
+        esac
         if [[ $tag == common || $tag == "$platform" ]]; then
             printf '%s\n' "$path"
         fi
@@ -178,13 +195,31 @@ download_scripts() {
         return 1
     fi
 
+    # Parse the whole manifest before installing anything. In a process
+    # substitution manifest_files' exit status is invisible, so a bad tag
+    # halfway down would leave a half-installed router and still report
+    # success.
+    local files
+    if ! files=$(manifest_files "$manifest" "$PLATFORM"); then
+        rm -f "$manifest"
+        return 1
+    fi
+    rm -f "$manifest"
+
+    # No match means a corrupt manifest or a platform this release does not
+    # ship. Reporting success here would send main() on to setup_webui_config
+    # and start_webui on top of absent scripts.
+    if [[ -z $files ]]; then
+        print_error "files.manifest lists no file for platform $PLATFORM"
+        return 1
+    fi
+
     print_info "Downloading scripts..."
     local file target
     while IFS= read -r file; do
         target="${INSTALL_ROOT}/${file#router/}"
         mkdir -p "$(dirname "$target")"
         if ! curl -fsSL "$REPO_URL/$file" -o "$target"; then
-            rm -f "$manifest"
             print_error "Failed to download $file"
             return 1
         fi
@@ -192,9 +227,7 @@ download_scripts() {
             chmod +x "$target"
         fi
         print_success "Installed $target"
-    done < <(manifest_files "$manifest" "$PLATFORM")
-
-    rm -f "$manifest"
+    done <<< "$files"
 }
 
 ###############################################################################

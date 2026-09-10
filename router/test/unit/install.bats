@@ -244,3 +244,84 @@ EOF
     assert_failure
     assert_output --partial "files.manifest"
 }
+
+@test "manifest_files: keeps a last line that has no trailing newline" {
+    load_installer
+    # The manifest arrives over the network, and the Go parser reads an
+    # unterminated last line; a `read` loop that drops it would make the two
+    # disagree about what a release ships.
+    printf 'common   router/opt/vpn-director/lib/common.sh\nmerlin   router/jffs/scripts/wan-event' \
+        > "$BATS_TEST_TMPDIR/files.manifest"
+
+    run manifest_files "$BATS_TEST_TMPDIR/files.manifest" merlin
+
+    assert_success
+    assert_line --index 0 "router/opt/vpn-director/lib/common.sh"
+    # Not --index 1: bats-assert reads the array unguarded, so a missing line
+    # crashes it under `set -u` instead of reporting the diff. Ordering is
+    # covered by "prints common and platform paths in manifest order".
+    assert_line "router/jffs/scripts/wan-event"
+}
+
+@test "manifest_files: an unknown tag fails and names the offending line" {
+    load_installer
+    cat > "$BATS_TEST_TMPDIR/files.manifest" <<'EOF'
+common   router/opt/vpn-director/lib/common.sh
+comon    router/opt/vpn-director/lib/tunnel.sh
+EOF
+
+    run manifest_files "$BATS_TEST_TMPDIR/files.manifest" merlin
+
+    # Silently skipping the typo would drop tunnel.sh from every install, and
+    # no "entry exists in the repo" check can see it: the path is fine.
+    assert_failure
+    assert_output --partial "line 2"
+    assert_output --partial "comon"
+    assert_output --partial "router/opt/vpn-director/lib/tunnel.sh"
+}
+
+@test "download_scripts: a misspelled tag aborts before installing anything" {
+    load_installer
+    fake_curl
+    local repo="$BATS_TEST_TMPDIR/repo/router"
+    mkdir -p "$repo/opt/vpn-director/lib"
+    cat > "$repo/files.manifest" <<'EOF'
+common   router/opt/vpn-director/lib/common.sh
+comon    router/opt/vpn-director/lib/tunnel.sh
+EOF
+    echo "lib" > "$repo/opt/vpn-director/lib/common.sh"
+    echo "tunnel" > "$repo/opt/vpn-director/lib/tunnel.sh"
+
+    REPO_URL="https://raw.example/zinin/vpn-director/refs/tags/v1.0.0"
+    PLATFORM="merlin"
+    INSTALL_ROOT="$BATS_TEST_TMPDIR/root"
+
+    run download_scripts
+
+    assert_failure
+    assert_output --partial "comon"
+    # The good entry is listed first, so a parser that gave up mid-loop would
+    # have written it already and left a half-installed router.
+    [ ! -e "$INSTALL_ROOT/opt/vpn-director/lib/common.sh" ]
+}
+
+@test "download_scripts: fails when the manifest selects no file for the platform" {
+    load_installer
+    fake_curl
+    mkdir -p "$BATS_TEST_TMPDIR/repo/router"
+    cat > "$BATS_TEST_TMPDIR/repo/router/files.manifest" <<'EOF'
+# a manifest with nothing for this platform
+keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh
+EOF
+    REPO_URL="https://raw.example/zinin/vpn-director/refs/tags/v1.0.0"
+    PLATFORM="merlin"
+    INSTALL_ROOT="$BATS_TEST_TMPDIR/root"
+
+    run download_scripts
+
+    # Reporting success after installing nothing would send the installer on to
+    # setup_webui_config and start_webui on top of absent scripts.
+    assert_failure
+    assert_output --partial "no file for platform merlin"
+    refute_output --partial "Installed"
+}
