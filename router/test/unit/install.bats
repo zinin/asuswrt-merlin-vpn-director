@@ -124,3 +124,123 @@ EOF
     assert_success
     [ ! -f "$VPD_DIR/vpn-director.json" ]
 }
+
+# ============================================================================
+# files.manifest parsing
+# ============================================================================
+
+write_manifest() {
+    cat > "$BATS_TEST_TMPDIR/files.manifest" <<'EOF'
+# comment line
+common   router/opt/vpn-director/vpn-director.sh
+
+merlin   router/jffs/scripts/firewall-start
+keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh
+common   router/opt/etc/xray/config.json.template
+EOF
+}
+
+@test "manifest_files: prints common and platform paths in manifest order" {
+    load_installer
+    write_manifest
+    run manifest_files "$BATS_TEST_TMPDIR/files.manifest" merlin
+    assert_success
+    assert_line --index 0 "router/opt/vpn-director/vpn-director.sh"
+    assert_line --index 1 "router/jffs/scripts/firewall-start"
+    assert_line --index 2 "router/opt/etc/xray/config.json.template"
+    refute_output --partial "netfilter.d"
+}
+
+@test "manifest_files: selects the other platform's files with its tag" {
+    load_installer
+    write_manifest
+    run manifest_files "$BATS_TEST_TMPDIR/files.manifest" keenetic
+    assert_success
+    assert_line --index 1 "router/opt/etc/ndm/netfilter.d/50-vpn-director.sh"
+    refute_output --partial "firewall-start"
+}
+
+@test "manifest_is_executable: scripts and init files are executable" {
+    load_installer
+    run manifest_is_executable "router/opt/vpn-director/lib/common.sh"
+    assert_success
+    run manifest_is_executable "router/opt/etc/init.d/S99vpn-director"
+    assert_success
+    run manifest_is_executable "router/jffs/scripts/wan-event"
+    assert_success
+}
+
+@test "manifest_is_executable: templates, json and the manifest are data" {
+    load_installer
+    run manifest_is_executable "router/opt/vpn-director/vpn-director.json.template"
+    assert_failure
+    run manifest_is_executable "router/opt/etc/xray/config.json.template"
+    assert_failure
+    run manifest_is_executable "router/opt/vpn-director/data/servers.json"
+    assert_failure
+    run manifest_is_executable "router/files.manifest"
+    assert_failure
+}
+
+# fake_curl serves "$REPO_URL/<path>" from $BATS_TEST_TMPDIR/repo/<path>.
+# install.sh calls: curl -fsSL "$url" -o "$target"
+fake_curl() {
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat > "$BATS_TEST_TMPDIR/bin/curl" <<EOF
+#!/bin/bash
+out=""; url=""
+while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+        -o) out="\$2"; shift 2 ;;
+        -*) shift ;;
+        *)  url="\$1"; shift ;;
+    esac
+done
+src="$BATS_TEST_TMPDIR/repo/\${url#*/refs/tags/v1.0.0/}"
+[[ -f "\$src" ]] || exit 22
+cp "\$src" "\$out"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+    export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+@test "download_scripts: installs the manifest's common and platform files under INSTALL_ROOT" {
+    load_installer
+    fake_curl
+    local repo="$BATS_TEST_TMPDIR/repo/router"
+    mkdir -p "$repo/opt/vpn-director/lib" "$repo/jffs/scripts" "$repo/opt/etc/ndm/netfilter.d"
+    cat > "$BATS_TEST_TMPDIR/repo/router/files.manifest" <<'EOF'
+common   router/opt/vpn-director/lib/common.sh
+common   router/opt/vpn-director/vpn-director.json.template
+merlin   router/jffs/scripts/firewall-start
+keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh
+EOF
+    echo "lib" > "$repo/opt/vpn-director/lib/common.sh"
+    echo "{}" > "$repo/opt/vpn-director/vpn-director.json.template"
+    echo "hook" > "$repo/jffs/scripts/firewall-start"
+    echo "ndm" > "$repo/opt/etc/ndm/netfilter.d/50-vpn-director.sh"
+
+    REPO_URL="https://raw.example/zinin/vpn-director/refs/tags/v1.0.0"
+    PLATFORM="merlin"
+    INSTALL_ROOT="$BATS_TEST_TMPDIR/root"
+
+    run download_scripts
+    assert_success
+    [ -x "$INSTALL_ROOT/opt/vpn-director/lib/common.sh" ]
+    [ -f "$INSTALL_ROOT/opt/vpn-director/vpn-director.json.template" ]
+    [ ! -x "$INSTALL_ROOT/opt/vpn-director/vpn-director.json.template" ]
+    [ -x "$INSTALL_ROOT/jffs/scripts/firewall-start" ]
+    [ ! -e "$INSTALL_ROOT/opt/etc/ndm/netfilter.d/50-vpn-director.sh" ]
+}
+
+@test "download_scripts: fails when the manifest cannot be downloaded" {
+    load_installer
+    fake_curl
+    mkdir -p "$BATS_TEST_TMPDIR/repo/router"
+    REPO_URL="https://raw.example/zinin/vpn-director/refs/tags/v1.0.0"
+    PLATFORM="merlin"
+    INSTALL_ROOT="$BATS_TEST_TMPDIR/root"
+    run download_scripts
+    assert_failure
+    assert_output --partial "files.manifest"
+}

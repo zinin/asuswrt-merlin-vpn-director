@@ -26,6 +26,15 @@ GITHUB_REPO="zinin/vpn-director"
 INIT_DIR="/opt/etc/init.d"
 WEBUI_URL=""   # set by start_webui once the daemon answers; read by print_next_steps
 
+# Platform tag that selects files from router/files.manifest. Detection of
+# Keenetic lands together with its platform module; until then this installer
+# serves Asuswrt-Merlin only.
+PLATFORM="merlin"
+
+# Root the manifest files are installed under: "" on a router, a temporary
+# directory in tests.
+INSTALL_ROOT="${INSTALL_ROOT:-}"
+
 ###############################################################################
 # Helper functions
 ###############################################################################
@@ -128,48 +137,64 @@ create_directories() {
 }
 
 ###############################################################################
+# File manifest
+###############################################################################
+
+# manifest_files <manifest> <platform>
+#   Prints the repository paths tagged "common" or <platform>, one per line,
+#   in manifest order. Blank lines and "#" comments are skipped.
+manifest_files() {
+    local manifest="$1" platform="$2" tag path
+    while read -r tag path _; do
+        case "$tag" in ''|'#'*) continue ;; esac
+        if [[ $tag == common || $tag == "$platform" ]]; then
+            printf '%s\n' "$path"
+        fi
+    done < "$manifest"
+}
+
+# manifest_is_executable <repo path>
+#   Returns 0 when the installed file gets the executable bit: everything
+#   except templates, JSON and the manifest itself.
+manifest_is_executable() {
+    case "$1" in
+        *.template|*.json|*.manifest) return 1 ;;
+    esac
+    return 0
+}
+
+###############################################################################
 # Download scripts
 ###############################################################################
 
 download_scripts() {
+    print_info "Downloading file manifest..."
+
+    local manifest
+    manifest=$(mktemp)
+    if ! curl -fsSL "$REPO_URL/router/files.manifest" -o "$manifest"; then
+        rm -f "$manifest"
+        print_error "Failed to download router/files.manifest"
+        return 1
+    fi
+
     print_info "Downloading scripts..."
-
-    # NOTE: Keep file list in sync with server/internal/updater/downloader.go
-    for script in \
-        "router/opt/vpn-director/vpn-director.sh" \
-        "router/opt/vpn-director/configure.sh" \
-        "router/opt/vpn-director/import_server_list.sh" \
-        "router/opt/vpn-director/vpn-director.json.template" \
-        "router/opt/vpn-director/lib/common.sh" \
-        "router/opt/vpn-director/lib/firewall.sh" \
-        "router/opt/vpn-director/lib/config.sh" \
-        "router/opt/vpn-director/lib/ipset.sh" \
-        "router/opt/vpn-director/lib/tunnel.sh" \
-        "router/opt/vpn-director/lib/tproxy.sh" \
-        "router/opt/vpn-director/lib/xrayconf.sh" \
-        "router/opt/vpn-director/lib/send-email.sh" \
-        "router/opt/vpn-director/setup_telegram_bot.sh" \
-        "router/jffs/scripts/firewall-start" \
-        "router/jffs/scripts/wan-event" \
-        "router/opt/etc/init.d/S99vpn-director" \
-        "router/opt/etc/init.d/S98telegram-bot" \
-        "router/opt/etc/init.d/S98vpn-director-webui"
-    do
-        target="/${script#router/}"
-        curl -fsSL "$REPO_URL/$script" -o "$target" || {
-            print_error "Failed to download $script"
-            exit 1
-        }
-        chmod +x "$target"
+    local file target
+    while IFS= read -r file; do
+        target="${INSTALL_ROOT}/${file#router/}"
+        mkdir -p "$(dirname "$target")"
+        if ! curl -fsSL "$REPO_URL/$file" -o "$target"; then
+            rm -f "$manifest"
+            print_error "Failed to download $file"
+            return 1
+        fi
+        if manifest_is_executable "$file"; then
+            chmod +x "$target"
+        fi
         print_success "Installed $target"
-    done
+    done < <(manifest_files "$manifest" "$PLATFORM")
 
-    # Download xray config template
-    curl -fsSL "$REPO_URL/router/opt/etc/xray/config.json.template" -o "$XRAY_CONFIG_DIR/config.json.template" || {
-        print_error "Failed to download config.json.template"
-        exit 1
-    }
-    print_success "Installed $XRAY_CONFIG_DIR/config.json.template"
+    rm -f "$manifest"
 }
 
 ###############################################################################

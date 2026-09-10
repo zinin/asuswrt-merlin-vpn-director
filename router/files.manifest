@@ -1,0 +1,24 @@
+# VPN Director file manifest: one file per line, "<tag> <repo path>".
+# Tags: common (every platform), merlin (Asuswrt-Merlin), keenetic (KeeneticOS).
+# Install destination is "/" plus the path without the "router/" prefix.
+# Files are installed executable unless they end in .template, .json or .manifest.
+# install.sh and the Go updater both read this file; there is no other list.
+common   router/opt/vpn-director/vpn-director.sh
+common   router/opt/vpn-director/configure.sh
+common   router/opt/vpn-director/import_server_list.sh
+common   router/opt/vpn-director/setup_telegram_bot.sh
+common   router/opt/vpn-director/vpn-director.json.template
+common   router/opt/vpn-director/lib/common.sh
+common   router/opt/vpn-director/lib/firewall.sh
+common   router/opt/vpn-director/lib/config.sh
+common   router/opt/vpn-director/lib/ipset.sh
+common   router/opt/vpn-director/lib/tunnel.sh
+common   router/opt/vpn-director/lib/tproxy.sh
+common   router/opt/vpn-director/lib/xrayconf.sh
+common   router/opt/vpn-director/lib/send-email.sh
+common   router/opt/etc/xray/config.json.template
+common   router/opt/etc/init.d/S99vpn-director
+common   router/opt/etc/init.d/S98telegram-bot
+common   router/opt/etc/init.d/S98vpn-director-webui
+merlin   router/jffs/scripts/firewall-start
+merlin   router/jffs/scripts/wan-event
