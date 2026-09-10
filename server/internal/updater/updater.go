@@ -107,6 +107,7 @@ type Service struct {
 	scriptFile string // Configurable for testing
 	archSuffix string // Injectable for testing, empty = derived from runtime.GOARCH
 	shell      string // Injectable for testing, empty = /bin/sh
+	platform   string // Injectable for testing, empty = "merlin" until platform detection lands
 }
 
 // Verify Service implements Updater interface.
@@ -165,6 +166,16 @@ func (s *Service) getShell() string {
 		return s.shell
 	}
 	return "/bin/sh"
+}
+
+// getPlatform returns the manifest tag of the platform this daemon runs on.
+// Detection is wired in with the Keenetic daemon work; until then every
+// installed router is an Asuswrt-Merlin one.
+func (s *Service) getPlatform() string {
+	if s.platform != "" {
+		return s.platform
+	}
+	return "merlin"
 }
 
 // IsUpdateInProgress checks if a lock file exists and the process is still alive.

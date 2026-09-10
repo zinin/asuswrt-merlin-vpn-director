@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -196,21 +195,64 @@ func TestDownloadRelease_CleansBeforeDownload(t *testing.T) {
 	}
 }
 
-// TestDownloadRelease_UsesTheInjectedRawHost is why rawBaseURL exists: before
-// it, downloadScriptFile always addressed the real raw.githubusercontent.com,
-// so the unit suite reached the network on every `go test` - a dependency CI
-// would inherit. It was not slow about it: the tag these tests ask for does not
-// exist, so the run took one 404 and stopped at the first of the nineteen
-// files. This test is the first to drive all nineteen through a server it
-// controls, which is what lets it assert the count.
-func TestDownloadRelease_UsesTheInjectedRawHost(t *testing.T) {
+const testManifestBody = "common router/opt/vpn-director/vpn-director.sh\n" +
+	"common router/opt/vpn-director/lib/common.sh\n" +
+	"merlin router/jffs/scripts/firewall-start\n" +
+	"keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh\n"
+
+// TestDownloadRelease_FetchesManifestThenPlatformFiles drives the whole
+// download through a server the test controls: the manifest comes first, then
+// every common and merlin file in manifest order, and nothing tagged keenetic.
+func TestDownloadRelease_FetchesManifestThenPlatformFiles(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/"+manifestPath) {
+			w.Write([]byte(testManifestBody))
+			return
+		}
 		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	s := &Service{
+		httpClient: &http.Client{},
+		baseURL:    server.URL,
+		rawBaseURL: server.URL,
+		updateDir:  tempDir,
+		archSuffix: "arm64",
+		platform:   "merlin",
+	}
+
+	// No assets in the release, so downloadBinaries fails after the files.
+	_ = s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
+
+	mu.Lock()
+	defer mu.Unlock()
+	prefix := "/" + repoOwner + "/" + repoName + "/refs/tags/v1.0.0/"
+	want := []string{
+		prefix + manifestPath,
+		prefix + "router/opt/vpn-director/vpn-director.sh",
+		prefix + "router/opt/vpn-director/lib/common.sh",
+		prefix + "router/jffs/scripts/firewall-start",
+	}
+	if strings.Join(paths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("request paths:\n%s\nwant:\n%s", strings.Join(paths, "\n"), strings.Join(want, "\n"))
+	}
+	for _, f := range []string{"files/files.manifest", "files/opt/vpn-director/lib/common.sh", "files/jffs/scripts/firewall-start"} {
+		if _, err := os.Stat(filepath.Join(tempDir, f)); err != nil {
+			t.Errorf("%s not written: %v", f, err)
+		}
+	}
+}
+
+func TestDownloadRelease_FailsWithoutManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
@@ -221,18 +263,18 @@ func TestDownloadRelease_UsesTheInjectedRawHost(t *testing.T) {
 		updateDir:  t.TempDir(),
 		archSuffix: "arm64",
 	}
-
-	// No assets in the release, so downloadBinaries fails after the scripts.
-	_ = s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(paths) != len(scriptFiles) {
-		t.Fatalf("the test server saw %d requests, want %d - some file still goes to the real host", len(paths), len(scriptFiles))
+	err := s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
+	if err == nil || !strings.Contains(err.Error(), "files.manifest") {
+		t.Fatalf("DownloadRelease() error = %v, want one naming files.manifest", err)
 	}
-	want := "/" + repoOwner + "/" + repoName + "/refs/tags/v1.0.0/" + scriptFiles[0]
-	if paths[0] != want {
-		t.Errorf("first request path = %q, want %q", paths[0], want)
+}
+
+func TestGetPlatform_DefaultsToMerlin(t *testing.T) {
+	if got := (&Service{}).getPlatform(); got != "merlin" {
+		t.Errorf("getPlatform() = %q, want merlin", got)
+	}
+	if got := (&Service{platform: "keenetic"}).getPlatform(); got != "keenetic" {
+		t.Errorf("getPlatform() = %q, want the injected platform", got)
 	}
 }
 
@@ -277,60 +319,6 @@ func TestDownloadScriptFile_PathTransformation(t *testing.T) {
 		result := strings.TrimPrefix(tc.input, "router")
 		if result != tc.expected {
 			t.Errorf("TrimPrefix(%q, \"router\") = %q, want %q", tc.input, result, tc.expected)
-		}
-	}
-}
-
-func TestScriptFiles_ExistInRepo(t *testing.T) {
-	// The list is a copy of install.sh's downloads; a renamed or removed file
-	// silently breaks every future update, so pin it to the working tree.
-	for _, f := range scriptFiles {
-		path := filepath.Join("..", "..", "..", f)
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("scriptFiles entry %q not found in the repo: %v", f, err)
-		}
-	}
-}
-
-func TestScriptFiles_IncludesWebUIInitScript(t *testing.T) {
-	const want = "router/opt/etc/init.d/S98vpn-director-webui"
-	for _, f := range scriptFiles {
-		if f == want {
-			return
-		}
-	}
-	t.Errorf("scriptFiles must ship %s, otherwise an update leaves the old init script", want)
-}
-
-// TestScriptFiles_MatchInstallSh closes the last hole in the single-source-of-
-// truth claim. TestScriptFiles_ExistInRepo catches a file renamed in the tree;
-// nothing catches a file added to one of the two lists and not the other, and
-// the two lists are what decide whether an update leaves a stale script behind.
-func TestScriptFiles_MatchInstallSh(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "install.sh"))
-	if err != nil {
-		t.Fatalf("read install.sh: %v", err)
-	}
-
-	// Every path install.sh fetches appears as a router/... literal: eighteen
-	// in download_scripts' loop plus the xray template right after it. The
-	// trailing + excludes the bare "router/" of `target="/${script#router/}"`.
-	re := regexp.MustCompile(`router/[A-Za-z0-9._/-]+`)
-	inInstaller := make(map[string]bool)
-	for _, m := range re.FindAllString(string(data), -1) {
-		inInstaller[m] = true
-	}
-
-	inGo := make(map[string]bool, len(scriptFiles))
-	for _, f := range scriptFiles {
-		inGo[f] = true
-		if !inInstaller[f] {
-			t.Errorf("scriptFiles ships %q but install.sh does not download it: a fresh install would miss the file", f)
-		}
-	}
-	for f := range inInstaller {
-		if !inGo[f] {
-			t.Errorf("install.sh downloads %q but scriptFiles does not: an update would leave the old one in place", f)
 		}
 	}
 }

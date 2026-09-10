@@ -21,34 +21,8 @@ const (
 	maxFileSize     = 50 * 1024 * 1024 // 50MB
 )
 
-// scriptFiles lists all files to download from the repository.
-// NOTE: Keep in sync with install.sh file list.
-// See: download_scripts() in install.sh - the loop over the same paths, plus
-// the xray config template it fetches right after it.
-var scriptFiles = []string{
-	"router/opt/vpn-director/vpn-director.sh",
-	"router/opt/vpn-director/configure.sh",
-	"router/opt/vpn-director/import_server_list.sh",
-	"router/opt/vpn-director/setup_telegram_bot.sh",
-	"router/opt/vpn-director/vpn-director.json.template",
-	"router/opt/vpn-director/lib/common.sh",
-	"router/opt/vpn-director/lib/firewall.sh",
-	"router/opt/vpn-director/lib/config.sh",
-	"router/opt/vpn-director/lib/ipset.sh",
-	"router/opt/vpn-director/lib/tunnel.sh",
-	"router/opt/vpn-director/lib/tproxy.sh",
-	"router/opt/vpn-director/lib/xrayconf.sh",
-	"router/opt/vpn-director/lib/send-email.sh",
-	"router/opt/etc/xray/config.json.template",
-	"router/opt/etc/init.d/S99vpn-director",
-	"router/opt/etc/init.d/S98telegram-bot",
-	"router/opt/etc/init.d/S98vpn-director-webui",
-	"router/jffs/scripts/firewall-start",
-	"router/jffs/scripts/wan-event",
-}
-
-// DownloadRelease downloads all files for the given release.
-// Cleans files/ directory before starting.
+// DownloadRelease downloads the release manifest, then every file it lists
+// for this platform, then the daemon binaries. Cleans files/ before starting.
 func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 	filesDir := s.getFilesDir()
 
@@ -60,8 +34,12 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 		return fmt.Errorf("create files directory: %w", err)
 	}
 
-	// Download scripts
-	for _, file := range scriptFiles {
+	entries, err := s.fetchManifest(ctx, release.TagName)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range manifestFilesFor(entries, s.getPlatform()) {
 		if err := s.downloadScriptFile(ctx, release.TagName, file); err != nil {
 			return fmt.Errorf("download %s: %w", file, err)
 		}
@@ -73,6 +51,21 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 	}
 
 	return nil
+}
+
+// fetchManifest downloads router/files.manifest of the release into files/
+// (the update script reads it from there) and parses it. A release without a
+// manifest cannot be installed.
+func (s *Service) fetchManifest(ctx context.Context, tag string) ([]ManifestEntry, error) {
+	if err := s.downloadScriptFile(ctx, tag, manifestPath); err != nil {
+		return nil, fmt.Errorf("release %s has no files.manifest: %w", tag, err)
+	}
+	f, err := os.Open(filepath.Join(s.getFilesDir(), "files.manifest"))
+	if err != nil {
+		return nil, fmt.Errorf("open downloaded files.manifest: %w", err)
+	}
+	defer f.Close()
+	return parseManifest(f)
 }
 
 // getRawBaseURL returns the host that serves repository files at a tag. Tests
