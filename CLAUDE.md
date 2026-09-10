@@ -1,6 +1,10 @@
-# VPN Director for Asuswrt-Merlin
+# VPN Director
 
-Traffic routing system for Asus routers: Xray TPROXY, Tunnel Director, IPSet Builder.
+Traffic routing system for home routers: Xray TPROXY, Tunnel Director, IPSet Builder.
+
+Firmware-specific facts belong behind the platform contract in `lib/platform.sh`, implemented
+per platform under `lib/platform/`; the implementation shipped today is Asuswrt-Merlin
+(`lib/platform/merlin.sh`).
 
 ## Commands
 
@@ -14,6 +18,8 @@ curl -fsSL https://raw.githubusercontent.com/zinin/vpn-director/master/install.s
 /opt/vpn-director/vpn-director.sh stop                # Stop all components
 /opt/vpn-director/vpn-director.sh restart             # Restart all
 /opt/vpn-director/vpn-director.sh update              # Update ipsets + reapply
+/opt/vpn-director/vpn-director.sh platform            # Platform facts as JSON (tunnels, WAN, password file)
+/opt/vpn-director/vpn-director.sh cron install        # Schedule the daily update (S99 does this)
 /opt/vpn-director/vpn-director.sh --wait apply        # Queue for a running instance (120 s) instead of skipping
 
 # Component-specific commands
@@ -40,6 +46,9 @@ cd server && go run ./cmd/webui --dev
 |------|---------|
 | `router/opt/vpn-director/vpn-director.sh` | Unified CLI entry point |
 | `router/opt/vpn-director/lib/common.sh` | Core utilities: log, tmp_file, download_file, resolve_ip |
+| `router/opt/vpn-director/lib/platform.sh` | Platform detection (`VPD_PLATFORM`) and loader of the platform contract |
+| `router/opt/vpn-director/lib/platform/merlin.sh` | Asuswrt-Merlin implementation: nvram, rt_tables, cru |
+| `router/files.manifest` | Shipped files with platform tags; read by `install.sh` and the updater |
 | `router/opt/vpn-director/lib/firewall.sh` | Firewall helpers: chain, rule, block/allow host |
 | `router/opt/vpn-director/lib/config.sh` | JSON config loader (vpn-director.json → shell vars) |
 | `router/opt/vpn-director/lib/ipset.sh` | IPSet module: ensure, update, status |
@@ -74,6 +83,8 @@ cd server && go run ./cmd/webui --dev
 ```
 - All traffic from `clients` goes through tunnel
 - Traffic to destinations in `exclude` bypasses VPN (direct)
+- A tunnel key is any id `platform_tunnels` lists (Merlin: `wgcN` and `ovpncN` from
+  `/etc/iproute2/rt_tables`, plus `main`); a key the platform does not list is skipped with a warning
 
 **IPSet Types**: Country sets — 2-letter ISO codes from multi-source download
 
@@ -102,6 +113,8 @@ cd server && go run ./cmd/webui --dev
 - Debug: `DEBUG=1 ./script.sh` enables tracing with informative PS4
 - Conditionals: Use `[[ ]]` instead of `[ ]`
 - Logging: `log -l ERROR|WARN|INFO|DEBUG|TRACE "message"`
+- Platform facts (WAN, tunnels, cron, kernel modules) come only from `platform_*` functions; core
+  modules never test the platform name. Tests set `VPD_PLATFORM=merlin` through `test_helper.bash`
 
 ## Modular Docs
 

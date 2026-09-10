@@ -58,9 +58,10 @@ Incoming packet from LAN (br0)
 
 **Xray has absolute priority** because:
 
-1. XRAY_TPROXY is at position 1 in PREROUTING (hardcoded)
+1. XRAY_TPROXY jumps are inserted from position 1 in PREROUTING, one per LAN interface
+   (`platform_lan_ifaces`; Merlin: `br0`)
 2. TPROXY target **redirects** the packet to local Xray socket
-3. Packet never continues to TUN_DIR_* chains
+3. Packet never continues to the TUN_DIR chain
 
 **Implication**: If a client IP is in both `xray.clients` and a TD rule, traffic goes through Xray only. TD rule is ignored for that client.
 
@@ -138,7 +139,7 @@ TUN_DIR chain:
   -s 192.168.1.5 -m mark --mark 0x0/0xff0000 → MARK 0x20000
 ```
 
-PREROUTING jump:
+PREROUTING jump, one per LAN interface (`platform_lan_ifaces`; Merlin: `br0`):
 
 ```
 -i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR
@@ -149,18 +150,22 @@ The `--mark 0x0/0xff0000` condition ensures **first-match-wins**: once a packet 
 ### Position Calculation
 
 ```bash
-_tunnel_get_prerouting_base_pos()  # Returns position after system iface-mark rules
+platform_prerouting_base_pos()  # Platform contract; Merlin: the position after the
+                                # firmware's iface-mark rules, or 1 when it has none
 ```
 
-Typically:
+Each LAN interface gets its own jump, at `base_pos`, `base_pos + 1`, … — one shared position would
+make every interface displace the one before it, and each rewrite is a window with no jump.
+
+Typically (Merlin, one LAN interface):
 - Position 1: XRAY_TPROXY
-- Position 2+: System rules (if any)
+- Position 2+: Firmware iface-mark rules (if any)
 - Position N: TUN_DIR (single chain)
 
 ### IP Rules
 
 ```bash
-# For each TD rule:
+# For each TD rule; the table is the one platform_tunnel_table names for the tunnel id:
 ip rule add pref {16384 + idx} fwmark {mark}/{mask} table {wgc1|ovpnc1|main}
 ```
 
@@ -186,7 +191,7 @@ Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 Packet from 192.168.50.10 to 203.0.113.1 (excluded country):
 1. XRAY_TPROXY: src in XRAY_CLIENTS? Yes
 2. dst in excluded country? Yes → **RETURN**
-3. TUN_DIR_*: no rules for this client
+3. TUN_DIR: no rules for this client
 4. **Goes to main table → WAN (direct)**
 
 ### Example 2: Client in Tunnel Director only
@@ -266,13 +271,15 @@ Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 | File | Purpose |
 |------|---------|
 | `/tmp/tunnel_director/tun_dir_rules.sha256` | Hash of applied TD rules |
+| `/tmp/tunnel_director/tun_dir_tables` | Applied tunnels, `<idx> <id>` per line (`TUN_DIR_TABLES`) |
 
 ## Key Code Locations
 
 | File | Function | Purpose |
 |------|----------|---------|
-| `lib/tproxy.sh:316-317` | PREROUTING insert pos 1 | Xray priority |
-| `lib/tproxy.sh:256-313` | `_tproxy_setup_iptables()` | Chain rules |
-| `lib/tunnel.sh:133-145` | `_tunnel_get_prerouting_base_pos()` | TD position calc |
-| `lib/tunnel.sh:421-422` | PREROUTING jump with mark check | First-match-wins |
-| `lib/tunnel.sh:412` | ip rule creation | Fwmark → table routing |
+| `lib/tproxy.sh:475-481` | PREROUTING jumps from pos 1 | Xray priority |
+| `lib/tproxy.sh:397-484` | `_tproxy_setup_iptables()` | Chain rules |
+| `lib/platform/merlin.sh:146-160` | `platform_prerouting_base_pos()` | TD position calc |
+| `lib/tunnel.sh:444-450` | PREROUTING jump with mark check | First-match-wins |
+| `lib/tunnel.sh:428-429` | ip rule creation | Fwmark → table routing |
+| `lib/tunnel.sh:128-137` | `_tunnel_ensure_routes()` | Re-install tunnel routes on an apply with no rebuild |

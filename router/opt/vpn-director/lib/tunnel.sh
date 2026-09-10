@@ -101,9 +101,9 @@ _tunnel_init() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _tunnel_table_allowed - check if routing table is valid
+# _tunnel_table_allowed - check the tunnel id is one the platform lists
 # -------------------------------------------------------------------------------------------------
-# Returns 0 if table is valid (wgcN, ovpncN, or main), 1 otherwise.
+# Returns 0 if the id is in _tunnel_valid_tables (built from platform_tunnels), 1 otherwise.
 # -------------------------------------------------------------------------------------------------
 _tunnel_table_allowed() {
     local table="${1:-}"

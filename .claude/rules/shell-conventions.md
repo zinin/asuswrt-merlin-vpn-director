@@ -30,12 +30,17 @@ paths: "**/*.sh, jffs/**/*"
 | `is_lan_ip [-6] <ip>` | Check if IP is in RFC1918/ULA range |
 | `is_pos_int <value>` | Check if value is positive integer (>=1) |
 | `strip_comments [text]` | Remove blank lines and # comments |
-| `get_active_wan_if` | Get active WAN interface name |
-| `get_ipv6_enabled` | Returns 1 if IPv6 enabled, 0 otherwise |
+| `platform_wan_if` | Active WAN interface (platform contract; `get_active_wan_if` is a wrapper) |
+| `platform_ipv6_enabled` | 1 when IPv6 is enabled (platform contract; `get_ipv6_enabled` is a wrapper) |
+| `platform_tunnels`, `platform_tunnel_table`, `platform_load_module`, `platform_cron_add` | Other platform facts; see `lib/platform.sh` header for the whole contract |
 | `download_file <url> <dest> [timeout]` | Download with retry (wget/curl fallback) |
 | `log_error_trace <msg>` | Log error with bash stack trace |
 
 **Logging**: `LOG_FILE=/tmp/vpn-director.log` with 200KB rotation
+
+**Platform contract**: `common.sh` sources `lib/platform.sh` at its end, so every script that
+sources `common.sh` can call `platform_*`. Firmware-specific facts belong in
+`lib/platform/<name>.sh`; no core module tests `VPD_PLATFORM` itself.
 
 ## Firewall Utilities (firewall.sh)
 
@@ -48,8 +53,8 @@ paths: "**/*.sh, jffs/**/*"
 | `purge_fw_rules [-6] [-q] [--count] "<table> <chain>" "<pattern>"` | Remove matching rules |
 | `ensure_fw_rule [-6] [-q] [--count] <table> <chain> [-I [pos]\|-D] <rule>` | Idempotent rule add/delete |
 | `sync_fw_rule [-6] [-q] [--count] <table> <chain> "<pattern>" "<desired>" [pos]` | Replace matching rules with one |
-| `block_wan_for_host <host> [wan_id]` | Block host from WAN (IPv4/IPv6) |
-| `allow_wan_for_host <host> [wan_id]` | Unblock host from WAN |
+| `block_wan_for_host <host>` | Block host from WAN (IPv4/IPv6); WAN interface from `platform_wan_if` |
+| `allow_wan_for_host <host>` | Unblock host from WAN |
 | `chg <cmd>` | Returns true if command output is non-zero integer |
 | `validate_port <N>` | Validate port 1-65535 |
 | `validate_ports <spec>` | Validate port spec (any, N, N-M, N,N2) |

@@ -33,7 +33,7 @@ Routes LAN client traffic through VPN tunnels. All traffic goes through the tunn
 
 | Field | Description |
 |-------|-------------|
-| Tunnel key | Routing table name: `wgc1`, `ovpnc1`, `main` |
+| Tunnel key | A tunnel id `platform_tunnels` lists (Merlin: `wgcN`, `ovpncN` from `/etc/iproute2/rt_tables`, plus `main`) |
 | `clients` | Array of LAN IPs/CIDRs (RFC1918 only) |
 | `exclude` | Array of country codes for direct routing |
 
@@ -73,11 +73,16 @@ Default: bits 16-23 (8 bits = 255 tunnels max)
 
 | File | Purpose |
 |------|---------|
-| `/tmp/tunnel_director/tun_dir_rules.sha256` | Hash of last applied config |
+| `/tmp/tunnel_director/tun_dir_rules.sha256` | Hash of last applied config (`TUN_DIR_HASH`) |
+| `/tmp/tunnel_director/tun_dir_tables` | Applied tunnels, `<idx> <id>` per line (`TUN_DIR_TABLES`) |
+
+`tunnel_apply` writes both; `tunnel_stop` walks `TUN_DIR_TABLES` to release each tunnel's table
+through `platform_tunnel_table_release`, then removes both files.
 
 **Rebuild triggers**:
 - Config hash changed
 - Chain does not exist
+- `TUN_DIR_TABLES` is missing
 
 ## Key Functions
 
@@ -87,19 +92,19 @@ Default: bits 16-23 (8 bits = 255 tunnels max)
 |----------|---------|
 | `tunnel_status()` | Show chain, ip rules, configured tunnels |
 | `tunnel_apply()` | Apply rules from config (idempotent) |
-| `tunnel_stop()` | Remove chain and ip rules |
+| `tunnel_stop()` | Remove chain, ip rules and the tunnel tables this module owns |
 | `tunnel_get_required_ipsets()` | Return list of exclude ipsets needed |
 
 **Internal functions** (for testing):
 
 | Function | Purpose |
 |----------|---------|
-| `_tunnel_init()` | Initialize module state (valid tables, fwmark helpers) |
-| `_tunnel_table_allowed(table)` | Validate routing table (wgcN, ovpncN, main) |
-| `_tunnel_get_prerouting_base_pos()` | Find insert position after system rules |
+| `_tunnel_init()` | Initialize module state (valid tables from `platform_tunnels`, fwmark helpers) |
+| `_tunnel_table_allowed(id)` | Check the tunnel id is one `platform_tunnels` lists |
+| `_tunnel_ensure_routes()` | Re-install the routes of the applied tunnels (used when nothing needs rebuilding) |
 
 **Module state variables**:
-- `_tunnel_valid_tables` - space-separated list of allowed routing tables
+- `_tunnel_valid_tables` - space-separated tunnel ids from `platform_tunnels`
 - `_tunnel_mark_field_max` - max tunnels that fit in fwmark field (default: 255)
 - `_tunnel_mark_mask_hex` - hex string of `TUN_DIR_MARK_MASK`
 
@@ -109,7 +114,11 @@ From `lib/common.sh`: `log`, `tmp_file`, `compute_hash`, `is_lan_ip`
 
 From `lib/firewall.sh`: `create_fw_chain`, `delete_fw_chain`, `ensure_fw_rule`, `sync_fw_rule`, `purge_fw_rules`, `fw_chain_exists`
 
-From `lib/ipset.sh`: `_ipset_exists`, `parse_exclude_sets_from_json`, `TUN_DIR_HASH`
+From `lib/ipset.sh`: `_ipset_exists`, `parse_exclude_sets_from_json`, `TUN_DIR_HASH`, `TUN_DIR_TABLES`
+
+From the platform contract (`lib/platform.sh`, sourced by `common.sh`): `platform_tunnels`,
+`platform_tunnel_table`, `platform_tunnel_route_ensure`, `platform_tunnel_table_release`,
+`platform_prerouting_base_pos`, `platform_lan_ifaces`
 
 ## Requirements
 
