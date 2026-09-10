@@ -36,6 +36,7 @@ type scriptData struct {
 	NotifyFile string
 	LockFile   string
 	Daemons    []Daemon
+	Files      []FileEntry
 }
 
 // RunUpdateScript generates the update script and runs it detached.
@@ -117,6 +118,18 @@ func (s *Service) updateCommand(scriptPath string, out *os.File) *exec.Cmd {
 	return cmd
 }
 
+// loadPayloadManifest reads files/files.manifest of the downloaded release.
+// DownloadRelease always writes it before RunUpdateScript can run; its absence
+// means the payload is not a release this binary can install.
+func (s *Service) loadPayloadManifest() ([]ManifestEntry, error) {
+	f, err := os.Open(filepath.Join(s.getFilesDir(), "files.manifest"))
+	if err != nil {
+		return nil, fmt.Errorf("update payload has no files.manifest: %w", err)
+	}
+	defer f.Close()
+	return parseManifest(f)
+}
+
 // generateScript creates the update script content from template.
 func (s *Service) generateScript(opts RunOptions) (string, error) {
 	tmpl, err := template.New("update").Parse(updateScriptTemplate)
@@ -125,6 +138,11 @@ func (s *Service) generateScript(opts RunOptions) (string, error) {
 	}
 
 	updateDir := s.getUpdateDir()
+
+	entries, err := s.loadPayloadManifest()
+	if err != nil {
+		return "", err
+	}
 
 	data := scriptData{
 		ChatID:     opts.ChatID,
@@ -136,6 +154,7 @@ func (s *Service) generateScript(opts RunOptions) (string, error) {
 		NotifyFile: filepath.Join(updateDir, "notify.json"),
 		LockFile:   filepath.Join(updateDir, "lock"),
 		Daemons:    Daemons,
+		Files:      fileEntries(entries, s.getPlatform()),
 	}
 
 	var buf bytes.Buffer

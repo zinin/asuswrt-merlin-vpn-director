@@ -74,3 +74,21 @@ func isExecutable(path string) bool {
 	}
 	return true
 }
+
+// FileEntry is one file the update script installs: Src relative to the
+// payload's files/ directory, Dst absolute on the router.
+type FileEntry struct {
+	Src  string
+	Dst  string
+	Exec bool
+}
+
+// fileEntries turns the manifest lines for platform into copy instructions.
+func fileEntries(entries []ManifestEntry, platform string) []FileEntry {
+	var files []FileEntry
+	for _, p := range manifestFilesFor(entries, platform) {
+		rel := strings.TrimPrefix(p, "router/")
+		files = append(files, FileEntry{Src: rel, Dst: "/" + rel, Exec: isExecutable(p)})
+	}
+	return files
+}

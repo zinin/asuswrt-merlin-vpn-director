@@ -133,3 +133,26 @@ func TestRepoManifest_ShipsUpdateCriticalFiles(t *testing.T) {
 		t.Errorf("firewall-start must be tagged merlin, got %q", have["router/jffs/scripts/firewall-start"])
 	}
 }
+
+func TestFileEntries(t *testing.T) {
+	entries := []ManifestEntry{
+		{Tag: "common", Path: "router/opt/vpn-director/lib/common.sh"},
+		{Tag: "common", Path: "router/opt/vpn-director/vpn-director.json.template"},
+		{Tag: "merlin", Path: "router/jffs/scripts/firewall-start"},
+		{Tag: "keenetic", Path: "router/opt/etc/ndm/netfilter.d/50-vpn-director.sh"},
+	}
+	got := fileEntries(entries, "merlin")
+	want := []FileEntry{
+		{Src: "opt/vpn-director/lib/common.sh", Dst: "/opt/vpn-director/lib/common.sh", Exec: true},
+		{Src: "opt/vpn-director/vpn-director.json.template", Dst: "/opt/vpn-director/vpn-director.json.template", Exec: false},
+		{Src: "jffs/scripts/firewall-start", Dst: "/jffs/scripts/firewall-start", Exec: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("fileEntries() = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
