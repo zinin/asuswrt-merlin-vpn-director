@@ -9,6 +9,8 @@ common   router/opt/vpn-director/import_server_list.sh
 common   router/opt/vpn-director/setup_telegram_bot.sh
 common   router/opt/vpn-director/vpn-director.json.template
 common   router/opt/vpn-director/lib/common.sh
+common   router/opt/vpn-director/lib/platform.sh
+common   router/opt/vpn-director/lib/platform/merlin.sh
 common   router/opt/vpn-director/lib/firewall.sh
 common   router/opt/vpn-director/lib/config.sh
 common   router/opt/vpn-director/lib/ipset.sh

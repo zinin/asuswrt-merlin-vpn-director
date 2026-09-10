@@ -26,6 +26,10 @@ export LIB_DIR="$SCRIPTS_DIR/lib"
 export TEST_MODE=1
 export LOG_FILE="/tmp/bats_test_vpn_director.log"
 
+# Platform under test. lib/platform.sh skips detection when this is set, so
+# the suite never depends on /jffs or /opt/etc/ndm of the machine running it.
+export VPD_PLATFORM="${VPD_PLATFORM:-merlin}"
+
 # Override system paths for mocks
 setup() {
     export PATH="$TEST_ROOT/mocks:$PATH"

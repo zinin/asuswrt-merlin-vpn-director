@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+
+###################################################################################################
+# platform.sh - platform detection and loader for the platform contract
+# -------------------------------------------------------------------------------------------------
+# VPN Director runs on Asuswrt-Merlin and on KeeneticOS. Everything the core
+# modules need from the firmware goes through the platform_* functions defined
+# in lib/platform/<name>.sh; the core never tests the platform name itself.
+#
+# Sourcing this file:
+#   1. Uses VPD_PLATFORM when the environment already set it (tests, overrides).
+#   2. Otherwise detects the platform from the file system (platform_detect).
+#   3. Sources lib/platform/<name>.sh, which defines the contract functions.
+# A platform that is neither known nor implemented aborts the sourcing script
+# with "unsupported platform".
+#
+# Contract (every function prints its answer on stdout and returns 0; when it
+# cannot answer it prints nothing and returns 1; none of them logs an ERROR):
+#   platform_name                          merlin | keenetic
+#   platform_wan_if                        active WAN interface name
+#   platform_ipv6_enabled                  1 | 0
+#   platform_lan_ifaces                    LAN interface names, one per line
+#   platform_tunnels                       tunnel ids, one per line, "main" last
+#   platform_tunnel_iface <id>             Linux interface of a tunnel
+#   platform_tunnel_info <id>              three lines: type, connected (1|0), description
+#   platform_tunnel_table <id> <idx>       routing table for "ip rule ... lookup"
+#   platform_tunnel_route <id>             route spec for the tunnel table (Keenetic)
+#   platform_tunnel_route_ensure <id> <idx> install the tunnel table route
+#   platform_tunnel_table_release <id> <idx> drop the tunnel table route
+#   platform_vpn_endpoints                 firmware VPN server hosts, one per line
+#   platform_load_module <name>            load a kernel module
+#   platform_cron_add <name> <schedule> <cmd> / platform_cron_del <name>
+#   platform_tproxy_extra_rules apply|stop platform-only firewall rules for TPROXY
+#   platform_prerouting_base_pos           insert position for TUN_DIR in mangle PREROUTING
+#   platform_password_file                 file the Web UI verifies passwords against
+#   platform_lan_ip, platform_hostname, platform_model
+#   platform_email_supported               1 | 0
+#
+# Testing: VPD_PROBE_ROOT prefixes every path platform_detect looks at.
+###################################################################################################
+
+# -------------------------------------------------------------------------------------------------
+# platform_detect - print the platform this system is, or fail
+# -------------------------------------------------------------------------------------------------
+platform_detect() {
+    local root="${VPD_PROBE_ROOT:-}"
+    if [[ -d "$root/opt/etc/ndm" ]] && [[ -x "$root/bin/ndmc" ]]; then
+        printf 'keenetic\n'
+        return 0
+    fi
+    if [[ -d "$root/jffs" ]] && [[ -x "$root/bin/nvram" ]]; then
+        printf 'merlin\n'
+        return 0
+    fi
+    return 1
+}
+
+# -------------------------------------------------------------------------------------------------
+# Resolve the platform and load its implementation
+# -------------------------------------------------------------------------------------------------
+if [[ -z ${VPD_PLATFORM:-} ]]; then
+    if ! VPD_PLATFORM="$(platform_detect)"; then
+        printf 'unsupported platform: neither Asuswrt-Merlin nor Keenetic detected\n' >&2
+        # shellcheck disable=SC2317
+        return 1 2>/dev/null || exit 1
+    fi
+fi
+export VPD_PLATFORM
+
+case "$VPD_PLATFORM" in
+    merlin|keenetic) ;;
+    *)
+        printf 'unsupported platform: %s\n' "$VPD_PLATFORM" >&2
+        # shellcheck disable=SC2317
+        return 1 2>/dev/null || exit 1
+        ;;
+esac
+
+_platform_impl="${BASH_SOURCE[0]%/*}/platform/${VPD_PLATFORM}.sh"
+if [[ ! -f $_platform_impl ]]; then
+    printf 'platform implementation not found: %s\n' "$_platform_impl" >&2
+    # shellcheck disable=SC2317
+    return 1 2>/dev/null || exit 1
+fi
+# shellcheck disable=SC1090
+. "$_platform_impl"
+unset _platform_impl

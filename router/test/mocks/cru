@@ -1,0 +1,4 @@
+#!/bin/bash
+# Mock cru (Asuswrt-Merlin cron helper) - records the call and succeeds
+echo "cru $*" >> /tmp/bats_cru_calls.log
+exit 0
