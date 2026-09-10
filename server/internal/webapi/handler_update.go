@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
 )
 
 // writeGitHubError answers 502 when err came from the GitHub API and reports

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // collectProgress returns a progress func and a getter for what it received.

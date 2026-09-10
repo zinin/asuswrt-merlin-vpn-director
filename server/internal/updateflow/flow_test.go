@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // mockUpdater implements updater.Updater for testing.

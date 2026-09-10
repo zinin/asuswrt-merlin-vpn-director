@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // XrayService handles Xray configuration generation

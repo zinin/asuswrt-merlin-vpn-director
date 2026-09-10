@@ -19,7 +19,7 @@ func TestGetLatestRelease(t *testing.T) {
 		}
 
 		// Verify endpoint
-		expectedPath := "/repos/zinin/asuswrt-merlin-vpn-director/releases/latest"
+		expectedPath := "/repos/zinin/vpn-director/releases/latest"
 		if r.URL.Path != expectedPath {
 			t.Errorf("Expected path %q, got %q", expectedPath, r.URL.Path)
 		}
@@ -277,5 +277,14 @@ func TestGetLatestRelease_Timeout(t *testing.T) {
 	_, err := s.GetLatestRelease(ctx)
 	if err == nil {
 		t.Error("GetLatestRelease() should fail when request times out")
+	}
+}
+
+// TestRepoName_IsRenamed pins the release location: the repository was
+// renamed from asuswrt-merlin-vpn-director, and an updater still pointing at
+// the old name would only keep working while GitHub's redirect lasts.
+func TestRepoName_IsRenamed(t *testing.T) {
+	if repoName != "vpn-director" {
+		t.Fatalf("repoName = %q, want vpn-director", repoName)
 	}
 }

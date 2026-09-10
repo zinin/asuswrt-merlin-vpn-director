@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/shell"
 )
 
 // Per-command limits for vpn-director.sh. A limit is a safety net against a

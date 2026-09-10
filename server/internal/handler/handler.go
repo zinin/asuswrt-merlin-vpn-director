@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/paths"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/telegram"
 )
 
 // Deps holds dependencies for all handlers

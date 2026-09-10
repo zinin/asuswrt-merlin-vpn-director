@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // Cache windows for Check. GitHub allows 60 unauthenticated requests an hour

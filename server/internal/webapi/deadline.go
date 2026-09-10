@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // Response deadlines for handlers that run shell commands. Each is the

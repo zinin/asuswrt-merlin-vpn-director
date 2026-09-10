@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 func TestUpdateAndApply_OK(t *testing.T) {

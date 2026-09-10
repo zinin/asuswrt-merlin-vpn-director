@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // --config names the file. Deriving the directory from it and appending

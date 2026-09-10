@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 type ClientsHandler struct {

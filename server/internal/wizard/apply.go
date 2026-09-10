@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // StateClearer is the interface for clearing wizard state

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/shell"
 )
 
 // safeCommands lists commands that are safe to execute in dev mode

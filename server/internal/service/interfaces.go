@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // ConfigStore, VPNDirector, XrayGenerator, NetworkInfo, LogReader interfaces are defined here

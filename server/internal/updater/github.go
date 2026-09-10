@@ -11,7 +11,7 @@ import (
 // GitHub API constants.
 const (
 	repoOwner        = "zinin"
-	repoName         = "asuswrt-merlin-vpn-director"
+	repoName         = "vpn-director"
 	defaultAPIURL    = "https://api.github.com"
 	releasesEndpoint = "/repos/%s/%s/releases/latest"
 

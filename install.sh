@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 VPD_DIR="/opt/vpn-director"
 JFFS_HOOKS_DIR="/jffs/scripts"
 XRAY_CONFIG_DIR="/opt/etc/xray"
-GITHUB_REPO="zinin/asuswrt-merlin-vpn-director"
+GITHUB_REPO="zinin/vpn-director"
 INIT_DIR="/opt/etc/init.d"
 WEBUI_URL=""   # set by start_webui once the daemon answers; read by print_next_steps
 

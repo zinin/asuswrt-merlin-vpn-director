@@ -6,7 +6,7 @@ Traffic routing system for Asus routers: Xray TPROXY, Tunnel Director, IPSet Bui
 
 ```bash
 # Install
-curl -fsSL https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zinin/vpn-director/master/install.sh | bash
 
 # VPN Director CLI
 /opt/vpn-director/vpn-director.sh status              # Show all status

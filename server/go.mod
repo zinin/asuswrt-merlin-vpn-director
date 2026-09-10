@@ -1,4 +1,4 @@
-module github.com/zinin/asuswrt-merlin-vpn-director/server
+module github.com/zinin/vpn-director/server
 
 go 1.25.5
 

@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // countryCodeRe matches a two-letter ISO country code in lowercase, the form

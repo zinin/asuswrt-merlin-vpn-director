@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/chatstore"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/chatstore"
+	"github.com/zinin/vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // Default paths for update notification files.

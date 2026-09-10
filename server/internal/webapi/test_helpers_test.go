@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/auth"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // mockVPN implements service.VPNDirector for testing.

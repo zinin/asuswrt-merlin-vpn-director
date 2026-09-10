@@ -8,16 +8,16 @@ import (
 	"log/slog"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/chatstore"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/config"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/handler"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/startup"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/wizard"
+	"github.com/zinin/vpn-director/server/internal/chatstore"
+	"github.com/zinin/vpn-director/server/internal/config"
+	"github.com/zinin/vpn-director/server/internal/handler"
+	"github.com/zinin/vpn-director/server/internal/paths"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/startup"
+	"github.com/zinin/vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/wizard"
 )
 
 // Bot is the main Telegram bot struct with DI

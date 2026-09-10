@@ -15,15 +15,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/devmode"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/logging"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/webapi"
+	"github.com/zinin/vpn-director/server/internal/auth"
+	"github.com/zinin/vpn-director/server/internal/devmode"
+	"github.com/zinin/vpn-director/server/internal/logging"
+	"github.com/zinin/vpn-director/server/internal/paths"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/webapi"
 )
 
 var (

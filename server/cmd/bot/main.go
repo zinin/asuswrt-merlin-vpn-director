@@ -13,14 +13,14 @@ import (
 
 	"errors"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/bot"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/chatstore"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/config"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/devmode"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/logging"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updatechecker"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/bot"
+	"github.com/zinin/vpn-director/server/internal/chatstore"
+	"github.com/zinin/vpn-director/server/internal/config"
+	"github.com/zinin/vpn-director/server/internal/devmode"
+	"github.com/zinin/vpn-director/server/internal/logging"
+	"github.com/zinin/vpn-director/server/internal/paths"
+	"github.com/zinin/vpn-director/server/internal/updatechecker"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 var (

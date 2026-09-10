@@ -9,7 +9,7 @@ import (
 	"time"
 
 	jwtlib "github.com/golang-jwt/jwt/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
+	"github.com/zinin/vpn-director/server/internal/auth"
 )
 
 func newTestJWT(t *testing.T) *auth.JWTService {
