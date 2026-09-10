@@ -81,9 +81,16 @@ platform_tunnel_info() {
     printf '%s\n%s\n%s\n' "$type" "$connected" "$desc"
 }
 
-# The firmware keeps a routing table per tunnel under the tunnel's own name.
+# The firmware keeps a routing table per tunnel under the tunnel's own name, so
+# the mapping is the identity for every id platform_tunnels lists - "main"
+# included, which is why this cannot just defer to platform_tunnel_iface (that
+# one has no interface to name for "main"). Anything that is not a tunnel id at
+# all gets the contract's general answer: nothing on stdout, rc 1.
 platform_tunnel_table() {
-    printf '%s\n' "${1:-}"
+    case "${1:-}" in
+        wgc[0-9]*|ovpnc[0-9]*|main) printf '%s\n' "$1" ;;
+        *)                          return 1 ;;
+    esac
 }
 
 platform_tunnel_route() {
@@ -131,8 +138,15 @@ platform_tproxy_extra_rules() {
 
 # Position right after the firmware's own iface-mark rules (-i wgcN / -i tunN
 # -j MARK --set-...), so Tunnel Director never precedes them.
+#
+# The chain is read into a variable first, and an iptables that cannot answer
+# fails the whole function. Piping iptables straight into awk would let awk's
+# END print a position for a chain nobody read: rc 0 and "1" without pipefail,
+# so the caller would insert TUN_DIR ahead of the firmware's own rules.
 platform_prerouting_base_pos() {
-    iptables -t mangle -S PREROUTING 2>/dev/null |
+    local raw
+    raw="$(iptables -t mangle -S PREROUTING 2>/dev/null)" || return 1
+    printf '%s\n' "$raw" |
     awk '
         $1 == "-A" {
           i++

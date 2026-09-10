@@ -139,6 +139,23 @@ with_mock() {
     assert_output "main"
 }
 
+@test "platform_tunnel_table: an id that is not a tunnel fails" {
+    load_platform
+    run platform_tunnel_table eth0 0
+    assert_failure
+    refute_output
+    run platform_tunnel_table
+    assert_failure
+    refute_output
+}
+
+@test "platform_tunnel_route: Merlin needs no route spec, so it always fails" {
+    load_platform
+    run platform_tunnel_route wgc1
+    assert_failure
+    refute_output
+}
+
 @test "platform_tunnel_route_ensure and _table_release: no-ops that succeed" {
     load_platform
     : > /tmp/bats_ip_calls.log
@@ -222,6 +239,17 @@ with_mock() {
 EOF'
     run platform_prerouting_base_pos
     assert_output "3"
+}
+
+# An iptables that cannot read the chain must not be turned into a position:
+# awk's END would print 1, and the caller would insert TUN_DIR at the top of
+# PREROUTING, ahead of the firmware's iface-mark rules.
+@test "platform_prerouting_base_pos: fails and prints nothing when iptables fails" {
+    load_platform
+    with_mock iptables 'exit 3'
+    run platform_prerouting_base_pos
+    assert_failure
+    refute_output
 }
 
 # ------------------------------------------------------------- system facts
