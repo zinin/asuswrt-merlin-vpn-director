@@ -5,22 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"time"
 )
 
 // GitHub API constants.
 const (
-	repoOwner        = "zinin"
-	repoName         = "vpn-director"
-	defaultAPIURL    = "https://api.github.com"
-	releasesEndpoint = "/repos/%s/%s/releases/latest"
+	repoOwner            = "zinin"
+	repoName             = "vpn-director"
+	defaultAPIURL        = "https://api.github.com"
+	releasesEndpoint     = "/repos/%s/%s/releases/latest"
+	releaseByTagEndpoint = "/repos/%s/%s/releases/tags/%s"
 
 	// APITimeout bounds one GitHub API call. Handlers that make such a call
 	// inside an HTTP request size their response deadline from it.
 	APITimeout = 30 * time.Second
 )
 
-// githubRelease represents the GitHub API response for releases/latest.
+// githubRelease represents the GitHub API response for one release.
 type githubRelease struct {
 	TagName string        `json:"tag_name"`
 	Body    string        `json:"body"`
@@ -35,6 +37,18 @@ type githubAsset struct {
 
 // GetLatestRelease fetches the latest release info from GitHub API.
 func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
+	return s.fetchRelease(ctx, fmt.Sprintf(releasesEndpoint, repoOwner, repoName))
+}
+
+// GetReleaseByTag fetches the release published under tag. Step 2 of a
+// self-update installs the release it belongs to, which need not be the
+// latest one any more.
+func (s *Service) GetReleaseByTag(ctx context.Context, tag string) (*Release, error) {
+	return s.fetchRelease(ctx, fmt.Sprintf(releaseByTagEndpoint, repoOwner, repoName, neturl.PathEscape(tag)))
+}
+
+// fetchRelease reads one release document from the GitHub API.
+func (s *Service) fetchRelease(ctx context.Context, endpoint string) (*Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, APITimeout)
 	defer cancel()
 
@@ -42,7 +56,7 @@ func (s *Service) GetLatestRelease(ctx context.Context) (*Release, error) {
 	if baseURL == "" {
 		baseURL = defaultAPIURL
 	}
-	url := baseURL + fmt.Sprintf(releasesEndpoint, repoOwner, repoName)
+	url := baseURL + endpoint
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

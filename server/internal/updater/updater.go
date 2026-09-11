@@ -60,13 +60,21 @@ type Daemon struct {
 	InitScript string
 }
 
+// Daemon names, as the release assets and the files/ payload spell them.
+// Step 1 of a self-update prefers the asset of the daemon it runs in; step 2
+// takes that daemon's payload binary from itself (selfupdate.go).
+const (
+	DaemonBot   = "telegram-bot"
+	DaemonWebUI = "webui"
+)
+
 // Daemons lists every daemon a release ships. DownloadRelease fetches one
 // binary per entry and the update script restarts the entries that were
 // running before the update. This table is the single source of truth: the
 // downloader, the script template and install.sh must not drift apart.
 var Daemons = []Daemon{
-	{Name: "telegram-bot", Binary: "/opt/vpn-director/telegram-bot", InitScript: "S98telegram-bot"},
-	{Name: "webui", Binary: "/opt/vpn-director/webui", InitScript: "S98vpn-director-webui"},
+	{Name: DaemonBot, Binary: "/opt/vpn-director/telegram-bot", InitScript: "S98telegram-bot"},
+	{Name: DaemonWebUI, Binary: "/opt/vpn-director/webui", InitScript: "S98vpn-director-webui"},
 }
 
 // Updater defines the interface for update operations.
@@ -108,6 +116,8 @@ type Service struct {
 	archSuffix string // Injectable for testing, empty = derived from runtime.GOARCH
 	shell      string // Injectable for testing, empty = /bin/sh
 	platform   string // Injectable for testing, empty = "merlin" until platform detection lands
+	daemon     string // The daemon this process is: Handover prefers its asset, step 2 links itself for it
+	selfBinary string // Step 2 only: this executable, taken as the payload binary of daemon
 }
 
 // Verify Service implements Updater interface.
@@ -127,6 +137,15 @@ func NewWithBaseURL(baseURL string) *Service {
 		httpClient: &http.Client{},
 		baseURL:    baseURL,
 	}
+}
+
+// NewForDaemon creates a Service for the daemon named name (DaemonBot or
+// DaemonWebUI). The daemons build their update flows with it, because a
+// self-update hands over to the new release's binary of the daemon it runs in.
+func NewForDaemon(name string) *Service {
+	s := New()
+	s.daemon = name
+	return s
 }
 
 // getLockFile returns the lock file path.
@@ -211,6 +230,18 @@ func (s *Service) IsUpdateInProgress() bool {
 	}
 
 	return true
+}
+
+// lockNamesPID reports whether the lock file holds exactly pid. Step 1 of a
+// self-update asks it about itself before it cleans up after a failure; step 2
+// asks it about its parent before it acts.
+func (s *Service) lockNamesPID(pid int) bool {
+	data, err := os.ReadFile(s.getLockFile())
+	if err != nil {
+		return false
+	}
+	got, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	return err == nil && got == pid
 }
 
 // CreateLockAt claims the update directory by publishing lockFile with the

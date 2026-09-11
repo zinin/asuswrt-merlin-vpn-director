@@ -354,3 +354,52 @@ func TestCreateLockAt_ClaimsTheDirectoryForTheCallingProcess(t *testing.T) {
 		t.Errorf("CreateLockAt() after a release error = %v, want the directory free again", err)
 	}
 }
+
+// Step 1 of a self-update prefers the release asset of the daemon it runs in,
+// and step 2 takes that daemon's payload binary from itself. Both key on these
+// names, so they must be the names the daemon table ships under.
+func TestDaemonConstants_NameEntriesOfTheTable(t *testing.T) {
+	for _, name := range []string{DaemonBot, DaemonWebUI} {
+		found := false
+		for _, d := range Daemons {
+			if d.Name == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no Daemons entry named %q", name)
+		}
+	}
+}
+
+func TestNewForDaemon_RemembersTheDaemon(t *testing.T) {
+	if got := NewForDaemon(DaemonWebUI).daemon; got != DaemonWebUI {
+		t.Errorf("NewForDaemon(webui).daemon = %q", got)
+	}
+	if got := New().daemon; got != "" {
+		t.Errorf("New().daemon = %q, want none", got)
+	}
+}
+
+func TestLockNamesPID(t *testing.T) {
+	lockFile := filepath.Join(t.TempDir(), "lock")
+	s := &Service{lockFile: lockFile}
+
+	if s.lockNamesPID(4242) {
+		t.Error("lockNamesPID() = true without a lock file")
+	}
+	for content, want := range map[string]bool{
+		"4242":   true,
+		"4242\n": true, // the update script republishes its PID with printf '%s\n'
+		"4243":   false,
+		"":       false,
+		"junk":   false,
+	} {
+		if err := os.WriteFile(lockFile, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.lockNamesPID(4242); got != want {
+			t.Errorf("lock %q: lockNamesPID(4242) = %v, want %v", content, got, want)
+		}
+	}
+}

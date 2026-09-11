@@ -288,3 +288,43 @@ func TestRepoName_IsRenamed(t *testing.T) {
 		t.Fatalf("repoName = %q, want vpn-director", repoName)
 	}
 }
+
+func TestGetReleaseByTag(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/zinin/vpn-director/releases/tags/v1.2.4"; r.URL.Path != want {
+			t.Errorf("path = %q, want %q", r.URL.Path, want)
+		}
+		if got := r.Header.Get("Accept"); got != "application/vnd.github.v3+json" {
+			t.Errorf("Accept = %q", got)
+		}
+		if got := r.Header.Get("User-Agent"); got != "vpn-director-telegram-bot" {
+			t.Errorf("User-Agent = %q", got)
+		}
+		w.Write([]byte(`{"tag_name": "v1.2.4", "body": "notes", "assets": [
+			{"name": "webui-arm64", "browser_download_url": "https://example.com/webui-arm64"}]}`))
+	}))
+	defer server.Close()
+
+	release, err := NewWithBaseURL(server.URL).GetReleaseByTag(context.Background(), "v1.2.4")
+	if err != nil {
+		t.Fatalf("GetReleaseByTag() error = %v", err)
+	}
+	if release.TagName != "v1.2.4" || release.Body != "notes" {
+		t.Errorf("release = %+v", release)
+	}
+	if len(release.Assets) != 1 || release.Assets[0].Name != "webui-arm64" ||
+		release.Assets[0].DownloadURL != "https://example.com/webui-arm64" {
+		t.Errorf("Assets = %+v", release.Assets)
+	}
+}
+
+func TestGetReleaseByTag_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	if _, err := NewWithBaseURL(server.URL).GetReleaseByTag(context.Background(), "v9.9.9"); err == nil {
+		t.Fatal("GetReleaseByTag() of a tag GitHub does not know succeeded")
+	}
+}

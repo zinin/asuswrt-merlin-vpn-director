@@ -544,3 +544,87 @@ func TestDownloadBinaries_RefusesAPlainHTTPAsset(t *testing.T) {
 		t.Errorf("error = %v, want it to name the scheme requirement", err)
 	}
 }
+
+// Step 2 of a self-update is the new release's binary of its own daemon, so
+// the payload takes that binary from the running executable instead of
+// fetching the same bytes again: a hard link, which costs no tmpfs.
+func TestDownloadBinaries_TakesItsOwnBinaryFromTheRunningExecutable(t *testing.T) {
+	var mu sync.Mutex
+	var requested []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requested = append(requested, r.URL.Path)
+		mu.Unlock()
+		w.Write([]byte("binary of " + strings.TrimPrefix(r.URL.Path, "/")))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	self := filepath.Join(tempDir, "installer")
+	if err := os.WriteFile(self, []byte("the running webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{httpClient: server.Client(), updateDir: tempDir, archSuffix: "arm64",
+		daemon: DaemonWebUI, selfBinary: self}
+
+	release := &Release{TagName: "v1.0.0"}
+	for _, d := range Daemons {
+		release.Assets = append(release.Assets, Asset{
+			Name:        d.Name + "-arm64",
+			DownloadURL: server.URL + "/" + d.Name + "-arm64",
+		})
+	}
+
+	if err := s.downloadBinaries(context.Background(), release); err != nil {
+		t.Fatalf("downloadBinaries() error = %v", err)
+	}
+
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownInfo, err := os.Stat(filepath.Join(tempDir, "files", DaemonWebUI))
+	if err != nil {
+		t.Fatalf("no payload binary for %s: %v", DaemonWebUI, err)
+	}
+	if !os.SameFile(selfInfo, ownInfo) {
+		t.Errorf("files/%s is not a hard link to the running executable", DaemonWebUI)
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, "files", DaemonBot))
+	if err != nil || string(data) != "binary of "+DaemonBot+"-arm64" {
+		t.Errorf("files/%s = %q (%v), want the downloaded asset", DaemonBot, data, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range requested {
+		if strings.Contains(p, DaemonWebUI) {
+			t.Errorf("downloaded %s although the running executable is that binary", p)
+		}
+	}
+}
+
+// A hard link needs one filesystem; without one the binary is copied, and it
+// has to arrive executable.
+func TestCopyExecutable_CopiesContentAndTheExecutableBit(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+
+	if err := copyExecutable(src, dst); err != nil {
+		t.Fatalf("copyExecutable() error = %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil || string(data) != "binary" {
+		t.Fatalf("dst = %q (%v), want the source content", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0100 == 0 {
+		t.Errorf("dst mode = %v, want it executable", info.Mode().Perm())
+	}
+}

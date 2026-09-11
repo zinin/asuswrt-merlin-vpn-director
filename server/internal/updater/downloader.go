@@ -126,6 +126,15 @@ func (s *Service) downloadBinaries(ctx context.Context, release *Release) error 
 	}
 
 	for _, d := range Daemons {
+		target := filepath.Join(s.getFilesDir(), d.Name)
+		// Step 2 of a self-update is this daemon's binary of the release it
+		// installs; fetching that asset again would download the same bytes.
+		if s.selfBinary != "" && d.Name == s.daemon {
+			if err := linkOrCopy(s.selfBinary, target); err != nil {
+				return fmt.Errorf("take %s from %s: %w", d.Name, s.selfBinary, err)
+			}
+			continue
+		}
 		assetName := d.Name + "-" + suffix
 		url := assetURL(release, assetName)
 		if url == "" {
@@ -134,7 +143,6 @@ func (s *Service) downloadBinaries(ctx context.Context, release *Release) error 
 		if err := requireHTTPS(url); err != nil {
 			return fmt.Errorf("asset %s: %w", assetName, err)
 		}
-		target := filepath.Join(s.getFilesDir(), d.Name)
 		if err := s.downloadFile(ctx, url, target); err != nil {
 			return fmt.Errorf("download %s: %w", assetName, err)
 		}
@@ -218,4 +226,35 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 	}
 
 	return nil
+}
+
+// linkOrCopy puts the file src at dst: a hard link when both sit on one
+// filesystem, as the installer and files/ do in /tmp, else a copy.
+func linkOrCopy(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	return copyExecutable(src, dst)
+}
+
+// copyExecutable copies src to dst, creating dst with mode 0755.
+func copyExecutable(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	return out.Close()
 }
