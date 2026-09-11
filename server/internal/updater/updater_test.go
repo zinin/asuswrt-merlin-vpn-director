@@ -269,6 +269,12 @@ func TestGetters_Defaults(t *testing.T) {
 	if got := s.getScriptFile(); got != ScriptFile {
 		t.Errorf("getScriptFile() = %q, want %q", got, ScriptFile)
 	}
+	if got := s.getInstallerFile(); got != InstallerFile {
+		t.Errorf("getInstallerFile() = %q, want %q", got, InstallerFile)
+	}
+	if got := s.getHandoverTimeout(); got != defaultHandoverTimeout {
+		t.Errorf("getHandoverTimeout() = %v, want %v", got, defaultHandoverTimeout)
+	}
 }
 
 func TestGetters_Custom(t *testing.T) {
@@ -289,6 +295,9 @@ func TestGetters_Custom(t *testing.T) {
 	}
 	if got := s.getScriptFile(); got != "/custom/script.sh" {
 		t.Errorf("getScriptFile() = %q, want %q", got, "/custom/script.sh")
+	}
+	if got := s.getInstallerFile(); got != "/custom/update/installer" {
+		t.Errorf("getInstallerFile() = %q, want %q", got, "/custom/update/installer")
 	}
 }
 

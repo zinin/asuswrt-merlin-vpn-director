@@ -1,0 +1,296 @@
+package updater
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+)
+
+// fakeInstaller returns a shell script to serve as a release asset. Run as the
+// installer, it records its arguments and working directory under record,
+// runs body and exits with code.
+func fakeInstaller(record, body string, code int) string {
+	return "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > '" + record + "/argv'\n" +
+		"pwd > '" + record + "/cwd'\n" +
+		body + "\n" +
+		"exit " + strconv.Itoa(code) + "\n"
+}
+
+// newHandoverService serves assets (name -> body) over TLS as a release and
+// returns a Service for the webui daemon whose update directory, lock and
+// installer live in a temp dir. The lock is taken, as Start takes it, and
+// files/ holds a marker, so a test can see what a cleanup removed.
+func newHandoverService(t *testing.T, assets map[string]string) (*Service, *Release) {
+	t.Helper()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := assets[strings.TrimPrefix(r.URL.Path, "/")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	s := &Service{
+		httpClient: server.Client(),
+		updateDir:  dir,
+		lockFile:   filepath.Join(dir, "lock"),
+		archSuffix: "arm64",
+		daemon:     DaemonWebUI,
+	}
+	release := &Release{TagName: "v1.1.0"}
+	for name := range assets {
+		release.Assets = append(release.Assets, Asset{Name: name, DownloadURL: server.URL + "/" + name})
+	}
+	if err := s.CreateLock(); err != nil {
+		t.Fatalf("CreateLock() error = %v", err)
+	}
+	if err := os.MkdirAll(s.getFilesDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.getFilesDir(), "marker"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return s, release
+}
+
+// collect returns a progress func and the lines it received. Handover calls
+// progress from the goroutine that copies the installer's output and returns
+// only after that goroutine is done, so the lines are safe to read afterwards.
+func collect() (func(string), *[]string) {
+	var lines []string
+	return func(l string) { lines = append(lines, l) }, &lines
+}
+
+func assertHandoverPhase(t *testing.T, err error, phase HandoverPhase) *HandoverError {
+	t.Helper()
+	var he *HandoverError
+	if !errors.As(err, &he) {
+		t.Fatalf("Handover() error = %v, want a *HandoverError", err)
+	}
+	if he.Phase != phase {
+		t.Fatalf("Handover() failed in phase %d (%v), want phase %d", he.Phase, err, phase)
+	}
+	return he
+}
+
+func assertCleanedUp(t *testing.T, s *Service) {
+	t.Helper()
+	for what, path := range map[string]string{
+		"files/":    s.getFilesDir(),
+		"the lock":  s.getLockFile(),
+		"installer": s.getInstallerFile(),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s survived a failed handover", what)
+		}
+	}
+}
+
+func TestHandover_RunsStep2OfTheNewVersionAndRelaysItsProgress(t *testing.T) {
+	record := t.TempDir()
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64":        fakeInstaller(record, "echo 'Files downloaded, starting update...'", 0),
+		"telegram-bot-arm64": "#!/bin/sh\nexit 99\n",
+	})
+	progress, lines := collect()
+
+	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
+		t.Fatalf("Handover() error = %v", err)
+	}
+
+	argv, err := os.ReadFile(filepath.Join(record, "argv"))
+	if err != nil {
+		t.Fatalf("the webui's binary did not run: %v", err)
+	}
+	if got, want := strings.Join(strings.Fields(string(argv)), " "), strings.Join(selfUpdateArgv(validOpts()), " "); got != want {
+		t.Errorf("installer argv = %q, want %q", got, want)
+	}
+	if cwd, _ := os.ReadFile(filepath.Join(record, "cwd")); strings.TrimSpace(string(cwd)) != "/" {
+		t.Errorf("installer ran in %q, want /", strings.TrimSpace(string(cwd)))
+	}
+	if got := strings.Join(*lines, "\n"); got != "Files downloaded, starting update..." {
+		t.Errorf("progress = %q, want the installer's line", got)
+	}
+	for _, leftover := range []string{s.getInstallerFile(), s.getInstallerFile() + ".part"} {
+		if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", leftover)
+		}
+	}
+	if !s.lockNamesPID(os.Getpid()) {
+		t.Error("a handover that succeeded touched the lock the update script now owns")
+	}
+	if _, err := os.Stat(filepath.Join(s.getFilesDir(), "marker")); err != nil {
+		t.Error("a handover that succeeded removed files/ from under the update script")
+	}
+}
+
+func TestHandover_RunsAnotherDaemonsBinaryWhenItsOwnIsMissing(t *testing.T) {
+	record := t.TempDir()
+	s, release := newHandoverService(t, map[string]string{
+		"telegram-bot-arm64": fakeInstaller(record, "", 0),
+	})
+	progress, _ := collect()
+
+	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
+		t.Fatalf("Handover() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(record, "argv")); err != nil {
+		t.Error("the bot's binary did not run although the release lacks the webui's")
+	}
+}
+
+func TestHandover_WithoutAnyDaemonBinaryIsADownloadFailure(t *testing.T) {
+	s, release := newHandoverService(t, map[string]string{"xray-arm64": "x"})
+	progress, lines := collect()
+
+	err := s.Handover(context.Background(), release, validOpts(), progress)
+
+	assertHandoverPhase(t, err, PhaseDownload)
+	assertCleanedUp(t, s)
+	if len(*lines) != 0 {
+		t.Errorf("progress = %q from a step 2 that never ran", *lines)
+	}
+}
+
+// The installer is executed as root, so the one scheme downgrade that would
+// hand a network attacker that file is refused, as for the payload binaries.
+func TestHandover_RefusesAPlainHTTPInstaller(t *testing.T) {
+	s, release := newHandoverService(t, map[string]string{"webui-arm64": "x"})
+	release.Assets[0].DownloadURL = strings.Replace(release.Assets[0].DownloadURL, "https://", "http://", 1)
+	progress, _ := collect()
+
+	err := s.Handover(context.Background(), release, validOpts(), progress)
+
+	if he := assertHandoverPhase(t, err, PhaseDownload); !strings.Contains(he.Err.Error(), "https") {
+		t.Errorf("error = %v, want it to name the scheme requirement", err)
+	}
+	assertCleanedUp(t, s)
+}
+
+func TestHandover_AnInstallerThatDoesNotExecuteIsAStartFailure(t *testing.T) {
+	s, release := newHandoverService(t, map[string]string{"webui-arm64": "no shebang, no ELF header\n"})
+	progress, _ := collect()
+
+	err := s.Handover(context.Background(), release, validOpts(), progress)
+
+	assertHandoverPhase(t, err, PhaseStart)
+	assertCleanedUp(t, s)
+}
+
+func TestHandover_AFailingStep2IsReportedWithItsLastStderrLine(t *testing.T) {
+	record := t.TempDir()
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64": fakeInstaller(record, "echo 'first complaint' >&2\necho 'the real reason' >&2", 1),
+	})
+	progress, _ := collect()
+
+	err := s.Handover(context.Background(), release, validOpts(), progress)
+
+	if he := assertHandoverPhase(t, err, PhaseInstaller); he.Err.Error() != "the real reason" {
+		t.Errorf("reason = %q, want the last stderr line", he.Err)
+	}
+	assertCleanedUp(t, s)
+}
+
+func TestHandover_KillsAStep2ThatRunsOutOfTime(t *testing.T) {
+	record := t.TempDir()
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64": fakeInstaller(record, "exec sleep 30", 0),
+	})
+	s.handoverTimeout = 200 * time.Millisecond
+	progress, _ := collect()
+
+	start := time.Now()
+	err := s.Handover(context.Background(), release, validOpts(), progress)
+
+	assertHandoverPhase(t, err, PhaseTimeout)
+	if waited := time.Since(start); waited > 10*time.Second {
+		t.Errorf("Handover() took %v to give up on a killed step 2", waited)
+	}
+	assertCleanedUp(t, s)
+}
+
+// Once the update script has republished the lock, the directory is the
+// script's even if step 2 then exits non-zero: removing files/ would pull the
+// payload from under the copy step.
+func TestHandover_LeavesTheDirectoryToAScriptThatTookTheLock(t *testing.T) {
+	record := t.TempDir()
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64": fakeInstaller(record, `printf '1\n' > "$FAKE_LOCK"`, 1),
+	})
+	t.Setenv("FAKE_LOCK", s.getLockFile())
+	progress, _ := collect()
+
+	err := s.Handover(context.Background(), release, validOpts(), progress)
+
+	assertHandoverPhase(t, err, PhaseInstaller)
+	if _, err := os.Stat(filepath.Join(s.getFilesDir(), "marker")); err != nil {
+		t.Error("files/ was removed although the lock names the update script")
+	}
+	if data, _ := os.ReadFile(s.getLockFile()); strings.TrimSpace(string(data)) != "1" {
+		t.Errorf("lock = %q, want the script's claim left in place", data)
+	}
+}
+
+func TestHandover_CapsWhatStep2CanPutInFrontOfTheUser(t *testing.T) {
+	record := t.TempDir()
+	body := "echo '" + strings.Repeat("я", 400) + "'\n" +
+		"i=0; while [ $i -lt 14 ]; do echo \"line $i\"; i=$((i+1)); done"
+	s, release := newHandoverService(t, map[string]string{"webui-arm64": fakeInstaller(record, body, 0)})
+	progress, lines := collect()
+
+	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
+		t.Fatalf("Handover() error = %v", err)
+	}
+
+	if len(*lines) != maxProgressLines {
+		t.Fatalf("progress got %d lines, want %d", len(*lines), maxProgressLines)
+	}
+	if first := (*lines)[0]; first != strings.Repeat("я", maxProgressRunes) {
+		t.Errorf("first line has %d runes, want it cut to %d", utf8.RuneCountInString(first), maxProgressRunes)
+	}
+	if last := (*lines)[maxProgressLines-1]; last != "line 8" {
+		t.Errorf("last forwarded line = %q, want line 8", last)
+	}
+}
+
+// A process forked elsewhere in the daemon while the installer was still open
+// for writing keeps it open until that process execs, and an exec of the
+// installer fails with "text file busy" meanwhile (golang/go#22315). Holding a
+// write descriptor here reproduces that on kernels that refuse the exec; on
+// the others the first attempt already succeeds.
+func TestStartInstaller_RetriesATextFileBusyExec(t *testing.T) {
+	installer := filepath.Join(t.TempDir(), "installer")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	w, err := os.OpenFile(installer, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		w.Close()
+	}()
+
+	discard := func(string) {}
+	cmd, err := startInstaller(context.Background(), installer, nil, &lineWriter{line: discard}, &lineWriter{line: discard})
+	if err != nil {
+		t.Fatalf("startInstaller() error = %v, want it to retry past the busy text file", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Errorf("installer exit = %v", err)
+	}
+}

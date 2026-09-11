@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Update directory paths.
@@ -30,6 +31,12 @@ const (
 	LockFile     = UpdateDir + "/" + LockFileName
 	NotifyFile   = UpdateDir + "/notify.json"
 	ScriptFile   = UpdateDir + "/update.sh"
+	// InstallerName is where step 1 of a self-update puts the new release's
+	// binary it runs (selfupdate.go). Deliberately no daemon's name: pidof and
+	// killall in the init scripts match the process name, and a process called
+	// telegram-bot would pass for the running daemon.
+	InstallerName = "installer"
+	InstallerFile = UpdateDir + "/" + InstallerName
 )
 
 // ErrLockExists is returned by CreateLock when the lock file is already there.
@@ -107,19 +114,20 @@ type Updater interface {
 
 // Service implements the Updater interface.
 type Service struct {
-	httpClient *http.Client
-	baseURL    string                 // Injectable for testing, empty = default GitHub API
-	rawBaseURL string                 // Injectable for testing, empty = raw.githubusercontent.com
-	lockFile   string                 // Configurable for testing
-	updateDir  string                 // Configurable for testing
-	scriptFile string                 // Configurable for testing
-	archSuffix string                 // Injectable for testing, empty = derived from runtime.GOARCH
-	shell      string                 // Injectable for testing, empty = /bin/sh
-	platform   string                 // Injectable for testing, empty = "merlin" until platform detection lands
-	daemon     string                 // The daemon this process is: Handover prefers its asset, step 2 links itself for it
-	selfBinary string                 // Step 2 only: this executable, taken as the payload binary of daemon
-	parentPID  func() int             // Injectable for testing, nil = os.Getppid
-	executable func() (string, error) // Injectable for testing, nil = os.Executable
+	httpClient      *http.Client
+	baseURL         string                 // Injectable for testing, empty = default GitHub API
+	rawBaseURL      string                 // Injectable for testing, empty = raw.githubusercontent.com
+	lockFile        string                 // Configurable for testing
+	updateDir       string                 // Configurable for testing
+	scriptFile      string                 // Configurable for testing
+	archSuffix      string                 // Injectable for testing, empty = derived from runtime.GOARCH
+	shell           string                 // Injectable for testing, empty = /bin/sh
+	platform        string                 // Injectable for testing, empty = "merlin" until platform detection lands
+	daemon          string                 // The daemon this process is: Handover prefers its asset, step 2 links itself for it
+	selfBinary      string                 // Step 2 only: this executable, taken as the payload binary of daemon
+	parentPID       func() int             // Injectable for testing, nil = os.Getppid
+	executable      func() (string, error) // Injectable for testing, nil = os.Executable
+	handoverTimeout time.Duration          // Injectable for testing, 0 = defaultHandoverTimeout
 }
 
 // Verify Service implements Updater interface.
@@ -177,6 +185,19 @@ func (s *Service) getScriptFile() string {
 		return s.scriptFile
 	}
 	return ScriptFile
+}
+
+// getInstallerFile returns where step 1 downloads the new release's binary.
+func (s *Service) getInstallerFile() string {
+	return filepath.Join(s.getUpdateDir(), InstallerName)
+}
+
+// getHandoverTimeout returns how long step 1 waits for step 2.
+func (s *Service) getHandoverTimeout() time.Duration {
+	if s.handoverTimeout > 0 {
+		return s.handoverTimeout
+	}
+	return defaultHandoverTimeout
 }
 
 // getShell returns the interpreter that runs the update script. Tests point
