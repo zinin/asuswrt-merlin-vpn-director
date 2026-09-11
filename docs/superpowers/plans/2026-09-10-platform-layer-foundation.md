@@ -142,3 +142,6 @@ the release steps, found while preparing them, is not decided yet.
 The release plan and its sequencing, the contract invariants the Keenetic implementation must satisfy,
 the firmware facts still read outside the contract, every deferred finding, every ruling and the facts
 taken from the author's router are written up in `docs/superpowers/plans/2026-09-11-plan-1-carry-forward.md`.
+
+**R17 decided on 2026-09-11:** one release, carrying the self-update handover of
+`docs/superpowers/plans/2026-09-11-self-update-handover.md`; see the carry-forward, section 1.

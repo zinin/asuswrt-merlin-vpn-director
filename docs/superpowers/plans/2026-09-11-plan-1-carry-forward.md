@@ -10,6 +10,14 @@ review with one Critical and three Important findings, all fixed and re-reviewed
 
 ## 1. Release plan — do not cut a single release from this branch
 
+> **Superseded on 2026-09-11.** The author chose one release that carries the platform layer and
+> the self-update handover (`docs/superpowers/specs/2026-09-11-self-update-handover-design.md`).
+> Routers on v0.11.x update with `install.sh`; their update button installs the release
+> incompletely and leaves a CLI that fails at the last line of `common.sh`. The release notes say so
+> in their first 500 characters, as plain text: the deployed bot cuts the changelog at 500
+> characters and escapes Markdown. The rename comes first, and the tag goes on the merge commit
+> right after the merge. The two-release analysis below stays as the record of why.
+
 The deployed updater on an already-installed Merlin router downloads its own hard-coded list of 19
 paths, which cannot contain `lib/platform.sh` or `lib/platform/merlin.sh`, and its update script
 copies `$FILES_DIR/opt/vpn-director/lib/*.sh` — a non-recursive glob that never enters
