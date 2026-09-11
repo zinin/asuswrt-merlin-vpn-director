@@ -1,6 +1,6 @@
 // Package updateflow owns the self-update orchestration shared by the
 // Telegram bot and the Web UI: one cached check against the GitHub release
-// API and one guarded start of the download plus the update script.
+// API and one guarded handover of the update to the new release's binary.
 package updateflow
 
 import (

@@ -105,11 +105,9 @@ type Updater interface {
 	// CleanFiles removes the files/ directory.
 	CleanFiles()
 
-	// DownloadRelease downloads all files for the given release.
-	DownloadRelease(ctx context.Context, release *Release) error
-
-	// RunUpdateScript generates and runs the update shell script.
-	RunUpdateScript(opts RunOptions) error
+	// Handover runs step 1 of a self-update: the new release's binary installs
+	// its own release (selfupdate.go). nil means the update script started.
+	Handover(ctx context.Context, release *Release, opts RunOptions, progress func(string)) error
 }
 
 // Service implements the Updater interface.

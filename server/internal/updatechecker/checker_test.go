@@ -28,12 +28,13 @@ func (m *mockUpdater) ShouldUpdate(current, latest string) (bool, error) {
 	return m.shouldUpdate, m.shouldErr
 }
 
-func (m *mockUpdater) IsUpdateInProgress() bool                                { return false }
-func (m *mockUpdater) CreateLock() error                                       { return nil }
-func (m *mockUpdater) RemoveLock()                                             {}
-func (m *mockUpdater) CleanFiles()                                             {}
-func (m *mockUpdater) DownloadRelease(context.Context, *updater.Release) error { return nil }
-func (m *mockUpdater) RunUpdateScript(updater.RunOptions) error                { return nil }
+func (m *mockUpdater) IsUpdateInProgress() bool { return false }
+func (m *mockUpdater) CreateLock() error        { return nil }
+func (m *mockUpdater) RemoveLock()              {}
+func (m *mockUpdater) CleanFiles()              {}
+func (m *mockUpdater) Handover(context.Context, *updater.Release, updater.RunOptions, func(string)) error {
+	return nil
+}
 
 // mockSender captures sent messages (implements Sender interface with SendWithKeyboard)
 type mockSender struct {
