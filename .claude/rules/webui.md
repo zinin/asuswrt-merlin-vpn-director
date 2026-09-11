@@ -158,6 +158,9 @@ belong to the Web UI half:
 - Both GitHub-facing routes extend the write deadline twice — once for the API
   call, once after it returns — because the flow serializes its callers on one
   mutex and a queued caller could otherwise consume the whole deadline.
+- The handover runs in the goroutine behind the 202. While step 2 downloads, `/api/update/status`
+  reports the update running, because the lock names the live daemon that started it, and step 1
+  gives step 2 at most 15 minutes, inside the page's twenty-minute wait.
 - The front end polls `/api/version` every 3 seconds with `skipAuthRedirect`,
   so the 401s and connection errors of a restarting server do not bounce the
   user to the login page. It reloads as soon as the new version answers. Five
@@ -185,6 +188,9 @@ assumed. What the code does enforce: an asset URL must be `https`, every string
 reaching the generated script passes a strict allow-list, downloads are capped
 at 50 MB, and `files/` is wiped before every attempt so a partial download
 cannot be executed later.
+Since the self-update handover the new release's daemon binary also runs as root before it is
+installed: step 1 executes it as the installer (`internal/updater/selfupdate.go`). It is the binary
+the update installs and starts anyway, so the trust does not change.
 
 ## Known limits
 
