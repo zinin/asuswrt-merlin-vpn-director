@@ -98,14 +98,29 @@ Modified:
 
 ### Task 11: Full verification and Merlin regression
 
-Step 1 (full verification sweep) ✅ Done — 390 Bats tests, the whole Go suite, gofmt, bash -n/sh -n,
+✅ Done — Step 1 green at `c6199c9`; Step 2 closed as a read-only regression; Step 3 is this section.
+
+Step 1 (full verification sweep) — 390 Bats tests, the whole Go suite, gofmt, bash -n/sh -n,
 shellcheck against master's baseline, manifest↔tree consistency in both directions and a dead-reference
 sweep, all green at `c6199c9`. Report: `.superpowers/sdd/…/task-11-verification.md` (git-ignored).
 
-Step 2 (manual Merlin regression on the author's Asus) — **NOT DONE**, needs the router. The commands are
-in this task's original body, recoverable with `git show db9309f:docs/superpowers/plans/2026-09-10-platform-layer-foundation.md`.
+Step 2 (Merlin regression) — closed on 2026-09-11 in a **read-only** form, by the author's ruling that
+nothing on the router may change: no file was copied and nothing was applied. The author's RT-AX86U
+(Merlin 388.11, aarch64) runs v0.11.5 byte for byte. Two scripts streamed over SSH, with every mutating
+command shadowed by a stub that refuses, ran the v0.11.5 functions next to their contract replacements
+on the device — 7 of 7 answers identical (active WAN, the firewall's WAN, IPv6, tunnel list, PREROUTING
+position, VPN endpoints, model) — and HEAD's `cmd_platform`, which printed valid and correct JSON under
+the router's jq 1.7.1; `platform_detect` answers `merlin` on the real file system. From the code and the
+device facts: the `cron install` line is byte-identical (`/opt` is a symlink there, `SCRIPT_DIR` takes
+the logical `pwd`), `cron` and `platform` take no lock, the four status functions are unchanged, and by
+the diff and the contract's answers `tproxy.sh` issues the same commands for this router's
+configuration. Tunnel Director is not configured on it (`{"tunnels":{}}`), so both versions return at
+the first check of `tunnel_apply`.
 
-Step 3 (record the outcome) — pending Step 2.
+Not covered: a real `apply`/`restart` on the new files, the hooks, S99 at boot, the daemons on the new
+files, Tunnel Director on hardware, and the upgrade path. The full regression runs through the releases
+themselves: this router goes v0.11.5 → N with the old updater and N → N+1 with the new one, with a
+read-only snapshot before and after each step (carry-forward, section 1).
 
 ## Self-review notes
 
@@ -118,13 +133,12 @@ Step 3 (record the outcome) — pending Step 2.
 
 The final whole-branch review (after Task 11 Step 1) returned one Critical, three Important and six
 Minor findings. All the blocking ones were fixed in `c6199c9` and confirmed by a scoped re-review;
-its verdict is **ready to merge**. Two things are outstanding, both needing the author:
+its verdict is **ready to merge**. Task 11 Step 2 is closed (above). One thing is outstanding and
+needs the author: **the two-release delivery plan (ruling R17)**, which the Critical finding requires —
+a single release cut from this branch breaks the CLI on every already-installed router, because the
+deployed updater cannot deliver the new `platform.sh` that the new `common.sh` requires. The order of
+the release steps, found while preparing them, is not decided yet.
 
-1. **Task 11 Step 2**, the manual Merlin regression on the Asus router.
-2. **The two-release delivery plan (ruling R17)**, which the Critical finding requires: a single
-   release cut from this branch breaks the CLI on every already-installed router, because the
-   deployed updater cannot deliver the new `platform.sh` that the new `common.sh` requires.
-
-Both, plus the contract invariants the Keenetic implementation must satisfy, the firmware facts still
-read outside the contract, every deferred finding and every ruling, are written up in
-`docs/superpowers/plans/2026-09-11-plan-1-carry-forward.md`.
+The release plan and its sequencing, the contract invariants the Keenetic implementation must satisfy,
+the firmware facts still read outside the contract, every deferred finding, every ruling and the facts
+taken from the author's router are written up in `docs/superpowers/plans/2026-09-11-plan-1-carry-forward.md`.

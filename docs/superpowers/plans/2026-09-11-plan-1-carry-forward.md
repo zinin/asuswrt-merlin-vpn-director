@@ -28,13 +28,40 @@ Ship two releases instead:
 
 One pull request; the split is at tagging.
 
-**Residual risk no code change can remove:** a router that never updates during release N and jumps
-straight from a pre-branch version to N+1 still lands in the broken state, because the update flow
-always fetches the *latest* release and the deployed binary's file list is fixed in the binary.
-Mitigations: the author's own routers pass through N; `install.sh` repairs a router in one command;
-the Go update path never sources `common.sh`, so a later release — or the update button in the Web
-UI or the bot — repairs it automatically; and since this branch a missing `platform.sh` logs one
-ERROR naming the file and the recovery instead of a bare "No such file or directory".
+**Residual risk:** a router that never updates during release N and jumps straight from a pre-branch
+version to N+1 still lands in the broken state, because the update flow always fetches the *latest*
+release and the deployed binary's file list is fixed in the binary. Mitigations: the author's own
+routers pass through N; `install.sh` repairs a router in one command; since this branch a missing
+`platform.sh` logs one ERROR naming the file and the recovery instead of a bare "No such file or
+directory"; and the Go update path never sources `common.sh`, so the update button repairs the router
+once release N+2 exists. Not before: the old updater has already installed the N+1 daemons, so
+`updateflow.Start` answers `ErrUpToDate` (`server/internal/updateflow/start.go:58-59`). A self-heal in
+the N+1 daemons (at startup, fetch the manifest files missing for their own tag) would close the risk;
+it is new Go code and has not been proposed.
+
+### Release sequencing (found 2026-09-11, not yet decided)
+
+- **Rename before N.** N already contains `159ffd4`: its binary (`repoName`), its `install.sh` and the
+  README's install URL name `zinin/vpn-director`, which answers 404 until `gh repo rename` runs.
+  Routers on v0.11.x reach the old name through GitHub's redirects; check one API and one raw URL of
+  the old name right after the rename, before tagging N.
+- **N before the merge.** `install.sh` is served from `master` (the README installs
+  `…/master/install.sh`), not from the release tag, and it downloads the tag's `router/files.manifest`,
+  which v0.11.5 lacks. From the merge until N is out every fresh install would fail, so tag `52b0e76`
+  before the merge (the build workflow fires on any `v*` tag) or right after it. `install.sh` is
+  byte-identical at `52b0e76` and at HEAD, so `master`'s installer serves N unchanged.
+- **Plain releases.** `install.sh` rejects any tag but `vX.Y.Z`, and `/releases/latest` never returns a
+  pre-release, so N has to be an ordinary release to be the one routers pass through.
+- **Merge commit**, as for every earlier pull request, so `52b0e76` stays in `master`'s history. N's
+  tree still carries `docs/superpowers/` (the spec and the plan predate `159ffd4`), so N's source
+  archive includes them.
+- **N+1's release notes** are what the old bot shows next to its update button: the place for "coming
+  from v0.11.x, update to N first or run `install.sh`".
+- **How long N stays the latest release** is the author's call.
+- **The author's RT-AX86U is the upgrade test.** It is still byte-identical to v0.11.5 (the regression
+  of Task 11 copied nothing), so it can take v0.11.5 → N with the old updater and N → N+1 with the new
+  one. Keep it that way until then: files copied by hand would leave `lib/platform*` behind and hide
+  whether the updater delivered them.
 
 ## 2. Contract invariants the Keenetic implementation must satisfy
 
@@ -136,3 +163,16 @@ The four the whole-branch review called must-fix are already fixed in `c6199c9` 
   `base_pos + n` for Tunnel Director). Unreachable today because `platform_lan_ifaces` returns one
   interface on both platforms and spec 16 puts additional bridges out of scope, but the shape is now
   the same in both modules.
+
+## 6. Facts from the author's router (read-only, 2026-09-11)
+
+- `platform_tunnels` lists every slot `rt_tables` names, configured or not: on the RT-AX86U that is
+  `wgc1`–`wgc5` and `ovpnc1`–`ovpnc5`, seven of them down and four with empty descriptions. A route
+  list built from it (plan 3) would show ten entries, as the old hard-coded list did; filter it to
+  configured tunnels there.
+- The router has a second WAN (`wan1_ifname` set, not primary), so the Task 6 note about
+  `platform_wan_if` naming the *active* WAN is live there once `wan_if` has a consumer.
+- A read-only check on a router: stream the script with `ssh … '/opt/bin/bash -s' < script`, wrapped
+  in one `{ … }` so bash has read all of it before running anything, with `PATH=/opt/bin:…` exported,
+  and with `iptables` (except `-S`), `ip` (except `show`), `nvram` (except `get`), `ipset`, `cru`,
+  `modprobe` and the mutating contract functions shadowed by stubs that refuse.
