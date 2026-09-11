@@ -1,0 +1,5 @@
+# Every form of the self-update invocation a released step 1 builds, oldest
+# first, for RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42,
+# Initiator: "bot"}. Step 2 of every later release must parse every line.
+# Append a line when step 1 changes; never edit or remove one.
+self-update --from v1.2.3 --to v1.2.4 --initiator bot --chat-id 42

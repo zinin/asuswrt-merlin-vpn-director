@@ -108,16 +108,18 @@ type Updater interface {
 // Service implements the Updater interface.
 type Service struct {
 	httpClient *http.Client
-	baseURL    string // Injectable for testing, empty = default GitHub API
-	rawBaseURL string // Injectable for testing, empty = raw.githubusercontent.com
-	lockFile   string // Configurable for testing
-	updateDir  string // Configurable for testing
-	scriptFile string // Configurable for testing
-	archSuffix string // Injectable for testing, empty = derived from runtime.GOARCH
-	shell      string // Injectable for testing, empty = /bin/sh
-	platform   string // Injectable for testing, empty = "merlin" until platform detection lands
-	daemon     string // The daemon this process is: Handover prefers its asset, step 2 links itself for it
-	selfBinary string // Step 2 only: this executable, taken as the payload binary of daemon
+	baseURL    string                 // Injectable for testing, empty = default GitHub API
+	rawBaseURL string                 // Injectable for testing, empty = raw.githubusercontent.com
+	lockFile   string                 // Configurable for testing
+	updateDir  string                 // Configurable for testing
+	scriptFile string                 // Configurable for testing
+	archSuffix string                 // Injectable for testing, empty = derived from runtime.GOARCH
+	shell      string                 // Injectable for testing, empty = /bin/sh
+	platform   string                 // Injectable for testing, empty = "merlin" until platform detection lands
+	daemon     string                 // The daemon this process is: Handover prefers its asset, step 2 links itself for it
+	selfBinary string                 // Step 2 only: this executable, taken as the payload binary of daemon
+	parentPID  func() int             // Injectable for testing, nil = os.Getppid
+	executable func() (string, error) // Injectable for testing, nil = os.Executable
 }
 
 // Verify Service implements Updater interface.
@@ -195,6 +197,23 @@ func (s *Service) getPlatform() string {
 		return s.platform
 	}
 	return "merlin"
+}
+
+// getParentPID returns the PID of the process that started this one: for
+// step 2 of a self-update, the daemon running step 1.
+func (s *Service) getParentPID() int {
+	if s.parentPID != nil {
+		return s.parentPID()
+	}
+	return os.Getppid()
+}
+
+// getExecutable returns the path of the running binary.
+func (s *Service) getExecutable() (string, error) {
+	if s.executable != nil {
+		return s.executable()
+	}
+	return os.Executable()
 }
 
 // IsUpdateInProgress checks if a lock file exists and the process is still alive.

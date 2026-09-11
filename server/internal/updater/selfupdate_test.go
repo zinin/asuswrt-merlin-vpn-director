@@ -1,0 +1,278 @@
+package updater
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func TestParseSelfUpdateArgs_AcceptsTheInvocationStep1Builds(t *testing.T) {
+	argv := selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"})
+	if argv[0] != SelfUpdateCommand {
+		t.Fatalf("argv[0] = %q, want %q", argv[0], SelfUpdateCommand)
+	}
+	got, err := parseSelfUpdateArgs(argv[1:])
+	if err != nil {
+		t.Fatalf("parseSelfUpdateArgs() error = %v", err)
+	}
+	if want := (selfUpdateArgs{From: "v1.2.3", To: "v1.2.4", Initiator: "bot", ChatID: 42}); got != want {
+		t.Errorf("parsed %+v, want %+v", got, want)
+	}
+}
+
+func TestParseSelfUpdateArgs_RefusesWhatTheScriptCannotTake(t *testing.T) {
+	valid := []string{"--from", "v1.2.3", "--to", "v1.2.4", "--initiator", "webui", "--chat-id", "0"}
+	with := func(name, value string) []string {
+		out := append([]string(nil), valid...)
+		for i := 0; i < len(out); i += 2 {
+			if out[i] == name {
+				out[i+1] = value
+			}
+		}
+		return out
+	}
+	for name, args := range map[string][]string{
+		"shell in --from":     with("--from", "v1.2.3;id"),
+		"empty --to":          with("--to", ""),
+		"unknown initiator":   with("--initiator", "cron"),
+		"non-numeric chat id": with("--chat-id", "forty-two"),
+		"unknown flag":        append(append([]string(nil), valid...), "--force"),
+		"positional argument": append(append([]string(nil), valid...), "extra"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseSelfUpdateArgs(args); err == nil {
+				t.Errorf("parseSelfUpdateArgs(%q) accepted it", args)
+			}
+		})
+	}
+}
+
+// TestSelfUpdateArgv_EveryReleasedFormStillParses holds step 2 to the
+// invocations released step 1s make. A router cannot update the step 1 it
+// runs, so every line of the file is an invocation some router makes for as
+// long as it exists. The file only grows.
+func TestSelfUpdateArgv_EveryReleasedFormStillParses(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "selfupdate_argv.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forms [][]string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		forms = append(forms, strings.Fields(line))
+	}
+	if len(forms) == 0 {
+		t.Fatal("testdata/selfupdate_argv.txt lists no released invocation")
+	}
+	for _, form := range forms {
+		if form[0] != SelfUpdateCommand {
+			t.Errorf("released form %q does not start with %q", strings.Join(form, " "), SelfUpdateCommand)
+			continue
+		}
+		if _, err := parseSelfUpdateArgs(form[1:]); err != nil {
+			t.Errorf("released form %q no longer parses: %v", strings.Join(form, " "), err)
+		}
+	}
+	got := strings.Join(selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"}), " ")
+	if newest := strings.Join(forms[len(forms)-1], " "); got != newest {
+		t.Errorf("step 1 builds %q, but the newest released form is %q: append the new form as a line, never edit one", got, newest)
+	}
+}
+
+// step2Fixture is a step 2 with every path in a temp dir: it runs as the webui
+// binary of v1.2.4, its parent (PID 4242) holds the lock, and its update script
+// runs under an interpreter that does nothing.
+type step2Fixture struct {
+	s         *Service
+	dir       string
+	self      string
+	requested func() []string
+}
+
+// newStep2Fixture serves the GitHub API and the raw files over TLS. onRequest,
+// when set, sees every request path and the lock file before it is answered.
+func newStep2Fixture(t *testing.T, onRequest func(path, lockFile string)) *step2Fixture {
+	t.Helper()
+	dir := t.TempDir()
+	lock := filepath.Join(dir, "lock")
+	const parent = 4242
+	if err := os.WriteFile(lock, []byte(strconv.Itoa(parent)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var requested []string
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requested = append(requested, r.URL.Path)
+		mu.Unlock()
+		if onRequest != nil {
+			onRequest(r.URL.Path, lock)
+		}
+		switch {
+		case r.URL.Path == "/repos/zinin/vpn-director/releases/tags/v1.2.4":
+			fmt.Fprintf(w, `{"tag_name": "v1.2.4", "assets": [
+				{"name": "telegram-bot-arm64", "browser_download_url": "%[1]s/assets/telegram-bot-arm64"},
+				{"name": "webui-arm64", "browser_download_url": "%[1]s/assets/webui-arm64"}]}`, server.URL)
+		case strings.HasSuffix(r.URL.Path, "/"+manifestPath):
+			w.Write([]byte(testManifest))
+		case strings.HasPrefix(r.URL.Path, "/assets/"):
+			w.Write([]byte("downloaded " + strings.TrimPrefix(r.URL.Path, "/assets/")))
+		default:
+			w.Write([]byte("#!/bin/sh\n"))
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	self := filepath.Join(dir, "installer")
+	if err := os.WriteFile(self, []byte("the new webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	noop := filepath.Join(dir, "noop-sh")
+	if err := os.WriteFile(noop, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{
+		httpClient: server.Client(),
+		baseURL:    server.URL,
+		rawBaseURL: server.URL,
+		updateDir:  dir,
+		lockFile:   lock,
+		scriptFile: filepath.Join(dir, "update.sh"),
+		shell:      noop,
+		archSuffix: "arm64",
+		platform:   "merlin",
+		daemon:     DaemonWebUI,
+		parentPID:  func() int { return parent },
+		executable: func() (string, error) { return self, nil },
+	}
+	return &step2Fixture{s: s, dir: dir, self: self, requested: func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), requested...)
+	}}
+}
+
+// step2Args is what step 1 passes for an update from v1.2.3 to to, started
+// from the Web UI.
+func step2Args(to string) []string {
+	return selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: to, ChatID: 0, Initiator: "webui"})[1:]
+}
+
+func TestSelfUpdate_InstallsItsOwnReleaseAndStartsTheScript(t *testing.T) {
+	f := newStep2Fixture(t, nil)
+	var stdout bytes.Buffer
+
+	if err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &stdout); err != nil {
+		t.Fatalf("selfUpdate() error = %v", err)
+	}
+
+	if got := stdout.String(); got != "Files downloaded, starting update...\n" {
+		t.Errorf("stdout = %q, want the one progress line", got)
+	}
+	selfInfo, err := os.Stat(f.self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownInfo, err := os.Stat(filepath.Join(f.dir, "files", DaemonWebUI))
+	if err != nil || !os.SameFile(selfInfo, ownInfo) {
+		t.Errorf("files/%s is not this binary (%v)", DaemonWebUI, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(f.dir, "files", DaemonBot)); err != nil || string(data) != "downloaded telegram-bot-arm64" {
+		t.Errorf("files/%s = %q (%v), want the release asset", DaemonBot, data, err)
+	}
+	// The template is unchanged and pinned byte for byte by
+	// TestGenerateScript_Golden; this run renders it with temp paths, so it
+	// checks what this run fed into it.
+	script, err := os.ReadFile(f.s.getScriptFile())
+	if err != nil {
+		t.Fatalf("no update script: %v", err)
+	}
+	for _, want := range []string{`OLD_VERSION="v1.2.3"`, `NEW_VERSION="v1.2.4"`, `INITIATOR="webui"`, "CHAT_ID=0"} {
+		if !strings.Contains(string(script), want) {
+			t.Errorf("update script lacks %s", want)
+		}
+	}
+	for _, p := range f.requested() {
+		if strings.Contains(p, "webui-arm64") {
+			t.Errorf("step 2 downloaded %s, the binary it is", p)
+		}
+	}
+}
+
+func TestSelfUpdate_RefusesAReleaseOtherThanItsOwn(t *testing.T) {
+	f := newStep2Fixture(t, nil)
+
+	err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.5", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "v1.2.5") || !strings.Contains(err.Error(), "v1.2.4") {
+		t.Fatalf("selfUpdate() error = %v, want a refusal naming both versions", err)
+	}
+	if got := f.requested(); len(got) != 0 {
+		t.Errorf("a refused step 2 made requests: %v", got)
+	}
+}
+
+func TestSelfUpdate_RefusesUnlessItsParentHoldsTheLock(t *testing.T) {
+	f := newStep2Fixture(t, nil)
+	f.s.parentPID = func() int { return 4343 }
+
+	err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("selfUpdate() error = %v, want the lock refusal", err)
+	}
+	if got := f.requested(); len(got) != 0 {
+		t.Errorf("step 2 without the lock made requests: %v", got)
+	}
+}
+
+// The download can take minutes. A claim lost meanwhile - the parent died and
+// another update took the directory - must not get the script started.
+func TestSelfUpdate_ChecksTheLockAgainBeforeTheScript(t *testing.T) {
+	f := newStep2Fixture(t, func(path, lockFile string) {
+		if strings.HasSuffix(path, "/"+manifestPath) {
+			os.WriteFile(lockFile, []byte("1"), 0644)
+		}
+	})
+
+	err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("selfUpdate() error = %v, want the lock refusal", err)
+	}
+	if _, err := os.Stat(f.s.getScriptFile()); !os.IsNotExist(err) {
+		t.Error("the update script was written for a claim that was lost")
+	}
+}
+
+// Step 1 shows the user the last line step 2 prints on stderr and reads
+// progress from stdout, so a refusal belongs on stderr, with exit status 1.
+func TestRunSelfUpdate_ReportsARefusalOnStderr(t *testing.T) {
+	for name, args := range map[string][]string{
+		"bad arguments":   {"--to", "v1.2.4;id"},
+		"another version": step2Args("v1.0.0"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := RunSelfUpdate(args, DaemonBot, "v1.2.4", &stdout, &stderr); code != 1 {
+				t.Errorf("RunSelfUpdate() = %d, want 1", code)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want nothing: it is the progress channel", stdout.String())
+			}
+			if strings.TrimSpace(stderr.String()) == "" {
+				t.Error("stderr is empty, so step 1 has no reason to show")
+			}
+		})
+	}
+}
