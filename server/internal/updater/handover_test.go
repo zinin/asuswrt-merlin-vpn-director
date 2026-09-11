@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -220,6 +221,39 @@ func TestHandover_KillsAStep2ThatRunsOutOfTime(t *testing.T) {
 		t.Errorf("Handover() took %v to give up on a killed step 2", waited)
 	}
 	assertCleanedUp(t, s)
+}
+
+// Exit 0 decides whatever else Wait reports. Here something step 2 started
+// keeps its output open, and Wait reports ErrWaitDelay once installerWaitDelay
+// has passed. The other such case, the deadline firing between step 2's exit
+// and its reap, cannot be timed from a test.
+func TestHandover_AStep2ThatExitsZeroSucceedsWhileItsOutputStaysOpen(t *testing.T) {
+	record := t.TempDir()
+	held := filepath.Join(record, "held")
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64": fakeInstaller(record, "sleep 10 &\necho $! > '"+held+"'", 0),
+	})
+	t.Cleanup(func() {
+		data, _ := os.ReadFile(held)
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	progress, _ := collect()
+
+	start := time.Now()
+	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
+		t.Fatalf("Handover() error = %v, want the exit status to decide", err)
+	}
+	if waited := time.Since(start); waited < installerWaitDelay {
+		t.Fatalf("Handover() returned after %v, before Wait gave up on the open output", waited)
+	}
+	if !s.lockNamesPID(os.Getpid()) {
+		t.Error("a handover whose step 2 exited 0 touched the lock the update script now owns")
+	}
+	if _, err := os.Stat(filepath.Join(s.getFilesDir(), "marker")); err != nil {
+		t.Error("a handover whose step 2 exited 0 removed files/ from under the update script")
+	}
 }
 
 // Once the update script has republished the lock, the directory is the

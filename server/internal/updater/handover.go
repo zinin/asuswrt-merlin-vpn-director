@@ -167,10 +167,11 @@ func (s *Service) runInstaller(ctx context.Context, installer string, opts RunOp
 	err = cmd.Wait()
 	stdout.flush()
 	stderr.flush()
-	// ErrWaitDelay: step 2 exited 0, and something it started still held its
-	// output open. The script redirects its own, so this is not expected, but
-	// the exit status is what the contract promises.
-	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+	// The exit status decides, not Wait's error: exit 0 means the script has
+	// started and owns the lock and files/. Wait still returns an error for an
+	// exit 0 when the deadline fired between that exit and the reap, or when
+	// something step 2 started held its output open (ErrWaitDelay).
+	if cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		return nil
 	}
 	if ctx.Err() != nil {
