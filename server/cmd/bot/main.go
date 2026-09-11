@@ -35,6 +35,13 @@ func versionString() string {
 }
 
 func main() {
+	// Step 2 of a self-update (internal/updater/selfupdate.go): the version
+	// being replaced runs this binary with these arguments before installing
+	// it. Nothing a daemon does at startup may run first.
+	if len(os.Args) > 1 && os.Args[1] == updater.SelfUpdateCommand {
+		os.Exit(updater.RunSelfUpdate(os.Args[2:], updater.DaemonBot, Version, os.Stdout, os.Stderr))
+	}
+
 	devFlag := flag.Bool("dev", false, "Run in development mode (local testing)")
 	flag.Parse()
 
@@ -63,7 +70,7 @@ func main() {
 	}
 
 	// Always add updater service
-	opts = append(opts, bot.WithUpdater(updater.New()))
+	opts = append(opts, bot.WithUpdater(updater.NewForDaemon(updater.DaemonBot)))
 
 	// Initialize logger BEFORE config load (default INFO level)
 	slogger, logger, err := logging.NewSlogLogger(p.BotLogPath)

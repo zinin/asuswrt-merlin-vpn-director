@@ -33,6 +33,13 @@ var (
 )
 
 func main() {
+	// Step 2 of a self-update (internal/updater/selfupdate.go): the version
+	// being replaced runs this binary with these arguments before installing
+	// it. Nothing a daemon does at startup may run first.
+	if len(os.Args) > 1 && os.Args[1] == updater.SelfUpdateCommand {
+		os.Exit(updater.RunSelfUpdate(os.Args[2:], updater.DaemonWebUI, Version, os.Stdout, os.Stderr))
+	}
+
 	configPath := flag.String("config", "/opt/vpn-director/vpn-director.json", "path to vpn-director.json")
 	shadowPath := flag.String("shadow", "/etc/shadow", "path to shadow file")
 	devFlag := flag.Bool("dev", false, "run in development mode (HTTP, mock executor, testdata paths)")
@@ -156,7 +163,7 @@ func main() {
 
 	// The Web UI updates both daemons through the same flow as the bot; the
 	// progress lines go to the Web UI log, since there is no chat to answer in.
-	updateFlow := updateflow.New(updater.New(), Version, *devFlag)
+	updateFlow := updateflow.New(updater.NewForDaemon(updater.DaemonWebUI), Version, *devFlag)
 
 	deps := &webapi.Deps{
 		Config:  configSvc,
