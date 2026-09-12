@@ -38,8 +38,18 @@ import (
 //     exit means no script started and nothing outside UpdateDir changed; the
 //     last non-empty stderr line is the reason shown to the user.
 //  4. Files: UpdateDir, and LockFile holding the PID of its owner - step 1
-//     while step 2 runs, then the script. notify.json only gains fields.
+//     while step 2 runs, then the script. notify.json only gains fields, and
+//     its status stays "ok" or "failed": a bot on this release reads every
+//     other value as success, announces "Update complete: <from> → <to>" and
+//     clears UpdateDir, update.log included.
 //  5. Version: step 2 refuses unless --to is the version compiled into it.
+//  6. Limits: step 1 fetches the installer under maxFileSize and
+//     downloadTimeout (downloader.go). It passes on the first
+//     maxProgressLines stdout lines, each cut to maxProgressRunes runes, and
+//     only logs the rest. After defaultHandoverTimeout it asks step 2 to stop
+//     with SIGTERM and kills it installerWaitDelay later; output that a
+//     process step 2 started keeps open is abandoned installerWaitDelay after
+//     step 2 exits.
 //
 // Step 2 never logs: its stderr is the channel for the reason in item 3.
 

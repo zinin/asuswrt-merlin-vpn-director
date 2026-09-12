@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 )
 
-// Limits step 1 holds step 2 to (selfupdate.go).
+// Limits step 1 holds step 2 to: item 6 of the contract (selfupdate.go).
 const (
 	// defaultHandoverTimeout bounds step 2: downloading the release and
 	// starting its script. The Web UI waits up to twenty minutes for an update.

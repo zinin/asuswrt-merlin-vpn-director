@@ -118,7 +118,7 @@ Both daemons — `telegram-bot` and `webui` — are updated together, from the b
 6. The script remembers which daemons were running, stops them, copies everything, writes `notify.json` and starts back exactly those daemons
 7. On failure an `EXIT` trap restarts the daemons that were running and writes `notify.json` with `"status": "failed"`
 
-The contract between the two steps is the doc comment at the top of `internal/updater/selfupdate.go`: the asset names, the invocation, what stdout, stderr and the exit status mean, the update directory and the version check. Later releases may add to it but never remove or rename anything in it, because a router cannot update the step 1 it runs. `testdata/selfupdate_argv.txt` keeps every invocation a released step 1 builds, and step 2 must parse them all. Step 2 never logs: its stderr carries the reason step 1 shows.
+The contract between the two steps is the doc comment at the top of `internal/updater/selfupdate.go`: the asset names, the invocation, what stdout, stderr and the exit status mean, the update directory, the version check and the limits step 1 imposes. Later releases may add to it but never remove or rename anything in it, because a router cannot update the step 1 it runs. `internal/updater/testdata/selfupdate_argv.txt` keeps every invocation a released step 1 builds, and step 2 must parse them all. Step 2 never logs: its stderr carries the reason step 1 shows.
 
 `notify.json`:
 
