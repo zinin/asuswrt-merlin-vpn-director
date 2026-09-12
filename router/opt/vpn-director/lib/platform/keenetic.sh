@@ -288,7 +288,13 @@ platform_cron_add() {
     mkdir -p "$dir" 2>/dev/null || return 1
     printf '%s root %s\n' "$schedule" "$cmd" > "$dir/$name" || return 1
     chmod 644 "$dir/$name"
-    [[ -x $init ]] || return 1
+    # No init script is the cron package not being installed. Say so here,
+    # where the missing thing has a name: the caller only learns that
+    # scheduling failed, and a bare non-zero exit leaves nothing to act on.
+    if [[ ! -x $init ]]; then
+        log -l ERROR "Entware's cron is not installed ($init is missing): opkg install cron - the job $dir/$name is written and starts running once the package is there"
+        return 1
+    fi
     "$init" check >/dev/null 2>&1 || "$init" start >/dev/null 2>&1
 }
 

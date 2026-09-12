@@ -406,7 +406,14 @@ cmd_cron() {
             # `|| true`: the job usually does not exist, and a platform whose cron tool reports
             # that with an error must not abort the install.
             platform_cron_del update_ipsets || true
-            platform_cron_add vpn_director_update "0 3 * * *" "$SCRIPT_DIR/vpn-director.sh update"
+            # Bare, this call took errexit with it: a platform whose cron tool
+            # is missing or refuses ended the CLI with that exit status and no
+            # output at all. The platform says what is wrong with it; say that
+            # the schedule is the thing that did not happen, and still fail.
+            if ! platform_cron_add vpn_director_update "0 3 * * *" "$SCRIPT_DIR/vpn-director.sh update"; then
+                log -l ERROR "Failed to schedule the daily ipset update"
+                exit 1
+            fi
             log "Scheduled daily ipset update"
             ;;
         remove)

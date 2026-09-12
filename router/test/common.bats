@@ -250,6 +250,61 @@ EOF
     [ ! -e "$BATS_TEST_TMPDIR/out" ]
 }
 
+# Keenetic has no working wget, so curl is the whole download path there and
+# its flags decide what lands on disk. Without -f curl writes the server's
+# error page to $dest and exits 0 - a 404 from a mirror would be stored as an
+# ipset; without -L it stops at a redirect that wget would have followed. This
+# mock answers the way curl does with and without those flags.
+@test "download_file: an HTTP error from curl fails and leaves no file" {
+    load_common
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/bin/bash\nexit 139\n' > "$BATS_TEST_TMPDIR/bin/wget"
+    cat > "$BATS_TEST_TMPDIR/bin/curl" <<'EOF'
+#!/bin/bash
+out=""; fail=0; follow=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)         out="$2"; shift 2 ;;
+        --fail)     fail=1; shift ;;
+        --location) follow=1; shift ;;
+        -[!-]*)     [[ $1 == *f* ]] && fail=1
+                    [[ $1 == *L* ]] && follow=1
+                    shift ;;
+        *)          shift ;;
+    esac
+done
+printf 'fail=%s follow=%s\n' "$fail" "$follow" > "$(dirname "$0")/../curl.flags"
+: > "$out"   # curl creates the output file before it knows the status
+[[ $fail -eq 1 ]] && exit 22                        # -f: HTTP 404 is an error
+printf '<html>404 Not Found</html>\n' > "$out"      # no -f: the body is "the download"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/wget" "$BATS_TEST_TMPDIR/bin/curl"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" run download_file "https://example.invalid/file" "$BATS_TEST_TMPDIR/out"
+    assert_failure
+    assert_output --partial "Failed to download"
+    [ ! -e "$BATS_TEST_TMPDIR/out" ]
+    run cat "$BATS_TEST_TMPDIR/curl.flags"
+    assert_output "fail=1 follow=1"
+}
+
+# The DEBUG line after a failed wget used to promise a curl attempt on a
+# router that has no curl either, which is the one place the log has to be
+# read to find out why nothing was downloaded.
+@test "download_file: does not claim a curl attempt when curl is not installed" {
+    load_common
+    mkdir -p "$BATS_TEST_TMPDIR/nocurl"
+    local tool
+    for tool in date wc mv rm logger; do
+        ln -sf "$(command -v "$tool")" "$BATS_TEST_TMPDIR/nocurl/$tool"
+    done
+    printf '#!/bin/bash\nexit 139\n' > "$BATS_TEST_TMPDIR/nocurl/wget"
+    chmod +x "$BATS_TEST_TMPDIR/nocurl/wget"
+    PATH="$BATS_TEST_TMPDIR/nocurl" run download_file "https://example.invalid/file" "$BATS_TEST_TMPDIR/out"
+    assert_failure
+    refute_output --partial "trying curl"
+    assert_output --partial "curl is not installed"
+}
+
 # ============================================================================
 # Platform contract is available through common.sh
 # ============================================================================

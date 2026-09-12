@@ -31,3 +31,6 @@ common   router/opt/etc/init.d/S98telegram-bot
 common   router/opt/etc/init.d/S98vpn-director-webui
 merlin   router/jffs/scripts/firewall-start
 merlin   router/jffs/scripts/wan-event
+keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh
+keenetic router/opt/etc/ndm/wan.d/50-vpn-director.sh
+keenetic router/opt/etc/ndm/iflayerchanged.d/50-vpn-director.sh

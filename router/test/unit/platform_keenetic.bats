@@ -16,7 +16,9 @@ load_platform() {
     : > /tmp/bats_curl_calls.log
     : > /tmp/bats_ip_calls.log
     : > /tmp/bats_insmod_calls.log
-    source "$LIB_DIR/platform.sh"
+    # Through common.sh, the way production loads it: keenetic.sh reports a
+    # missing cron package with log, which common.sh defines.
+    load_common
 }
 
 # with_mock <name> <script body> puts a one-off mock first in PATH.
@@ -418,6 +420,11 @@ EOF
     run platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
     assert_failure
     [ -f "$VPD_CRON_D/vpn_director_update" ]
+    # Saying nothing here is a "cron install" that exits non-zero with no
+    # output at all. Name the missing package, and say that the job file just
+    # written starts running by itself once the package is there.
+    assert_output --partial "opkg install cron"
+    assert_output --partial "$VPD_CRON_D/vpn_director_update"
 }
 
 @test "platform_cron_del: removes the job; a job that is not there is fine" {

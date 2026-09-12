@@ -382,6 +382,19 @@ setup() {
     grep -qF "cru d update_ipsets" /tmp/bats_cru_calls.log
 }
 
+# cmd_cron called platform_cron_add bare under errexit: on a platform whose
+# cron is not there the CLI died with the function's exit status and no
+# output at all, leaving nothing to act on.
+@test "vpn-director: cron install reports a platform cron that failed" {
+    : > /tmp/bats_cru_calls.log
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/bin/bash\nexit 1\n' > "$BATS_TEST_TMPDIR/bin/cru"
+    chmod +x "$BATS_TEST_TMPDIR/bin/cru"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" run "$SCRIPTS_DIR/vpn-director.sh" cron install
+    assert_failure
+    assert_output --partial "Failed to schedule the daily ipset update"
+}
+
 @test "vpn-director: cron remove drops the job" {
     : > /tmp/bats_cru_calls.log
     run "$SCRIPTS_DIR/vpn-director.sh" cron remove

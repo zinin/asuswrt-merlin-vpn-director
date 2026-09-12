@@ -838,17 +838,31 @@ download_file() {
     # wget first (retries, resume), curl when wget is absent or fails. The
     # busybox wget of Entware on KeeneticOS has no TLS and dies on https
     # URLs, so a failure here is not the end of the download.
+    local have_curl=0
+    if command -v curl >/dev/null 2>&1; then
+        have_curl=1
+    fi
+
     if command -v wget >/dev/null 2>&1; then
         log -l DEBUG "Downloading with wget (timeout=${timeout}s): $url"
         if wget -q -T "$timeout" -t 3 -O "$dest" "$url" 2>/dev/null; then
             rc=0
-        else
+        elif [[ $have_curl -eq 1 ]]; then
             log -l DEBUG "wget failed; trying curl"
+        else
+            # The one line the log has to carry on a router where neither
+            # downloader can do the job; promising a curl that is not
+            # installed sends whoever reads it looking in the wrong place.
+            log -l DEBUG "wget failed and curl is not installed"
         fi
     fi
-    if [[ $rc -ne 0 ]] && command -v curl >/dev/null 2>&1; then
+    if [[ $rc -ne 0 && $have_curl -eq 1 ]]; then
         log -l DEBUG "Downloading with curl (timeout=${timeout}s): $url"
-        if curl -sS --connect-timeout 30 --max-time "$timeout" -o "$dest" "$url" 2>/dev/null; then
+        # -f: an HTTP error is a failure. Without it curl writes the server's
+        # error page to $dest and exits 0, and on Keenetic - where curl is the
+        # whole download path - a 404 from a mirror would be stored as data.
+        # -L: follow redirects, which wget does, so the two paths agree.
+        if curl -fsSL --connect-timeout 30 --max-time "$timeout" -o "$dest" "$url" 2>/dev/null; then
             rc=0
         fi
     fi
