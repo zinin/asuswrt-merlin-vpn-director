@@ -3,11 +3,13 @@ package updater
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -270,6 +272,12 @@ func TestSelfUpdate_ChecksTheLockAgainBeforeTheScript(t *testing.T) {
 			os.WriteFile(lockFile, []byte("1"), 0644)
 		}
 	})
+	// Which holds while the webui is the last daemon in the table: reorder it
+	// and the claim would go before a write still to come, leaving one of the
+	// per-write checks to refuse and this test covering something else.
+	if last := Daemons[len(Daemons)-1]; last.Name != DaemonWebUI {
+		t.Fatalf("Daemons ends with %s, so the webui's asset is not step 2's last write", last.Name)
+	}
 	f.s.daemon = DaemonBot
 
 	err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &bytes.Buffer{})
@@ -335,26 +343,47 @@ func TestRunSelfUpdate_ReportsARefusalOnStderr(t *testing.T) {
 // started under still stands; a parent that is gone fails that on its own,
 // because os.Getppid answers 1 once it is.
 func TestSelfUpdate_StopsWritingOnceTheClaimIsGone(t *testing.T) {
-	f := newStep2Fixture(t, func(path, lockFile string) {
-		if strings.HasSuffix(path, "/"+manifestPath) {
-			os.WriteFile(lockFile, []byte("1"), 0644)
-		}
-	})
+	for name, tt := range map[string]struct {
+		lostAt    string   // the request served while the claim changes hands
+		wantFiles []string // what files/ holds once step 2 has stopped
+	}{
+		"before the files the manifest lists": {
+			lostAt:    manifestPath,
+			wantFiles: []string{"files.manifest"},
+		},
+		"between the daemon binaries": {
+			lostAt:    "/assets/" + DaemonBot + "-",
+			wantFiles: []string{"files.manifest", "jffs", "opt", DaemonBot},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newStep2Fixture(t, func(path, lockFile string) {
+				if strings.Contains(path, tt.lostAt) {
+					os.WriteFile(lockFile, []byte("1"), 0644)
+				}
+			})
 
-	err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &bytes.Buffer{})
+			err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &bytes.Buffer{})
 
-	if err == nil || !strings.Contains(err.Error(), "lock") {
-		t.Fatalf("selfUpdate() error = %v, want the lock refusal", err)
-	}
-	entries, err := os.ReadDir(filepath.Join(f.dir, "files"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var written []string
-	for _, e := range entries {
-		written = append(written, e.Name())
-	}
-	if len(written) != 1 || written[0] != "files.manifest" {
-		t.Errorf("files/ holds %v, want only the manifest fetched before the claim went", written)
+			if !errors.Is(err, errClaimLost) {
+				t.Fatalf("selfUpdate() error = %v, want the claim refusal", err)
+			}
+			// One refusal wherever in the download it comes from: the user is
+			// told the claim is gone, not which loop noticed.
+			if err.Error() != errClaimLost.Error() {
+				t.Errorf("refusal = %q, want it worded like every other one: %q", err, errClaimLost)
+			}
+			entries, err := os.ReadDir(filepath.Join(f.dir, "files"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var written []string
+			for _, e := range entries {
+				written = append(written, e.Name())
+			}
+			if !slices.Equal(written, tt.wantFiles) {
+				t.Errorf("files/ holds %v, want %v: step 2 wrote on past the claim", written, tt.wantFiles)
+			}
+		})
 	}
 }

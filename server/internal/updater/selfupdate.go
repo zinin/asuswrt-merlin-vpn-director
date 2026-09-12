@@ -2,7 +2,6 @@ package updater
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -167,7 +166,7 @@ func (s *Service) selfUpdate(ctx context.Context, args []string, version string,
 // stops here.
 func (s *Service) requireParentLock() error {
 	if !s.lockNamesPID(s.getParentPID()) {
-		return errors.New("the update lock does not name the process that started this step")
+		return errClaimLost
 	}
 	return nil
 }

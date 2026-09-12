@@ -66,6 +66,11 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 
 	// Download daemon binaries
 	if err := s.downloadBinaries(ctx, release); err != nil {
+		if errors.Is(err, errClaimLost) {
+			// Not a download failure, and worded the same wherever in the
+			// download the claim went: pass it on as it stands.
+			return err
+		}
 		return fmt.Errorf("download binaries: %w", err)
 	}
 

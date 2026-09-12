@@ -277,6 +277,12 @@ func (s *Service) lockNamesPID(pid int) bool {
 	return err == nil && got == pid
 }
 
+// errClaimLost is the refusal a writer of the update directory gives when the
+// claim it works under is gone. One value, so that a caller between the
+// refusal and the user can tell it from a download failure and pass it on
+// untouched: the user is told the claim went, not which loop noticed.
+var errClaimLost = errors.New("the update lock does not name the process that started this step")
+
 // requireClaim refuses a write into the update directory once the claim the
 // writer works under is gone. Only step 2 sets the check: the daemon that
 // started it can die mid-download - out of memory on a 256 MB router, now
