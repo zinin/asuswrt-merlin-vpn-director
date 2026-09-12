@@ -505,3 +505,36 @@ func TestHandover_ReportsTheReasonOfAStep2ThatAnsweredTheDeadline(t *testing.T) 
 	}
 	assertCleanedUp(t, s)
 }
+
+// A line that outgrows maxPendingLine is handed over in pieces. A piece cut at
+// a byte offset can end inside a rune, and what reaches the user is then
+// invalid UTF-8, which Telegram refuses to deliver at all.
+func TestLineWriter_SplitsAnOverlongLineAtARuneBoundary(t *testing.T) {
+	var got []string
+	w := &lineWriter{line: func(l string) { got = append(got, l) }}
+	// Three bytes a rune, half as long again as the limit.
+	line := strings.Repeat("中", maxPendingLine/2)
+
+	// Four bytes at a time never aligns with a three-byte rune, so the limit
+	// is crossed with two bytes of one written and the third still to come.
+	for b := []byte(line); len(b) > 0; {
+		n := min(4, len(b))
+		if _, err := w.Write(b[:n]); err != nil {
+			t.Fatalf("Write() error = %v", err)
+		}
+		b = b[n:]
+	}
+	w.flush()
+
+	if len(got) < 2 {
+		t.Fatalf("the line came out in %d pieces, want it split at the limit", len(got))
+	}
+	for i, piece := range got {
+		if !utf8.ValidString(piece) {
+			t.Errorf("piece %d of %d ends inside a rune", i+1, len(got))
+		}
+	}
+	if strings.Join(got, "") != line {
+		t.Error("the pieces do not add up to the line that was written")
+	}
+}

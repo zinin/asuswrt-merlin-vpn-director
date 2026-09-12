@@ -255,10 +255,33 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		w.pending = w.pending[i+1:]
 	}
 	if len(w.pending) > maxPendingLine {
-		w.emit(w.pending)
-		w.pending = nil
+		cut := completeRunes(w.pending)
+		if cut == 0 {
+			// Nothing whole to hand over: emit the buffer rather than let it
+			// grow without bound waiting for a rune that may never end.
+			cut = len(w.pending)
+		}
+		w.emit(w.pending[:cut])
+		w.pending = w.pending[cut:]
 	}
 	return len(p), nil
+}
+
+// completeRunes returns the length of the longest prefix of b that does not
+// end inside a rune: a piece cut mid-rune reaches the user as invalid UTF-8,
+// and Telegram refuses the message that carries it. Only the last UTFMax
+// bytes can hold a rune still being written.
+func completeRunes(b []byte) int {
+	for i := len(b) - 1; i >= 0 && i >= len(b)-utf8.UTFMax; i-- {
+		if !utf8.RuneStart(b[i]) {
+			continue
+		}
+		if utf8.FullRune(b[i:]) {
+			return len(b)
+		}
+		return i
+	}
+	return len(b)
 }
 
 // flush hands over a last line that ended without a newline.
