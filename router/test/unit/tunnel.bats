@@ -1,5 +1,9 @@
 #!/usr/bin/env bats
 
+# The gateway test below passes a flag to `run`, which bats only guarantees
+# from 1.5.0; without this the suite prints a BW02 warning for it.
+bats_require_minimum_version 1.5.0
+
 load '../test_helper'
 
 # Note: load_tunnel_module is provided by test_helper.bash
@@ -455,4 +459,60 @@ load '../test_helper'
     # instead of purging and re-inserting every one of them.
     grep -q -- '-I PREROUTING 4 -i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
     grep -q -- '-I PREROUTING 5 -i br1 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
+}
+
+# ============================================================================
+# The configured gateway reaches the platform's route (spec 12)
+# ============================================================================
+
+@test "_tunnel_gateway: prints the configured gateway of a tunnel, nothing without one" {
+    load_common
+    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.1"' "$TEST_ROOT/fixtures/vpn-director.json" \
+        > "$BATS_TEST_TMPDIR/vpn-director.json"
+    export VPD_CONFIG_FILE="$BATS_TEST_TMPDIR/vpn-director.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/firewall.sh"
+    source "$LIB_DIR/tunnel.sh" --source-only
+    run _tunnel_gateway wgc1
+    assert_success
+    assert_output "10.8.0.1"
+    run _tunnel_gateway ovpnc1
+    assert_success
+    refute_output
+}
+
+@test "_tunnel_gateway: drops a value that is not an IPv4 address with a WARN" {
+    load_common
+    jq '.tunnel_director.tunnels.wgc1.gateway = "gateway.example"' "$TEST_ROOT/fixtures/vpn-director.json" \
+        > "$BATS_TEST_TMPDIR/vpn-director.json"
+    export VPD_CONFIG_FILE="$BATS_TEST_TMPDIR/vpn-director.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/firewall.sh"
+    source "$LIB_DIR/tunnel.sh" --source-only
+    run --separate-stderr _tunnel_gateway wgc1
+    assert_success
+    refute_output
+    grep -q "WARN.*invalid gateway 'gateway.example'" "$LOG_FILE"
+}
+
+@test "tunnel_apply: hands the configured gateway to platform_tunnel_route_ensure" {
+    load_common
+    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.1"' "$TEST_ROOT/fixtures/vpn-director.json" \
+        > "$BATS_TEST_TMPDIR/vpn-director.json"
+    export VPD_CONFIG_FILE="$BATS_TEST_TMPDIR/vpn-director.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/firewall.sh"
+    source "$LIB_DIR/tunnel.sh" --source-only
+    platform_tunnel_route_ensure() { echo "ensure $1 $2 [$3]" >> "$BATS_TEST_TMPDIR/ensure.log"; return 0; }
+    run tunnel_apply
+    assert_success
+    grep -qF "ensure wgc1 0 [10.8.0.1]" "$BATS_TEST_TMPDIR/ensure.log"
+    # The up-to-date path passes it too.
+    fw_chain_exists() { return 0; }
+    run tunnel_apply
+    assert_success
+    assert_equal "$(grep -cF 'ensure wgc1 0 [10.8.0.1]' "$BATS_TEST_TMPDIR/ensure.log")" 2
 }

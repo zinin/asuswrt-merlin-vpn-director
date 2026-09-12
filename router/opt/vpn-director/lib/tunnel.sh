@@ -26,6 +26,7 @@
 #
 # Internal functions (for testing):
 #   _tunnel_table_allowed()      - check if a tunnel id is one the platform lists
+#   _tunnel_gateway()            - the configured gateway of a tunnel, or nothing
 #   _tunnel_ensure_routes()      - re-install the routes of every applied tunnel
 #   _tunnel_init()               - initialize module state
 #
@@ -119,6 +120,34 @@ _tunnel_table_allowed() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _tunnel_gateway <id> - the configured gateway of a tunnel, or nothing
+# -------------------------------------------------------------------------------------------------
+# tunnel_director.tunnels.<id>.gateway (spec 12): the Keenetic route of an
+# OpenVPN tunnel uses it, every other platform ignores it. Anything but a
+# dotted IPv4 address is dropped with a WARN so a typo never reaches ip route.
+# -------------------------------------------------------------------------------------------------
+_tunnel_gateway() {
+    local gateway o
+    gateway="$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "${1:-}" '.[$t].gateway // empty' 2>/dev/null)"
+    [[ -n $gateway ]] || return 0
+    if [[ $gateway =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+        for o in "${BASH_REMATCH[@]:1}"; do
+            if [[ $((10#$o)) -gt 255 ]]; then
+                gateway=""
+                break
+            fi
+        done
+    else
+        gateway=""
+    fi
+    if [[ -z $gateway ]]; then
+        log -l WARN "Tunnel '$1': invalid gateway '$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$1" '.[$t].gateway')' ignored (expected an IPv4 address)"
+        return 0
+    fi
+    printf '%s\n' "$gateway"
+}
+
+# -------------------------------------------------------------------------------------------------
 # _tunnel_ensure_routes - re-install the routes of every applied tunnel
 # -------------------------------------------------------------------------------------------------
 # Reads TUN_DIR_TABLES ("<idx> <id>" per line, written by tunnel_apply) and calls
@@ -130,7 +159,7 @@ _tunnel_ensure_routes() {
     [[ -f $TUN_DIR_TABLES ]] || return 0
     while read -r idx tunnel; do
         [[ -n $tunnel ]] || continue
-        if ! platform_tunnel_route_ensure "$tunnel" "$idx"; then
+        if ! platform_tunnel_route_ensure "$tunnel" "$idx" "$(_tunnel_gateway "$tunnel")"; then
             log -l WARN "Tunnel '$tunnel': route not installed (interface down?); traffic falls through to main"
         fi
     done < "$TUN_DIR_TABLES"
@@ -446,7 +475,7 @@ tunnel_apply() {
         # is not: a lookup in an empty table falls through to main.
         local table
         table="$(platform_tunnel_table "$tunnel" "$tunnel_idx")"
-        if ! platform_tunnel_route_ensure "$tunnel" "$tunnel_idx"; then
+        if ! platform_tunnel_route_ensure "$tunnel" "$tunnel_idx" "$(_tunnel_gateway "$tunnel")"; then
             log -l WARN "Tunnel '$tunnel': route not installed (interface down?); traffic falls through to main"
             warnings=1
         fi

@@ -132,3 +132,199 @@ with_mock() {
     run platform_email_supported
     assert_output "0"
 }
+
+# ------------------------------------------------------------------ tunnels
+
+@test "platform_tunnels: every OpenVPN and Wireguard interface, then main" {
+    load_platform
+    run platform_tunnels
+    assert_success
+    assert_line --index 0 "OpenVPN0"
+    assert_line --index 1 "OpenVPN2"
+    assert_line --index 2 "Wireguard1"
+    assert_line --index 3 "main"
+    [ "${#lines[@]}" -eq 4 ]
+}
+
+@test "platform_tunnels: only main when NDM does not answer" {
+    load_platform
+    BATS_RCI_DOWN=1 run platform_tunnels
+    assert_success
+    assert_output "main"
+}
+
+@test "platform_tunnel_iface: OpenVPNN is ovpn_brN, WireguardN is nwgN" {
+    load_platform
+    run platform_tunnel_iface OpenVPN0
+    assert_success
+    assert_output "ovpn_br0"
+    run platform_tunnel_iface Wireguard1
+    assert_output "nwg1"
+    # Down: nothing to check against, the convention is the answer.
+    run platform_tunnel_iface OpenVPN2
+    assert_output "ovpn_br2"
+}
+
+@test "platform_tunnel_iface: fails when the interface does not carry the address RCI reports" {
+    load_platform
+    printf 'ovpn_br0 10.9.9.9/24\n' > "$BATS_TEST_TMPDIR/addrs"
+    BATS_IP_ADDRS_FILE="$BATS_TEST_TMPDIR/addrs" run platform_tunnel_iface OpenVPN0
+    assert_failure
+    refute_output
+}
+
+@test "platform_tunnel_iface: the convention stands when NDM does not answer" {
+    load_platform
+    BATS_RCI_DOWN=1 run platform_tunnel_iface OpenVPN0
+    assert_success
+    assert_output "ovpn_br0"
+}
+
+@test "platform_tunnel_iface: unknown ids fail" {
+    load_platform
+    run platform_tunnel_iface main
+    assert_failure
+    refute_output
+    run platform_tunnel_iface eth0
+    assert_failure
+}
+
+@test "platform_tunnel_info: type, connected and description on three lines" {
+    load_platform
+    run platform_tunnel_info OpenVPN0
+    assert_success
+    assert_line --index 0 "openvpn"
+    assert_line --index 1 "1"
+    assert_line --index 2 "office-ovpn"
+    run platform_tunnel_info Wireguard1
+    assert_line --index 0 "wireguard"
+    assert_line --index 1 "1"
+    assert_line --index 2 "wg-home"
+    run platform_tunnel_info OpenVPN2
+    assert_line --index 1 "0"
+    assert_line --index 2 "spare-ovpn"
+}
+
+@test "platform_tunnel_info: fails for an unknown id and when NDM does not answer" {
+    load_platform
+    run platform_tunnel_info OpenVPN7
+    assert_failure
+    refute_output
+    run platform_tunnel_info eth0
+    assert_failure
+    BATS_RCI_DOWN=1 run platform_tunnel_info OpenVPN0
+    assert_failure
+    refute_output
+}
+
+@test "platform_tunnel_table: 2000 + idx; main stays main" {
+    load_platform
+    run platform_tunnel_table OpenVPN0 0
+    assert_output "2000"
+    run platform_tunnel_table Wireguard1 3
+    assert_output "2003"
+    run platform_tunnel_table main 5
+    assert_output "main"
+}
+
+@test "platform_tunnel_table: an id that is not a tunnel or an idx that is not a number fails" {
+    load_platform
+    run platform_tunnel_table eth0 0
+    assert_failure
+    refute_output
+    run platform_tunnel_table OpenVPN0 x
+    assert_failure
+    refute_output
+    run platform_tunnel_table
+    assert_failure
+}
+
+@test "_keenetic_first_host: the first host of the tunnel subnet" {
+    load_platform
+    run _keenetic_first_host 10.73.149.113 255.255.255.0
+    assert_output "10.73.149.1"
+    run _keenetic_first_host 10.8.0.6 255.255.255.252
+    assert_output "10.8.0.5"
+    run _keenetic_first_host 10.73.149.113 garbage
+    assert_failure
+    refute_output
+}
+
+@test "platform_tunnel_route: OpenVPN via the subnet's first host, Wireguard by device" {
+    load_platform
+    run platform_tunnel_route OpenVPN0
+    assert_success
+    assert_output "default via 10.73.149.1 dev ovpn_br0"
+    run platform_tunnel_route Wireguard1
+    assert_output "default dev nwg1"
+}
+
+@test "platform_tunnel_route: a configured gateway replaces the computed one" {
+    load_platform
+    run platform_tunnel_route OpenVPN0 10.73.149.254
+    assert_output "default via 10.73.149.254 dev ovpn_br0"
+}
+
+@test "platform_tunnel_route: nothing while the tunnel is down" {
+    load_platform
+    run platform_tunnel_route OpenVPN2
+    assert_failure
+    refute_output
+}
+
+@test "platform_tunnel_route_ensure: replaces the route in the tunnel's table, idempotently" {
+    load_platform
+    run platform_tunnel_route_ensure OpenVPN0 0
+    assert_success
+    run platform_tunnel_route_ensure OpenVPN0 0
+    assert_success
+    assert_equal "$(grep -c 'ip route replace default via 10.73.149.1 dev ovpn_br0 table 2000' /tmp/bats_ip_calls.log)" 2
+    run platform_tunnel_route_ensure Wireguard1 1 ""
+    assert_success
+    grep -q 'ip route replace default dev nwg1 table 2001' /tmp/bats_ip_calls.log
+}
+
+@test "platform_tunnel_route_ensure: passes the gateway on and fails for a down tunnel" {
+    load_platform
+    run platform_tunnel_route_ensure OpenVPN0 0 10.73.149.254
+    assert_success
+    grep -q 'ip route replace default via 10.73.149.254 dev ovpn_br0 table 2000' /tmp/bats_ip_calls.log
+    run platform_tunnel_route_ensure OpenVPN2 2
+    assert_failure
+    refute grep -q 'table 2002' /tmp/bats_ip_calls.log
+}
+
+@test "platform_tunnel_route_ensure and _table_release: main touches no table" {
+    load_platform
+    run platform_tunnel_route_ensure main 4
+    assert_success
+    run platform_tunnel_table_release main 4
+    assert_success
+    [ ! -s /tmp/bats_ip_calls.log ]
+}
+
+@test "platform_tunnel_table_release: flushes the table, also one that was never ensured" {
+    load_platform
+    run platform_tunnel_table_release OpenVPN0 0
+    assert_success
+    grep -q 'ip route flush table 2000' /tmp/bats_ip_calls.log
+    run platform_tunnel_table_release Wireguard1 7
+    assert_success
+    grep -q 'ip route flush table 2007' /tmp/bats_ip_calls.log
+}
+
+@test "platform_vpn_endpoints: the OpenVPN server and every Wireguard peer, one per line" {
+    load_platform
+    run platform_vpn_endpoints
+    assert_success
+    assert_line --index 0 "203.0.113.7"
+    assert_line --index 1 "198.51.100.9"
+    [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "platform_vpn_endpoints: fails when NDM does not answer" {
+    load_platform
+    BATS_RCI_DOWN=1 run platform_vpn_endpoints
+    assert_failure
+    refute_output
+}

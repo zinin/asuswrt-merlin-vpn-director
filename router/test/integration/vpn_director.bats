@@ -323,6 +323,7 @@ setup() {
 @test "vpn-director: platform prints the platform facts as JSON" {
     run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
     assert_success
+    [ "${#lines[@]}" -eq 1 ]
     echo "$output" | jq -e '.platform == "merlin"' >/dev/null
     echo "$output" | jq -e '.password_file == "/etc/shadow"' >/dev/null
     echo "$output" | jq -e '.lan_ifaces == ["br0"]' >/dev/null
@@ -333,6 +334,7 @@ setup() {
 @test "vpn-director: platform lists every tunnel except main" {
     run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
     assert_success
+    [ "${#lines[@]}" -eq 1 ]
     echo "$output" | jq -e '[.tunnels[].id] == ["wgc1","wgc2","ovpnc1","ovpnc2"]' >/dev/null
     echo "$output" | jq -e '.tunnels[0] == {id:"wgc1", iface:"wgc1", type:"wireguard", connected:false, description:"Office WG"}' >/dev/null
     echo "$output" | jq -e '.tunnels[2] == {id:"ovpnc1", iface:"tun11", type:"openvpn", connected:false, description:"Office OVPN"}' >/dev/null
@@ -345,6 +347,22 @@ setup() {
     PATH="$BATS_TEST_TMPDIR/mock:$PATH" run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
     assert_success
     echo "$output" | jq -e '.wan_if == ""' >/dev/null
+}
+
+@test "vpn-director: platform on Keenetic lists NDM's tunnels with their Linux interfaces" {
+    VPD_PLATFORM=keenetic PATH="$TEST_ROOT/mocks/keenetic:$PATH" \
+        run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    # One line: the daemons read the last line of the combined output (C10).
+    [ "${#lines[@]}" -eq 1 ]
+    echo "$output" | jq -e '.platform == "keenetic"' >/dev/null
+    echo "$output" | jq -e '.password_file == "/opt/etc/passwd"' >/dev/null
+    echo "$output" | jq -e '.lan_ifaces == ["br0"]' >/dev/null
+    echo "$output" | jq -e '.wan_if == "eth2.4"' >/dev/null
+    echo "$output" | jq -e '[.tunnels[].id] == ["OpenVPN0","OpenVPN2","Wireguard1"]' >/dev/null
+    echo "$output" | jq -e '.tunnels[0] == {id:"OpenVPN0", iface:"ovpn_br0", type:"openvpn", connected:true, description:"office-ovpn"}' >/dev/null
+    echo "$output" | jq -e '.tunnels[1] == {id:"OpenVPN2", iface:"ovpn_br2", type:"openvpn", connected:false, description:"spare-ovpn"}' >/dev/null
+    echo "$output" | jq -e '.tunnels[2] == {id:"Wireguard1", iface:"nwg1", type:"wireguard", connected:true, description:"wg-home"}' >/dev/null
 }
 
 # ============================================================================

@@ -347,7 +347,9 @@ cmd_update() {
 # cmd_platform - print the platform facts the daemons need, as one JSON document
 # -------------------------------------------------------------------------------------------------
 # Tunnels are listed without "main"; a tunnel whose interface or info lookup
-# fails is omitted with a WARN so the rest of the document stays usable.
+# fails is omitted with a WARN so the rest of the document stays usable. The
+# document is one line: the daemons read the command's combined output, WARN
+# lines included, and take the last non-empty line as the document.
 # -------------------------------------------------------------------------------------------------
 cmd_platform() {
     _load_common
@@ -381,7 +383,7 @@ cmd_platform() {
             -n '$list + [{id:$id, iface:$iface, type:$type, connected:$connected, description:$desc}]')"
     done < <(platform_tunnels || true)
 
-    jq -n \
+    jq -c -n \
         --arg platform "$(platform_name)" \
         --arg arch "$arch" \
         --arg password_file "$pw_file" \

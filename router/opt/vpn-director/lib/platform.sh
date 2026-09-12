@@ -24,13 +24,13 @@
 #   platform_tunnel_iface <id>             Linux interface of a tunnel
 #   platform_tunnel_info <id>              three lines: type, connected (1|0), description
 #   platform_tunnel_table <id> <idx>       routing table for "ip rule ... lookup"
-#   platform_tunnel_route <id>             route spec for the tunnel table (Keenetic)
-#   platform_tunnel_route_ensure <id> <idx> install the tunnel table route
+#   platform_tunnel_route <id> [gateway]   route spec for the tunnel table (Keenetic)
+#   platform_tunnel_route_ensure <id> <idx> [gateway] install the tunnel table route
 #   platform_tunnel_table_release <id> <idx> drop the tunnel table route
 #   platform_vpn_endpoints                 firmware VPN server hosts, one per line
 #   platform_load_module <name>            load a kernel module
 #   platform_cron_add <name> <schedule> <cmd> / platform_cron_del <name>
-#   platform_tproxy_extra_rules apply|stop platform-only firewall rules for TPROXY
+#   platform_tproxy_extra_rules apply|stop [mark/mask] platform-only firewall rules for TPROXY
 #   platform_prerouting_base_pos           insert position for TUN_DIR in mangle PREROUTING
 #   platform_password_file                 file the Web UI verifies passwords against
 #   platform_lan_ip, platform_hostname, platform_model
@@ -47,6 +47,11 @@
 #   * platform_tunnel_table_release may be called for an index that was never
 #     ensured. tunnel_stop walks the recorded state file unconditionally, and
 #     tunnel_apply records an index even when its route_ensure failed.
+#   * The optional trailing arguments are how a platform learns what only the
+#     config knows without reading config globals: tunnel.sh passes
+#     tunnel_director.tunnels.<id>.gateway (validated, or empty) and tproxy.sh
+#     passes "$XRAY_FWMARK/$XRAY_FWMARK_MASK". Merlin ignores both.
+#   * Keenetic's tunnel tables are KEENETIC_TABLE_BASE + idx (keenetic.sh).
 #
 # Testing: VPD_PROBE_ROOT prefixes every path platform_detect looks at.
 ###################################################################################################
