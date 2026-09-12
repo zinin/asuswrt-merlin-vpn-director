@@ -1,8 +1,10 @@
 package updater
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -574,5 +577,62 @@ func TestCleanUpOwned_TouchesNothingOnceTheLockNamesAnotherProcess(t *testing.T)
 
 	if _, err := os.Stat(s.getInstallerFile()); err != nil {
 		t.Errorf("the installer was removed although the lock names another process: %v", err)
+	}
+}
+
+// syncBuffer collects log records: os/exec's output copiers write them from
+// their own goroutines, and WaitDelay lets one outlive the Wait that reaps
+// step 2.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// The caps keep a faulty step 2 from flooding a chat, but what they hold back
+// still has to reach whoever reads the daemon's log: the progress past the
+// limit, and everything step 2 said on stderr, which no user ever sees.
+func TestHandover_LogsWhatItKeepsFromTheUser(t *testing.T) {
+	var logged syncBuffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	const surplus = 3
+	record := t.TempDir()
+	body := "i=0; while [ $i -lt " + strconv.Itoa(maxProgressLines+surplus) + " ]; do echo \"line $i\"; i=$((i+1)); done\n" +
+		"echo 'no space left on the router' >&2"
+	s, release := newHandoverService(t, map[string]string{"webui-arm64": fakeInstaller(record, body, 0)})
+	progress, lines := collect()
+
+	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
+		t.Fatalf("Handover() error = %v", err)
+	}
+
+	if len(*lines) != maxProgressLines {
+		t.Fatalf("progress got %d lines, want %d", len(*lines), maxProgressLines)
+	}
+	log := logged.String()
+	for i := maxProgressLines; i < maxProgressLines+surplus; i++ {
+		if line := "line " + strconv.Itoa(i); !strings.Contains(log, line) {
+			t.Errorf("the log lost %q, a progress line the user never got", line)
+		}
+	}
+	if !strings.Contains(log, "no space left on the router") {
+		t.Error("the log lost what step 2 wrote on stderr, which nothing else records")
+	}
+	if last := (*lines)[maxProgressLines-1]; strings.Contains(log, last) {
+		t.Errorf("the log repeats %q, a line the user already has", last)
 	}
 }
