@@ -121,7 +121,8 @@ platform_vpn_endpoints() {
 platform_load_module() {
     local name="${1:-}"
     [[ -n $name ]] || return 1
-    if lsmod 2>/dev/null | grep -q "$name"; then
+    # The module name is the first column of every lsmod format (a miss costs a redundant modprobe).
+    if lsmod 2>/dev/null | grep -q "^${name}[[:space:]]"; then
         return 0
     fi
     modprobe "$name" 2>/dev/null

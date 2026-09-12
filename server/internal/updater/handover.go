@@ -25,9 +25,9 @@ const (
 	maxProgressRunes = 300
 	// maxPendingLine bounds a line still waiting for its newline.
 	maxPendingLine = 64 * 1024
-	// installerWaitDelay bounds the wait for step 2's output once it has
-	// exited or been killed.
-	installerWaitDelay = 5 * time.Second
+	// defaultInstallerWaitDelay bounds the wait for step 2's output once it
+	// has exited or been killed.
+	defaultInstallerWaitDelay = 5 * time.Second
 	// installerStartAttempts retries an exec refused with "text file busy": a
 	// process forked elsewhere in this daemon while the installer was still
 	// open for writing holds it until that process execs (golang/go#22315).
@@ -100,6 +100,10 @@ func (s *Service) Handover(ctx context.Context, release *Release, opts RunOption
 
 // installerAsset picks the binary step 1 runs: this daemon's, else the first
 // other daemon's the release carries. Every one of them implements step 2.
+// The fallback cannot finish an update on its own today: step 2 requires every
+// binary of its Daemons table and fails in DownloadRelease on the missing one.
+// It is there for a later release that drops a daemon, whose step 2 no longer
+// asks for it.
 func (s *Service) installerAsset(release *Release) (name, url string, err error) {
 	suffix, err := s.getArchSuffix()
 	if err != nil {
@@ -162,7 +166,7 @@ func (s *Service) runInstaller(ctx context.Context, installer string, opts RunOp
 		reason = l
 	}}
 
-	cmd, err := startInstaller(ctx, installer, selfUpdateArgv(opts), stdout, stderr)
+	cmd, err := startInstaller(ctx, installer, selfUpdateArgv(opts), stdout, stderr, s.getInstallerWaitDelay())
 	if err != nil {
 		return &HandoverError{Phase: PhaseStart, Err: err}
 	}
@@ -216,7 +220,7 @@ func endedBySignal(state *os.ProcessState) bool {
 
 // startInstaller starts step 2 from "/", retrying while exec reports
 // "text file busy". Stdin stays nil, which os/exec connects to /dev/null.
-func startInstaller(ctx context.Context, installer string, argv []string, stdout, stderr *lineWriter) (*exec.Cmd, error) {
+func startInstaller(ctx context.Context, installer string, argv []string, stdout, stderr *lineWriter, waitDelay time.Duration) (*exec.Cmd, error) {
 	for attempt := 1; ; attempt++ {
 		cmd := exec.CommandContext(ctx, installer, argv...)
 		cmd.Dir = "/"
@@ -229,7 +233,7 @@ func startInstaller(ctx context.Context, installer string, argv []string, stdout
 		// one that does not answer. No router can update the step 1 it runs,
 		// so a later step 2 gets this chance only if it is given here.
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-		cmd.WaitDelay = installerWaitDelay
+		cmd.WaitDelay = waitDelay
 		err := cmd.Start()
 		if err == nil {
 			return cmd, nil

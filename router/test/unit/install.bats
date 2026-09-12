@@ -280,6 +280,29 @@ EOF
     assert_output --partial "router/opt/vpn-director/lib/tunnel.sh"
 }
 
+@test "manifest_files: an invalid path fails and names the offending line" {
+    load_installer
+    cat > "$BATS_TEST_TMPDIR/files.manifest" <<'EOF'
+common   router/opt/vpn-director/lib/common.sh
+common   router/opt/../../etc/passwd
+EOF
+
+    run manifest_files "$BATS_TEST_TMPDIR/files.manifest" merlin
+
+    # The path is pasted into "${INSTALL_ROOT}/${file#router/}", so a traversal
+    # would install outside the root. The Go parser refuses the same shapes.
+    assert_failure
+    assert_output --partial "line 2"
+    assert_output --partial "router/opt/../../etc/passwd"
+
+    printf 'common   /etc/passwd\n' > "$BATS_TEST_TMPDIR/files.manifest"
+
+    run manifest_files "$BATS_TEST_TMPDIR/files.manifest" merlin
+
+    assert_failure
+    assert_output --partial "/etc/passwd"
+}
+
 @test "download_scripts: a misspelled tag aborts before installing anything" {
     load_installer
     fake_curl

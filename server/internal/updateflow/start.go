@@ -123,6 +123,10 @@ func (f *Flow) run(release *updater.Release, res StartResult, initiator string, 
 		Initiator:  initiator,
 	}, func(line string) { report(progress, line) })
 	if err != nil {
+		// progress may reach nobody - a chat message that cannot be
+		// delivered, a browser tab that is gone - and a failed update that
+		// left no trace at all is one nobody can look into.
+		slog.Warn("self-update handover failed", "from", res.From, "to", res.To, "error", err)
 		report(progress, handoverMessage(err))
 		return
 	}

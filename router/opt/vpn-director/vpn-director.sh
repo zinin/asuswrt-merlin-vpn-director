@@ -86,7 +86,7 @@ fi
 ###################################################################################################
 show_help() {
     cat <<'EOF'
-VPN Director - Unified traffic routing for Asuswrt-Merlin and Keenetic
+VPN Director - Unified traffic routing for Asuswrt-Merlin
 
 Usage:
   vpn-director <command> [component] [options]
@@ -97,7 +97,7 @@ Commands:
   stop [tunnel|xray]          Stop components
   restart [tunnel|xray]       Restart (stop + apply)
   update                      Download fresh ipsets and reapply all
-  platform                    Print platform facts as JSON (used by the Web UI and the bot)
+  platform                    Print platform facts as JSON
   cron install|remove         Schedule or drop the daily "update" job
 
 Options:

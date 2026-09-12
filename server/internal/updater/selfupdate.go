@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 )
 
 // The self-update handover.
@@ -46,9 +47,9 @@ import (
 //     downloadTimeout (downloader.go). It passes on the first
 //     maxProgressLines stdout lines, each cut to maxProgressRunes runes, and
 //     only logs the rest. After defaultHandoverTimeout it asks step 2 to stop
-//     with SIGTERM and kills it installerWaitDelay later; output that a
-//     process step 2 started keeps open is abandoned installerWaitDelay after
-//     step 2 exits.
+//     with SIGTERM and kills it defaultInstallerWaitDelay later; output that
+//     a process step 2 started keeps open is abandoned
+//     defaultInstallerWaitDelay after step 2 exits.
 //
 // Step 2 never logs: its stderr is the channel for the reason in item 3.
 
@@ -111,7 +112,9 @@ func parseSelfUpdateArgs(args []string) (selfUpdateArgs, error) {
 func RunSelfUpdate(args []string, daemon, version string, stdout, stderr io.Writer) int {
 	s := NewForDaemon(daemon)
 	if err := s.selfUpdate(context.Background(), args, version, stdout); err != nil {
-		fmt.Fprintln(stderr, err)
+		// Step 1 shows the last stderr line as the reason (contract item 3),
+		// so a multi-line error would reach the user as its tail.
+		fmt.Fprintln(stderr, strings.ReplaceAll(err.Error(), "\n", " "))
 		return 1
 	}
 	return 0

@@ -106,7 +106,7 @@ func (s *Service) downloadScriptFile(ctx context.Context, tag, file string) erro
 	url := s.getRawBaseURL() + fmt.Sprintf(repoRawPath, repoOwner, repoName, tag, file)
 
 	// Target: "router/opt/vpn-director/lib/common.sh" → "files/opt/vpn-director/lib/common.sh"
-	target := filepath.Join(s.getFilesDir(), strings.TrimPrefix(file, "router"))
+	target := filepath.Join(s.getFilesDir(), strings.TrimPrefix(file, "router/"))
 
 	return s.downloadFile(ctx, url, target)
 }

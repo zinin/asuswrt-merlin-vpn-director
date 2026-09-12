@@ -112,21 +112,22 @@ type Updater interface {
 
 // Service implements the Updater interface.
 type Service struct {
-	httpClient      *http.Client
-	baseURL         string                 // Injectable for testing, empty = default GitHub API
-	rawBaseURL      string                 // Injectable for testing, empty = raw.githubusercontent.com
-	lockFile        string                 // Configurable for testing
-	updateDir       string                 // Configurable for testing
-	scriptFile      string                 // Configurable for testing
-	archSuffix      string                 // Injectable for testing, empty = derived from runtime.GOARCH
-	shell           string                 // Injectable for testing, empty = /bin/sh
-	platform        string                 // Injectable for testing, empty = "merlin" until platform detection lands
-	daemon          string                 // The daemon this process is: Handover prefers its asset, step 2 links itself for it
-	selfBinary      string                 // Step 2 only: this executable, taken as the payload binary of daemon
-	parentPID       func() int             // Injectable for testing, nil = os.Getppid
-	executable      func() (string, error) // Injectable for testing, nil = os.Executable
-	checkClaim      func() error           // Step 2 only: asked before each file it writes, nil = nothing to check
-	handoverTimeout time.Duration          // Injectable for testing, 0 = defaultHandoverTimeout
+	httpClient         *http.Client
+	baseURL            string                 // Injectable for testing, empty = default GitHub API
+	rawBaseURL         string                 // Injectable for testing, empty = raw.githubusercontent.com
+	lockFile           string                 // Configurable for testing
+	updateDir          string                 // Configurable for testing
+	scriptFile         string                 // Configurable for testing
+	archSuffix         string                 // Injectable for testing, empty = derived from runtime.GOARCH
+	shell              string                 // Injectable for testing, empty = /bin/sh
+	platform           string                 // Injectable for testing, empty = "merlin" until platform detection lands
+	daemon             string                 // The daemon this process is: Handover prefers its asset, step 2 links itself for it
+	selfBinary         string                 // Step 2 only: this executable, taken as the payload binary of daemon
+	parentPID          func() int             // Injectable for testing, nil = os.Getppid
+	executable         func() (string, error) // Injectable for testing, nil = os.Executable
+	checkClaim         func() error           // Step 2 only: asked before each file it writes, nil = nothing to check
+	handoverTimeout    time.Duration          // Injectable for testing, 0 = defaultHandoverTimeout
+	installerWaitDelay time.Duration          // Injectable for testing, 0 = defaultInstallerWaitDelay
 }
 
 // Verify Service implements Updater interface.
@@ -197,6 +198,15 @@ func (s *Service) getHandoverTimeout() time.Duration {
 		return s.handoverTimeout
 	}
 	return defaultHandoverTimeout
+}
+
+// getInstallerWaitDelay returns how long step 1 waits for step 2's output
+// once step 2 has exited or been killed.
+func (s *Service) getInstallerWaitDelay() time.Duration {
+	if s.installerWaitDelay > 0 {
+		return s.installerWaitDelay
+	}
+	return defaultInstallerWaitDelay
 }
 
 // getShell returns the interpreter that runs the update script. Tests point

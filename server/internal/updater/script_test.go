@@ -58,9 +58,11 @@ const testManifest = "common router/opt/vpn-director/vpn-director.sh\n" +
 	"keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh\n"
 
 // writeTestManifest gives the update payload the manifest generateScript
-// reads; DownloadRelease writes it there in production. A test that renders
-// with the default paths writes into the real /tmp/vpn-director-update, so
-// what lands there is taken back out afterwards.
+// reads; DownloadRelease writes it there in production. Only the golden test
+// renders with the default paths - it is the one render that has to be
+// deterministic - and so is the only one writing into the real
+// /tmp/vpn-director-update, from which what lands there is taken back out
+// afterwards.
 func writeTestManifest(t *testing.T, s *Service) {
 	t.Helper()
 	dir := s.getFilesDir()
@@ -314,7 +316,7 @@ func TestGenerateScript_EmbedsInitiator(t *testing.T) {
 }
 
 func TestGenerateScript_CoversEveryDaemon(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -350,7 +352,7 @@ func TestGenerateScript_CoversEveryDaemon(t *testing.T) {
 }
 
 func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -387,7 +389,7 @@ func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
 // Both the happy path and the recovery path must release before they start
 // anything.
 func TestGenerateScript_ReleasesApplyLockBeforeStartingDaemons(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -424,7 +426,7 @@ func TestGenerateScript_ReleasesApplyLockBeforeStartingDaemons(t *testing.T) {
 // a bash/ksh extension. getShell() runs the generated script with /bin/sh, and
 // dash rejects "exec 201>" outright.
 func TestGenerateScript_UsesPOSIXFileDescriptors(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -441,7 +443,7 @@ func TestGenerateScript_UsesPOSIXFileDescriptors(t *testing.T) {
 // exists it finds nothing, and a running process never looks again, so the
 // failure would stay unreported until the next restart.
 func TestGenerateScript_CommitsTheFailedStatusBeforeRestarting(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -465,7 +467,7 @@ func TestGenerateScript_CommitsTheFailedStatusBeforeRestarting(t *testing.T) {
 // daemons back before the status is committed lets it put the bot up without
 // a notify.json to read, and CheckAndSendNotify runs at startup only.
 func TestGenerateScript_RestoresMonitLast(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -499,7 +501,7 @@ func TestGenerateScript_RestoresMonitLast(t *testing.T) {
 // deletes the lock as stale, and the running update ends up unlocked - free
 // for a second update to start and wipe the shared files/ directory.
 func TestGenerateScript_PublishesThePIDByRename(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -520,7 +522,7 @@ func TestGenerateScript_PublishesThePIDByRename(t *testing.T) {
 // written that way silently never unmonitors anything. Nothing in the generated
 // script may depend on it.
 func TestGenerateScript_DoesNotUseTheCommandBuiltin(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -548,7 +550,7 @@ func TestGenerateScript_DoesNotUseTheCommandBuiltin(t *testing.T) {
 }
 
 func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -579,7 +581,7 @@ func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
 }
 
 func TestGenerateScript_ReportsAFailedStart(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -649,7 +651,7 @@ func afterOnExit(t *testing.T, script string) string {
 }
 
 func TestGenerateScript_NotifyFormat(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(RunOptions{
 		OldVersion: "v1.2.0", NewVersion: "v1.3.0", ChatID: 0, Initiator: "webui",
@@ -673,7 +675,7 @@ func TestGenerateScript_IsValidShell(t *testing.T) {
 		t.Skip("sh not available")
 	}
 
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
@@ -899,7 +901,7 @@ func TestUpdateCommand_StartsTheScriptOutsideTheDirectoryTheUpdateDeletes(t *tes
 // ends the script where it stands - taking the monit re-monitor and the lock
 // removal of steps 7 and 8 with it.
 func TestGenerateScript_LogSurvivesTheDirectoryTheBotDeletes(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
 	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {

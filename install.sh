@@ -164,6 +164,11 @@ manifest_files() {
                 return 1
                 ;;
         esac
+        # The rule is the Go parser's (server/internal/updater/manifest.go).
+        if [[ ! $path =~ ^router/[A-Za-z0-9._/-]+$ || $path == *..* ]]; then
+            print_error "files.manifest line $lineno: invalid path \"$path\" in \"$line\"" >&2
+            return 1
+        fi
         if [[ $tag == common || $tag == "$platform" ]]; then
             printf '%s\n' "$path"
         fi

@@ -306,7 +306,13 @@ tunnel_apply() {
 
     # Stop existing rules if config changed
     if [[ $old_hash != "$empty_hash" ]]; then
-        log "Configuration changed; removing existing rules..."
+        # rebuild also fires with the hash unchanged - a missing chain, or a
+        # missing TUN_DIR_TABLES - and that is not a configuration change.
+        if [[ $new_hash != "$old_hash" ]]; then
+            log "Configuration changed; removing existing rules..."
+        else
+            log "Applied rules are incomplete; rebuilding..."
+        fi
         tunnel_stop
         changes=1
     fi

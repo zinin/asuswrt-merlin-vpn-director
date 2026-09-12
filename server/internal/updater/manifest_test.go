@@ -133,6 +133,9 @@ func TestRepoManifest_ShipsUpdateCriticalFiles(t *testing.T) {
 	if have["router/jffs/scripts/firewall-start"] != "merlin" {
 		t.Errorf("firewall-start must be tagged merlin, got %q", have["router/jffs/scripts/firewall-start"])
 	}
+	if have["router/opt/vpn-director/lib/platform/merlin.sh"] != "merlin" {
+		t.Errorf("platform/merlin.sh must be tagged merlin, got %q", have["router/opt/vpn-director/lib/platform/merlin.sh"])
+	}
 }
 
 // TestRepoManifest_ShipsEveryRouterFile pins the tree to the manifest - the

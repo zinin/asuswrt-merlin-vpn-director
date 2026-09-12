@@ -234,8 +234,9 @@ func TestHandover_KillsAStep2ThatRunsOutOfTime(t *testing.T) {
 // running and having files/ and the lock removed from under it. A POSIX shell
 // runs a trap only once the foreground command returns, so the fake waits on a
 // background sleep - whose output goes nowhere, or it would hold step 2's pipes
-// open past its exit and cost this test installerWaitDelay. The trailing exit 1
-// is what a fake that was killed outright, or never signalled, would report.
+// open past its exit and cost this test defaultInstallerWaitDelay. The
+// trailing exit 1 is what a fake that was killed outright, or never signalled,
+// would report.
 func TestHandover_AsksATimedOutStep2ToStopBeforeKillingIt(t *testing.T) {
 	record := t.TempDir()
 	held := filepath.Join(record, "held")
@@ -256,7 +257,7 @@ func TestHandover_AsksATimedOutStep2ToStopBeforeKillingIt(t *testing.T) {
 	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
 		t.Fatalf("Handover() error = %v, want the exit 0 of a step 2 that stopped when asked", err)
 	}
-	if waited := time.Since(start); waited >= installerWaitDelay {
+	if waited := time.Since(start); waited >= defaultInstallerWaitDelay {
 		t.Errorf("Handover() took %v: step 2 was killed rather than asked to stop", waited)
 	}
 	if !s.lockNamesPID(os.Getpid()) {
@@ -277,6 +278,7 @@ func TestHandover_AStep2ThatExitsZeroSucceedsWhileItsOutputStaysOpen(t *testing.
 	s, release := newHandoverService(t, map[string]string{
 		"webui-arm64": fakeInstaller(record, "sleep 10 &\necho $! > '"+held+"'", 0),
 	})
+	s.installerWaitDelay = 200 * time.Millisecond
 	t.Cleanup(func() {
 		data, _ := os.ReadFile(held)
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
@@ -289,7 +291,7 @@ func TestHandover_AStep2ThatExitsZeroSucceedsWhileItsOutputStaysOpen(t *testing.
 	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
 		t.Fatalf("Handover() error = %v, want the exit status to decide", err)
 	}
-	if waited := time.Since(start); waited < installerWaitDelay {
+	if waited := time.Since(start); waited < s.getInstallerWaitDelay() {
 		t.Fatalf("Handover() returned after %v, before Wait gave up on the open output", waited)
 	}
 	if !s.lockNamesPID(os.Getpid()) {
@@ -369,7 +371,7 @@ func TestStartInstaller_RetriesATextFileBusyExec(t *testing.T) {
 	}()
 
 	discard := func(string) {}
-	cmd, err := startInstaller(context.Background(), installer, nil, &lineWriter{line: discard}, &lineWriter{line: discard})
+	cmd, err := startInstaller(context.Background(), installer, nil, &lineWriter{line: discard}, &lineWriter{line: discard}, defaultInstallerWaitDelay)
 	if err != nil {
 		t.Fatalf("startInstaller() error = %v, want it to retry past the busy text file", err)
 	}
