@@ -109,10 +109,13 @@ load '../test_helper'
 @test "_derive_set_name: hash is deterministic" {
     load_ipset_module
     local long_name="this_is_a_very_long_ipset_name_that_exceeds_limit"
-    run _derive_set_name "$long_name"
-    local first_result="$output"
-    run _derive_set_name "$long_name"
-    [ "$output" = "$first_result" ]
+    # Call directly (not via run): run merges the TRACE log line into $output,
+    # and its timestamp has second resolution, so two calls on either side of a
+    # second boundary differ for a reason that has nothing to do with the hash.
+    local first second
+    first=$(_derive_set_name "$long_name")
+    second=$(_derive_set_name "$long_name")
+    [ "$second" = "$first" ]
 }
 
 # ============================================================================
