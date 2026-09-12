@@ -429,6 +429,50 @@ EOF
     refute_output
 }
 
+# KeeneticOS keeps its connection-policy rules at pref 200 too (fwmark
+# 0xffffd00 lookup 42, ...). Sharing a preference is not owning it: only a rule
+# with our mark value or our table is ours to remove.
+@test "_tproxy_setup_routing: leaves another owner's rule at the same pref alone" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0xffffd00 table 42
+
+    run _tproxy_setup_routing
+    assert_success
+    refute_output --partial "Removed stale ip rule"
+
+    run ip rule show pref 200
+    assert_output --partial "fwmark 0xffffd00 lookup 42"
+    assert_output --partial "fwmark 0x100/0x100 lookup wan0"
+}
+
+@test "_tproxy_teardown_routing: removes only our rules from the shared pref" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0xffffd00 table 42
+    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    ip rule add pref 200 fwmark 0x100/0x1ff table 111
+
+    _tproxy_teardown_routing
+
+    run ip rule show pref 200
+    assert_output "200:	from all fwmark 0xffffd00 lookup 42"
+}
+
+@test "_tproxy_rule_is_ours: our mark value under any mask, or our table under any mark" {
+    load_tproxy_module
+    run _tproxy_rule_is_ours 0x100/0x100 wan0 wan0
+    assert_success
+    run _tproxy_rule_is_ours 0x100/0x1ff 111 wan0
+    assert_success
+    run _tproxy_rule_is_ours 0xabc wan0 wan0
+    assert_success
+    run _tproxy_rule_is_ours 0xffffd00 42 wan0
+    assert_failure
+    run _tproxy_rule_is_ours "" 42 wan0
+    assert_failure
+    run _tproxy_rule_is_ours garbage 42 wan0
+    assert_failure
+}
+
 # ============================================================================
 # Platform contract in tproxy.sh
 # ============================================================================

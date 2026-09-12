@@ -27,6 +27,7 @@
 #   _tproxy_resolve_exclude_set()   - resolve exclusion ipset name (prefer _ext variant)
 #   _tproxy_exclude_sets [-q]       - validated, lower-cased XRAY_EXCLUDE_SETS on one line
 #   _tproxy_check_required_ipsets() - fail-safe check for required ipsets
+#   _tproxy_rule_is_ours()          - does an ip rule on our preference belong to us?
 #   _tproxy_setup_routing()         - setup routing table and ip rule
 #   _tproxy_table_label()           - the name the kernel prints for a table
 #   _tproxy_teardown_routing()      - remove routing table and ip rule
@@ -178,6 +179,23 @@ _tproxy_check_required_ipsets() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _tproxy_rule_is_ours <mark> <table> <want_table> - does an ip rule belong to this module?
+# -------------------------------------------------------------------------------------------------
+# Ours: the rule carries our mark value under any mask (an earlier
+# fwmark_mask), or our table under any mark (an earlier route_table). The
+# preference is not ownership: KeeneticOS keeps its connection-policy rules
+# at 200 as well, and deleting one of those would cut that policy's clients
+# off. <mark> is what "ip rule show" printed ("0x100/0x100", "0x100" or "").
+# -------------------------------------------------------------------------------------------------
+_tproxy_rule_is_ours() {
+    local mark="${1%%/*}" table="${2:-}" want_table="${3:-}"
+    if [[ $mark =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && (( mark == XRAY_FWMARK )); then
+        return 0
+    fi
+    [[ -n $table && $table == "$want_table" ]]
+}
+
+# -------------------------------------------------------------------------------------------------
 # _tproxy_setup_routing - setup routing table and ip rule for TPROXY
 # -------------------------------------------------------------------------------------------------
 _tproxy_setup_routing() {
@@ -194,13 +212,13 @@ _tproxy_setup_routing() {
     want_mark="$XRAY_FWMARK/$XRAY_FWMARK_MASK"
     want_table=$(_tproxy_table_label "$XRAY_ROUTE_TABLE")
 
-    # The preference belongs to this module, so every rule on it is ours to
-    # reconcile: keep one that carries the configured mark and table, drop the
-    # rest. That covers both the copies an older version added on every apply
-    # and a rule left over from an earlier route_table or fwmark_mask, which
-    # would otherwise be counted as ours and keep the new setting from ever
-    # being installed. Comparing what the kernel prints - not the table number -
-    # is the whole point; see _tproxy_table_label.
+    # Reconcile the rules on our preference: keep one that carries the
+    # configured mark and table, drop the other copies of ours - the ones an
+    # older version added on every apply, and a rule left over from an earlier
+    # route_table or fwmark_mask, which would otherwise count as ours and keep
+    # the new setting from ever being installed. Rules that are not ours stay
+    # (_tproxy_rule_is_ours). Comparing what the kernel prints - not the table
+    # number - is the whole point; see _tproxy_table_label.
     while IFS= read -r line; do
         [[ -n $line ]] || continue
         mark=$(printf '%s' "$line" | sed -n 's/.*fwmark \([^ ]*\).*/\1/p')
@@ -210,6 +228,7 @@ _tproxy_setup_routing() {
             kept=1
             continue
         fi
+        _tproxy_rule_is_ours "$mark" "$table" "$want_table" || continue
 
         if [[ -n $mark ]]; then
             ip rule del pref "$XRAY_RULE_PREF" fwmark "$mark" table "$table" 2>/dev/null || true
@@ -244,16 +263,25 @@ _tproxy_table_label() {
 # _tproxy_teardown_routing - remove routing table and ip rule
 # -------------------------------------------------------------------------------------------------
 _tproxy_teardown_routing() {
-    # Delete by preference until the kernel says there is nothing left. By
-    # preference, not by the configured tuple: an older version left a copy
-    # behind on every apply, and a changed route_table or fwmark_mask leaves a
-    # rule that no longer matches the configuration but is still ours. The
-    # counter only guards against a delete that always succeeds, which would
-    # otherwise wedge stop.
-    local i=0
-    while [[ $i -lt 64 ]] && ip rule del pref "$XRAY_RULE_PREF" 2>/dev/null; do
-        i=$((i + 1))
-    done
+    local want_table line mark table
+    want_table=$(_tproxy_table_label "$XRAY_ROUTE_TABLE")
+
+    # Every rule on our preference that is ours (_tproxy_rule_is_ours): the
+    # copies an older version left on every apply, and rules from an earlier
+    # route_table or fwmark_mask. One delete per listed line - the kernel
+    # removes one rule per call, and a duplicate is listed once per copy.
+    # Rules of another owner at the same preference stay.
+    while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        mark=$(printf '%s' "$line" | sed -n 's/.*fwmark \([^ ]*\).*/\1/p')
+        table=$(printf '%s' "$line" | sed -n 's/.*lookup \([^ ]*\).*/\1/p')
+        _tproxy_rule_is_ours "$mark" "$table" "$want_table" || continue
+        if [[ -n $mark ]]; then
+            ip rule del pref "$XRAY_RULE_PREF" fwmark "$mark" table "$table" 2>/dev/null || true
+        else
+            ip rule del pref "$XRAY_RULE_PREF" table "$table" 2>/dev/null || true
+        fi
+    done <<< "$(ip rule show pref "$XRAY_RULE_PREF" 2>/dev/null || true)"
 
     ip route del local default dev lo table "$XRAY_ROUTE_TABLE" 2>/dev/null || true
     log "Removed TPROXY routing configuration"

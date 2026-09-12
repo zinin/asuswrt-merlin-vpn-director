@@ -821,7 +821,7 @@ is_pos_int() {
 #
 # Behavior:
 #   * Prefers wget if available (better retry handling, resume support).
-#   * Falls back to curl with timeouts if wget is not installed.
+#   * Falls back to curl when wget is not installed or fails (KeeneticOS's busybox wget cannot do TLS).
 #   * wget: 3 retry attempts.
 #   * Removes partial files on failure.
 #   * Returns 0 on success, 1 on failure.
@@ -833,19 +833,23 @@ is_pos_int() {
 download_file() {
     local url="$1" dest="$2"
     local timeout="${3:-180}"
-    local rc=0
+    local rc=1
 
+    # wget first (retries, resume), curl when wget is absent or fails. The
+    # busybox wget of Entware on KeeneticOS has no TLS and dies on https
+    # URLs, so a failure here is not the end of the download.
     if command -v wget >/dev/null 2>&1; then
-        # wget available: use with timeout and retries
         log -l DEBUG "Downloading with wget (timeout=${timeout}s): $url"
-        if ! wget -q -T "$timeout" -t 3 -O "$dest" "$url" 2>/dev/null; then
-            rc=1
+        if wget -q -T "$timeout" -t 3 -O "$dest" "$url" 2>/dev/null; then
+            rc=0
+        else
+            log -l DEBUG "wget failed; trying curl"
         fi
-    else
-        # Fallback to curl with timeouts
+    fi
+    if [[ $rc -ne 0 ]] && command -v curl >/dev/null 2>&1; then
         log -l DEBUG "Downloading with curl (timeout=${timeout}s): $url"
-        if ! curl -sS --connect-timeout 30 --max-time "$timeout" -o "$dest" "$url" 2>/dev/null; then
-            rc=1
+        if curl -sS --connect-timeout 30 --max-time "$timeout" -o "$dest" "$url" 2>/dev/null; then
+            rc=0
         fi
     fi
 

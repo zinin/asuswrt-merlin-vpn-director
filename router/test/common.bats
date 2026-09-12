@@ -220,6 +220,36 @@ load 'test_helper'
     rm -f /tmp/bats_test_dl2
 }
 
+# Keenetic's busybox wget has no TLS and segfaults on https URLs; curl is there.
+@test "download_file: falls back to curl when wget fails" {
+    load_common
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/bin/bash\nexit 139\n' > "$BATS_TEST_TMPDIR/bin/wget"
+    cat > "$BATS_TEST_TMPDIR/bin/curl" <<'EOF'
+#!/bin/bash
+out=""
+while [[ $# -gt 0 ]]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+printf 'payload\n' > "$out"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/wget" "$BATS_TEST_TMPDIR/bin/curl"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" run download_file "https://example.invalid/file" "$BATS_TEST_TMPDIR/out"
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/out"
+    assert_output "payload"
+}
+
+@test "download_file: fails and leaves no file when wget and curl both fail" {
+    load_common
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/bin/bash\nexit 139\n' > "$BATS_TEST_TMPDIR/bin/wget"
+    printf '#!/bin/bash\nexit 22\n' > "$BATS_TEST_TMPDIR/bin/curl"
+    chmod +x "$BATS_TEST_TMPDIR/bin/wget" "$BATS_TEST_TMPDIR/bin/curl"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" run download_file "https://example.invalid/file" "$BATS_TEST_TMPDIR/out"
+    assert_failure
+    assert_output --partial "Failed to download"
+    [ ! -e "$BATS_TEST_TMPDIR/out" ]
+}
+
 # ============================================================================
 # Platform contract is available through common.sh
 # ============================================================================
