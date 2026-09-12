@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -747,5 +749,77 @@ func TestCopyExecutable_LeavesNoPartialFileBehind(t *testing.T) {
 	}
 	if _, err := os.Stat(dst); !os.IsNotExist(err) {
 		t.Error("a failed copy left its destination behind")
+	}
+}
+
+// Step 2 is its own daemon's binary of the release it installs, so that asset
+// is one the release need not carry at all: a release that ships only the
+// other daemon's still installs.
+func TestDownloadBinaries_NeedsNoAssetForTheDaemonItIs(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("binary of " + strings.TrimPrefix(r.URL.Path, "/")))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	self := filepath.Join(tempDir, "installer")
+	if err := os.WriteFile(self, []byte("the running webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{httpClient: server.Client(), updateDir: tempDir, archSuffix: "arm64",
+		daemon: DaemonWebUI, selfBinary: self}
+	release := &Release{TagName: "v1.0.0", Assets: []Asset{
+		{Name: DaemonBot + "-arm64", DownloadURL: server.URL + "/" + DaemonBot + "-arm64"},
+	}}
+
+	if err := s.downloadBinaries(context.Background(), release); err != nil {
+		t.Fatalf("downloadBinaries() error = %v, want the missing asset to be the one step 2 is", err)
+	}
+
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownInfo, err := os.Stat(filepath.Join(tempDir, "files", DaemonWebUI))
+	if err != nil || !os.SameFile(selfInfo, ownInfo) {
+		t.Errorf("files/%s is not the running executable (%v)", DaemonWebUI, err)
+	}
+}
+
+// A hard link needs one filesystem. The installer and files/ share /tmp on a
+// router, so the copy is the path nothing exercises there - it needs a second
+// filesystem, and /dev/shm is the one a Linux box is likely to have.
+func TestLinkOrCopy_CopiesToAnotherFilesystem(t *testing.T) {
+	elsewhere, err := os.MkdirTemp("/dev/shm", "vpn-director-test-")
+	if err != nil {
+		t.Skipf("no second filesystem to copy from: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(elsewhere) })
+
+	dir := t.TempDir()
+	src := filepath.Join(elsewhere, "installer")
+	if err := os.WriteFile(src, []byte("the new webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(dir, "probe")
+	if err := os.Link(src, probe); !errors.Is(err, syscall.EXDEV) {
+		os.Remove(probe)
+		t.Skipf("/dev/shm and %s are one filesystem, so a link would not fall back: %v", dir, err)
+	}
+
+	dst := filepath.Join(dir, "files", DaemonWebUI)
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy() error = %v", err)
+	}
+
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "the new webui" {
+		t.Errorf("dst = %q (%v), want the source content", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0100 == 0 {
+		t.Errorf("dst mode = %v, want it executable", info.Mode().Perm())
 	}
 }

@@ -298,21 +298,30 @@ func TestSelfUpdate_ChecksTheLockAgainBeforeTheScript(t *testing.T) {
 
 // Step 1 shows the user the last line step 2 prints on stderr and reads
 // progress from stdout, so a refusal belongs on stderr, with exit status 1.
+// Each case names what it is about in the refusal: an argv otherwise complete
+// carries the one value under test, or the case would be refused for the
+// missing rest of it and prove nothing.
 func TestRunSelfUpdate_ReportsARefusalOnStderr(t *testing.T) {
-	for name, args := range map[string][]string{
-		"bad arguments":   {"--to", "v1.2.4;id"},
-		"another version": step2Args("v1.0.0"),
+	for name, tt := range map[string]struct {
+		args []string
+		want string
+	}{
+		"a --to the update script could not take": {
+			args: []string{"--from", "v1.2.3", "--to", "v1.2.4;id", "--initiator", "webui", "--chat-id", "0"},
+			want: "--to",
+		},
+		"another version": {args: step2Args("v1.0.0"), want: "v1.0.0"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			if code := RunSelfUpdate(args, DaemonBot, "v1.2.4", &stdout, &stderr); code != 1 {
+			if code := RunSelfUpdate(tt.args, DaemonBot, "v1.2.4", &stdout, &stderr); code != 1 {
 				t.Errorf("RunSelfUpdate() = %d, want 1", code)
 			}
 			if stdout.Len() != 0 {
 				t.Errorf("stdout = %q, want nothing: it is the progress channel", stdout.String())
 			}
-			if strings.TrimSpace(stderr.String()) == "" {
-				t.Error("stderr is empty, so step 1 has no reason to show")
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Errorf("stderr = %q, want the reason to name %q", stderr.String(), tt.want)
 			}
 		})
 	}
