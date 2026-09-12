@@ -17,6 +17,7 @@ common   router/opt/vpn-director/vpn-director.json.template
 common   router/opt/vpn-director/lib/common.sh
 common   router/opt/vpn-director/lib/platform.sh
 merlin   router/opt/vpn-director/lib/platform/merlin.sh
+keenetic router/opt/vpn-director/lib/platform/keenetic.sh
 common   router/opt/vpn-director/lib/firewall.sh
 common   router/opt/vpn-director/lib/config.sh
 common   router/opt/vpn-director/lib/ipset.sh

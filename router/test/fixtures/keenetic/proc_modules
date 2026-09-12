@@ -1,0 +1,3 @@
+xt_socket 20480 1 - Live 0xffffff8000f00000
+xt_TPROXY 16384 2 - Live 0xffffff8000f10000
+ovpn_dco 61440 1 - Live 0xffffff8000f20000

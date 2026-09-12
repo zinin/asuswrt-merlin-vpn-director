@@ -90,12 +90,18 @@ load_platform() {
     assert_output "merlin"
 }
 
+@test "platform.sh: keenetic loads lib/platform/keenetic.sh" {
+    run env VPD_PLATFORM=keenetic bash -c "set -e; source '$LIB_DIR/platform.sh'; platform_name"
+    assert_success
+    assert_output "keenetic"
+}
+
 @test "platform.sh: a platform without an implementation file is reported" {
-    run env VPD_PLATFORM=keenetic bash -c "set -e; source '$LIB_DIR/platform.sh'; echo reached"
-    # lib/platform/keenetic.sh does not exist yet in this plan
-    if [[ -f "$LIB_DIR/platform/keenetic.sh" ]]; then
-        skip "keenetic.sh exists now; this test belongs to the era before it"
-    fi
+    # The implementation is looked up next to the loader, so a copy of the
+    # loader in a directory without platform/ has none to find.
+    mkdir -p "$BATS_TEST_TMPDIR/lib"
+    cp "$LIB_DIR/platform.sh" "$BATS_TEST_TMPDIR/lib/"
+    run env VPD_PLATFORM=keenetic bash -c "set -e; source '$BATS_TEST_TMPDIR/lib/platform.sh'; echo reached"
     assert_failure
     assert_output --partial "platform implementation not found"
     refute_output --partial "reached"

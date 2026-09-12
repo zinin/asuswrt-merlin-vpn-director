@@ -6,6 +6,18 @@ echo "ip $*" >> /tmp/bats_ip_calls.log
 RULES_FILE="${BATS_IP_RULES_FILE:-/tmp/bats_test_ip_rules}"
 RT_TABLES="${RT_TABLES_FILE:-/etc/iproute2/rt_tables}"
 
+# Family and output options precede the object. The family decides which
+# default route is shown; -o and -br only change a layout this mock does not
+# render.
+FAMILY=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -4|-6) FAMILY="$1"; shift ;;
+        -o|-br) shift ;;
+        *) break ;;
+    esac
+done
+
 _pref=""
 _fwmark=""
 _table=""
@@ -37,6 +49,24 @@ _table_name() {
 # _rule_line renders the parsed selectors as "ip rule show" would print them.
 _rule_line() {
     printf '%s:\tfrom all%s lookup %s' "$_pref" "${_fwmark:+ fwmark $_fwmark}" "$(_table_name "$_table")"
+}
+
+# _addr_line renders "ip -4 -o addr show <iface>" for the interfaces the
+# Keenetic tests expect. BATS_IP_ADDRS_FILE ("<iface> <cidr>" per line)
+# replaces the table; an interface it does not name has no address.
+_addr_line() {
+    local iface="$1" cidr=""
+    if [[ -n ${BATS_IP_ADDRS_FILE:-} ]]; then
+        cidr=$(awk -v i="$iface" '$1 == i { print $2; exit }' "$BATS_IP_ADDRS_FILE" 2>/dev/null)
+    else
+        case "$iface" in
+            br0)      cidr=192.168.1.1/24 ;;
+            ovpn_br0) cidr=10.73.149.113/24 ;;
+            nwg1)     cidr=10.66.67.2/32 ;;
+        esac
+    fi
+    [[ -n $cidr ]] || return 0
+    printf '40: %s    inet %s scope global %s\\       valid_lft forever preferred_lft forever\n' "$iface" "$cidr" "$iface"
 }
 
 case "$1" in
@@ -82,9 +112,26 @@ case "$1" in
         ;;
     route)
         case "$2" in
-            show) echo "" ;;
-            add|del) exit 0 ;;
+            show)
+                # The default route of a family, as a Keenetic reads its WAN
+                # and its IPv6 state; anything else is an empty table.
+                if [[ ${3:-} == default ]]; then
+                    case "$FAMILY" in
+                        -4) v="${BATS_IP_DEFAULT_ROUTE4-default via 192.168.100.1 dev eth2.4  metric 1000}" ;;
+                        -6) v="${BATS_IP_DEFAULT_ROUTE6-}" ;;
+                        *)  v="" ;;
+                    esac
+                    [[ -n $v ]] && printf '%s\n' "$v"
+                else
+                    echo ""
+                fi
+                ;;
+            add|del|replace|flush) exit 0 ;;
         esac
+        ;;
+    addr)
+        [[ ${2:-} == show ]] && _addr_line "${3:-}"
         ;;
     *) exit 0 ;;
 esac
+exit 0
