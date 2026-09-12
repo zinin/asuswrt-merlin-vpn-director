@@ -46,4 +46,10 @@ func TestSelfUpdateIsDispatchedBeforeTheDaemonStarts(t *testing.T) {
 	if !strings.Contains(stderr.String(), "asked to install v1.0.0") {
 		t.Errorf("stderr = %q, want step 2's version refusal", stderr.String())
 	}
+	// Contract item 3: every stdout line is a progress line for the user, and
+	// this daemon's logger writes to stdout - a dispatch that ever moved below
+	// a startup log line would put that line in front of the user.
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing but what step 2 prints", stdout.String())
+	}
 }

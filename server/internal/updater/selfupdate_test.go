@@ -28,6 +28,15 @@ func TestParseSelfUpdateArgs_AcceptsTheInvocationStep1Builds(t *testing.T) {
 	}
 }
 
+// Telegram group chats have negative IDs; step 1 passes them through.
+func TestParseSelfUpdateArgs_AcceptsANegativeChatID(t *testing.T) {
+	argv := selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: -1001234567890, Initiator: "bot"})
+	got, err := parseSelfUpdateArgs(argv[1:])
+	if err != nil || got.ChatID != -1001234567890 {
+		t.Fatalf("parsed %+v (%v), want chat id -1001234567890", got, err)
+	}
+}
+
 func TestParseSelfUpdateArgs_RefusesWhatTheScriptCannotTake(t *testing.T) {
 	valid := []string{"--from", "v1.2.3", "--to", "v1.2.4", "--initiator", "webui", "--chat-id", "0"}
 	with := func(name, value string) []string {
@@ -75,13 +84,21 @@ func TestSelfUpdateArgv_EveryReleasedFormStillParses(t *testing.T) {
 	if len(forms) == 0 {
 		t.Fatal("testdata/selfupdate_argv.txt lists no released invocation")
 	}
+	// The file's header fixes the options every line encodes, so parsing one
+	// into the wrong fields fails here as surely as refusing it.
+	want := selfUpdateArgs{From: "v1.2.3", To: "v1.2.4", Initiator: "bot", ChatID: 42}
 	for _, form := range forms {
 		if form[0] != SelfUpdateCommand {
 			t.Errorf("released form %q does not start with %q", strings.Join(form, " "), SelfUpdateCommand)
 			continue
 		}
-		if _, err := parseSelfUpdateArgs(form[1:]); err != nil {
+		got, err := parseSelfUpdateArgs(form[1:])
+		if err != nil {
 			t.Errorf("released form %q no longer parses: %v", strings.Join(form, " "), err)
+			continue
+		}
+		if got != want {
+			t.Errorf("released form %q parses to %+v, want %+v", strings.Join(form, " "), got, want)
 		}
 	}
 	got := strings.Join(selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"}), " ")
