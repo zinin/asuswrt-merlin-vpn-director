@@ -207,6 +207,11 @@ func TestSelfUpdate_InstallsItsOwnReleaseAndStartsTheScript(t *testing.T) {
 	if err != nil || !os.SameFile(selfInfo, ownInfo) {
 		t.Errorf("files/%s is not this binary (%v)", DaemonWebUI, err)
 	}
+	// The claim check in front of every write must not stand in the way of
+	// the files the manifest lists.
+	if _, err := os.Stat(filepath.Join(f.dir, "files", "opt", "vpn-director", "vpn-director.sh")); err != nil {
+		t.Errorf("a file the manifest lists never landed in files/: %v", err)
+	}
 	if data, err := os.ReadFile(filepath.Join(f.dir, "files", DaemonBot)); err != nil || string(data) != "downloaded telegram-bot-arm64" {
 		t.Errorf("files/%s = %q (%v), want the release asset", DaemonBot, data, err)
 	}
@@ -255,17 +260,36 @@ func TestSelfUpdate_RefusesUnlessItsParentHoldsTheLock(t *testing.T) {
 }
 
 // The download can take minutes. A claim lost meanwhile - the parent died and
-// another update took the directory - must not get the script started.
+// another update took the directory - must not get the script started. This
+// step 2 runs as the bot's binary, so the webui's asset is the last thing it
+// writes and the claim goes once every write is done: the check in front of
+// the script is the only one left to catch it.
 func TestSelfUpdate_ChecksTheLockAgainBeforeTheScript(t *testing.T) {
 	f := newStep2Fixture(t, func(path, lockFile string) {
-		if strings.HasSuffix(path, "/"+manifestPath) {
+		if strings.HasPrefix(path, "/assets/"+DaemonWebUI+"-") {
 			os.WriteFile(lockFile, []byte("1"), 0644)
 		}
 	})
+	f.s.daemon = DaemonBot
 
 	err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "lock") {
 		t.Fatalf("selfUpdate() error = %v, want the lock refusal", err)
+	}
+	sawRequest := func(substr string) bool {
+		for _, p := range f.requested() {
+			if strings.Contains(p, substr) {
+				return true
+			}
+		}
+		return false
+	}
+	// The whole download went through before the refusal, which is what tells
+	// this check apart from the one step 2 makes before it starts.
+	for _, want := range []string{manifestPath, "/assets/" + DaemonWebUI + "-"} {
+		if !sawRequest(want) {
+			t.Errorf("step 2 stopped before requesting %s, so an earlier check refused", want)
+		}
 	}
 	if _, err := os.Stat(f.s.getScriptFile()); !os.IsNotExist(err) {
 		t.Error("the update script was written for a claim that was lost")
@@ -291,5 +315,37 @@ func TestRunSelfUpdate_ReportsARefusalOnStderr(t *testing.T) {
 				t.Error("stderr is empty, so step 1 has no reason to show")
 			}
 		})
+	}
+}
+
+// The daemon running step 1 can die mid-handover - out of memory on a 256 MB
+// router, now that a second Go process runs during the download, is the
+// plausible way - and step 2 is re-parented and keeps downloading. A retry
+// then shares files/ with it, and os.Create truncates what the retry has
+// already fetched. Step 2 asks before each file whether the claim it was
+// started under still stands; a parent that is gone fails that on its own,
+// because os.Getppid answers 1 once it is.
+func TestSelfUpdate_StopsWritingOnceTheClaimIsGone(t *testing.T) {
+	f := newStep2Fixture(t, func(path, lockFile string) {
+		if strings.HasSuffix(path, "/"+manifestPath) {
+			os.WriteFile(lockFile, []byte("1"), 0644)
+		}
+	})
+
+	err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &bytes.Buffer{})
+
+	if err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("selfUpdate() error = %v, want the lock refusal", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(f.dir, "files"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written []string
+	for _, e := range entries {
+		written = append(written, e.Name())
+	}
+	if len(written) != 1 || written[0] != "files.manifest" {
+		t.Errorf("files/ holds %v, want only the manifest fetched before the claim went", written)
 	}
 }

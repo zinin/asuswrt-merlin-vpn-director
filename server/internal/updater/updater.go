@@ -125,6 +125,7 @@ type Service struct {
 	selfBinary      string                 // Step 2 only: this executable, taken as the payload binary of daemon
 	parentPID       func() int             // Injectable for testing, nil = os.Getppid
 	executable      func() (string, error) // Injectable for testing, nil = os.Executable
+	checkClaim      func() error           // Step 2 only: asked before each file it writes, nil = nothing to check
 	handoverTimeout time.Duration          // Injectable for testing, 0 = defaultHandoverTimeout
 }
 
@@ -274,6 +275,20 @@ func (s *Service) IsUpdateInProgress() bool {
 func (s *Service) lockNamesPID(pid int) bool {
 	got, err := readLockPID(s.getLockFile())
 	return err == nil && got == pid
+}
+
+// requireClaim refuses a write into the update directory once the claim the
+// writer works under is gone. Only step 2 sets the check: the daemon that
+// started it can die mid-download - out of memory on a 256 MB router, now
+// that a second Go process runs during it, is the plausible way - and step 2
+// is then re-parented and downloads on into a directory a retry may have
+// taken over, truncating what that retry has already fetched. Step 1's own
+// Service holds the claim rather than working under one, and leaves this nil.
+func (s *Service) requireClaim() error {
+	if s.checkClaim == nil {
+		return nil
+	}
+	return s.checkClaim()
 }
 
 // readLockPID returns the PID a lock file names. The trailing newline is what

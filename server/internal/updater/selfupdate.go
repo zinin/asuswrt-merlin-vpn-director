@@ -139,6 +139,11 @@ func (s *Service) selfUpdate(ctx context.Context, args []string, version string,
 		return fmt.Errorf("locate this binary: %w", err)
 	}
 	s.selfBinary = self
+	// The download takes minutes, and every file in it goes into a directory
+	// this step only borrows: from here on each write asks whether the parent
+	// that started this step still holds the claim. A parent that is gone
+	// fails that check on its own, since os.Getppid then answers 1.
+	s.checkClaim = s.requireParentLock
 	if err := s.DownloadRelease(ctx, release); err != nil {
 		return err
 	}

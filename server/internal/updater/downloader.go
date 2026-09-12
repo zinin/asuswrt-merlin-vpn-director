@@ -26,6 +26,12 @@ const (
 func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 	filesDir := s.getFilesDir()
 
+	// Before the first and most destructive write of all, as before every
+	// one that follows.
+	if err := s.requireClaim(); err != nil {
+		return err
+	}
+
 	// Clean before download to ensure fresh state
 	os.RemoveAll(filesDir)
 
@@ -49,6 +55,9 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 	}
 
 	for _, file := range files {
+		if err := s.requireClaim(); err != nil {
+			return err
+		}
 		if err := s.downloadScriptFile(ctx, release.TagName, file); err != nil {
 			return fmt.Errorf("download %s: %w", file, err)
 		}
@@ -130,6 +139,9 @@ func (s *Service) downloadBinaries(ctx context.Context, release *Release) error 
 	}
 
 	for _, d := range Daemons {
+		if err := s.requireClaim(); err != nil {
+			return err
+		}
 		target := filepath.Join(s.getFilesDir(), d.Name)
 		// Step 2 of a self-update is this daemon's binary of the release it
 		// installs; fetching that asset again would download the same bytes.
