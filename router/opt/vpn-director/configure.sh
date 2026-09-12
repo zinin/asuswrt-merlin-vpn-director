@@ -26,6 +26,12 @@ XRAY_CONFIG_DIR="${XRAY_CONFIG_DIR:-/opt/etc/xray}"
 # Library: Xray config generator (self-contained pure-jq; no common.sh needed)
 . "$VPD_DIR/lib/xrayconf.sh"
 
+# Platform contract: the tunnels this router has (platform_tunnels,
+# platform_tunnel_info). platform.sh alone, not common.sh: the contract
+# functions never log, and common.sh would install its temp-file EXIT trap
+# into an interactive wizard.
+. "$VPD_DIR/lib/platform.sh"
+
 # Temporary storage for parsed data
 XRAY_CLIENTS_LIST=""
 TUN_DIR_TUNNELS_JSON='{}'
@@ -56,6 +62,35 @@ print_warning() {
 
 print_info() {
     printf "${BLUE}[INFO]${NC} %s\n" "$1"
+}
+
+# wizard_tunnel_choices - the tunnels this router has, one numbered line each
+# ("  N) <id>  <description> (down)"); main is not offered.
+wizard_tunnel_choices() {
+    local id info desc connected n=0
+    while IFS= read -r id; do
+        [[ -n $id && $id != main ]] || continue
+        n=$((n + 1))
+        desc=""
+        connected=1
+        if info="$(platform_tunnel_info "$id")"; then
+            connected="$(printf '%s\n' "$info" | sed -n 2p)"
+            desc="$(printf '%s\n' "$info" | sed -n 3p)"
+        fi
+        printf '  %d) %s%s%s\n' "$n" "$id" "${desc:+  $desc}" "$([[ $connected == 1 ]] || printf ' (down)')"
+    done < <(platform_tunnels || true)
+}
+
+# wizard_tunnel_by_number <n> - the id at position n of wizard_tunnel_choices,
+# nothing for anything else. The awk filter is the one wizard_tunnel_choices
+# numbers by, so a number read off the menu cannot name a different tunnel.
+# Never fails, whatever the user typed: the caller assigns its output under
+# "set -e", so a non-zero return would abort the wizard instead of asking
+# again - hence [1-9] rather than [0-9], since sed rejects the line address 0
+# with an error, and the trailing "|| true" for a platform_tunnels that fails.
+wizard_tunnel_by_number() {
+    [[ ${1:-} =~ ^[1-9][0-9]*$ ]] || return 0
+    platform_tunnels 2>/dev/null | awk 'length && $0 != "main"' | sed -n "${1}p" || true
 }
 
 # shellcheck disable=SC2034  # INPUT_RESULT used by callers
@@ -324,43 +359,30 @@ step_configure_clients() {
                 print_success "$client_ip -> Xray"
                 ;;
             2)
-                printf "\nTunnel type:\n"
-                printf "  1) WireGuard (wgc1-5)\n"
-                printf "  2) OpenVPN (ovpnc1-5)\n"
-                printf "Choice [1-2]: "
-                read -r tunnel_type
-
-                local tunnel_prefix=""
-                case "$tunnel_type" in
-                    1) tunnel_prefix="wgc" ;;
-                    2) tunnel_prefix="ovpnc" ;;
-                    *)
-                        print_error "Invalid tunnel type"
-                        continue
-                        ;;
-                esac
-
-                printf "Tunnel number [1-5]: "
+                local choices tunnel tunnel_num
+                choices="$(wizard_tunnel_choices)"
+                if [[ -z $choices ]]; then
+                    print_error "This router has no VPN client tunnel; configure one in the router UI first"
+                    continue
+                fi
+                printf "\nTunnel:\n%s\nChoice: " "$choices"
                 read -r tunnel_num
-                case "$tunnel_num" in
-                    [1-5])
-                        local tunnel="${tunnel_prefix}${tunnel_num}"
+                tunnel="$(wizard_tunnel_by_number "$tunnel_num")"
+                if [[ -z $tunnel ]]; then
+                    print_error "Invalid tunnel number"
+                    continue
+                fi
 
-                        # Ask for exclude countries only for new tunnels
-                        if ! jq -e --arg t "$tunnel" '.[$t]' <<< "$TUN_DIR_TUNNELS_JSON" >/dev/null 2>&1; then
-                            select_exclude_countries
-                            add_client_to_tunnel "$tunnel" "$client_ip" "$SELECTED_EXCLUDE"
-                            print_success "$client_ip -> $tunnel (exclude: ${SELECTED_EXCLUDE:-none})"
-                        else
-                            # Tunnel exists - just add client
-                            add_client_to_tunnel "$tunnel" "$client_ip" ""
-                            print_success "$client_ip -> $tunnel (using existing exclude)"
-                        fi
-                        ;;
-                    *)
-                        print_error "Invalid tunnel number"
-                        ;;
-                esac
+                # Ask for exclude countries only for new tunnels
+                if ! jq -e --arg t "$tunnel" '.[$t]' <<< "$TUN_DIR_TUNNELS_JSON" >/dev/null 2>&1; then
+                    select_exclude_countries
+                    add_client_to_tunnel "$tunnel" "$client_ip" "$SELECTED_EXCLUDE"
+                    print_success "$client_ip -> $tunnel (exclude: ${SELECTED_EXCLUDE:-none})"
+                else
+                    # Tunnel exists - just add client
+                    add_client_to_tunnel "$tunnel" "$client_ip" ""
+                    print_success "$client_ip -> $tunnel (using existing exclude)"
+                fi
                 ;;
             *)
                 print_error "Invalid choice"

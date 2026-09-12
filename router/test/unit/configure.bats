@@ -217,3 +217,59 @@ write_daemon_config() {
     run jq -r '.xray.active_server | keys | join(",")' "$VPD_DIR/vpn-director.json"
     assert_output "address,name,port"
 }
+
+# ============================================================================
+# The tunnel prompt lists what the platform has (Merlin here: rt_tables fixture)
+# ============================================================================
+
+@test "wizard_tunnel_choices: one numbered line per platform tunnel, main excluded" {
+    load_wizard
+    run wizard_tunnel_choices
+    assert_success
+    assert_line --index 0 "  1) wgc1  Office WG (down)"
+    assert_line --index 1 "  2) wgc2 (down)"
+    assert_line --index 2 "  3) ovpnc1  Office OVPN (down)"
+    assert_line --index 3 "  4) ovpnc2 (down)"
+    [ "${#lines[@]}" -eq 4 ]
+}
+
+@test "wizard_tunnel_by_number: the id at that position, nothing for the rest" {
+    load_wizard
+    run wizard_tunnel_by_number 3
+    assert_output "ovpnc1"
+    run wizard_tunnel_by_number 9
+    refute_output
+    run wizard_tunnel_by_number x
+    refute_output
+    # 0 is not "the id at position 0": sed rejects line address 0 outright.
+    # It has to fail like any other bad input, and quietly - step 3 runs under
+    # "set -e", so a non-zero return here would take the whole wizard with it.
+    run wizard_tunnel_by_number 0
+    assert_success
+    refute_output
+}
+
+# The two helpers must filter the platform's list identically, or the number
+# the user reads off the menu picks a different tunnel than the one it names.
+@test "wizard_tunnel_by_number: numbers exactly the lines wizard_tunnel_choices does" {
+    load_wizard
+    platform_tunnels() { printf 'wgc1\n\nmain\novpnc1\n'; }
+    run wizard_tunnel_choices
+    assert_line --index 1 "  2) ovpnc1  Office OVPN (down)"
+    run wizard_tunnel_by_number 2
+    assert_output "ovpnc1"
+}
+
+# The prompt asks again on bad input. It must never abort: an aborted step 3
+# loses every answer the user gave in steps 1-3. Its own shell, because bats
+# clears errexit around "run" and the wizard's "set -e" is the whole point here.
+@test "step_configure_clients: a tunnel number off the list asks again, it does not abort" {
+    run bash -c '
+        set -euo pipefail
+        VPD_DIR="$SCRIPTS_DIR"
+        . "$VPD_DIR/configure.sh" --source-only
+        printf "192.168.50.10\n2\n0\ndone\n" | step_configure_clients
+    '
+    assert_success
+    assert_output --partial "Invalid tunnel number"
+}
