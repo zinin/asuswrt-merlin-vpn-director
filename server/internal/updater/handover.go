@@ -191,8 +191,14 @@ func handoverOutcome(state *os.ProcessState, ctxErr, waitErr error, reason strin
 	if errors.Is(ctxErr, context.DeadlineExceeded) && endedBySignal(state) {
 		return &HandoverError{Phase: PhaseTimeout, Err: ctxErr}
 	}
-	if reason == "" && waitErr != nil {
-		reason = waitErr.Error()
+	if reason == "" {
+		// This branch is here for a step 2 that said nothing, so it may not
+		// hand the user an empty message either: "Update failed:" with
+		// nothing after it says less than the least this can say.
+		reason = "no reason given"
+		if waitErr != nil {
+			reason = waitErr.Error()
+		}
 	}
 	return &HandoverError{Phase: PhaseInstaller, Err: errors.New(truncateRunes(reason, maxProgressRunes))}
 }
@@ -269,10 +275,14 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// completeRunes returns the length of the longest prefix of b that does not
-// end inside a rune: a piece cut mid-rune reaches the user as invalid UTF-8,
-// and Telegram refuses the message that carries it. Only the last UTFMax
-// bytes can hold a rune still being written.
+// completeRunes returns where to cut b so that the piece does not end inside
+// a rune still being written: before a trailing rune start that is not a
+// whole rune yet, else len(b). Such a piece is invalid UTF-8, and the short
+// tail of a split line reaches Telegram exactly as it is - only a piece over
+// maxProgressRunes is laundered into U+FFFD on its way through truncateRunes -
+// so Telegram refuses the message carrying it. Only the last UTFMax bytes can
+// hold an unfinished rune; a b with no rune start in them at all is output
+// already malformed, and is handed on as it stands rather than held back.
 func completeRunes(b []byte) int {
 	for i := len(b) - 1; i >= 0 && i >= len(b)-utf8.UTFMax; i-- {
 		if !utf8.RuneStart(b[i]) {

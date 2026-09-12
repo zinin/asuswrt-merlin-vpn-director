@@ -464,6 +464,13 @@ func TestHandoverOutcome_ReportsATimeoutOnlyForADeadlineThatKilledStep2(t *testi
 			waitErr: waitErr, wantPhase: PhaseInstaller, wantReason: waitErr.Error(),
 		},
 		{
+			// Nothing to show at all would reach the user as "Update failed:"
+			// with an empty space after it, which says less than the least
+			// this code can say.
+			name: "a step 2 that left nothing to report at all", state: exited3,
+			wantPhase: PhaseInstaller, wantReason: "no reason given",
+		},
+		{
 			name: "a long reason is cut to what a message can hold", state: exited3,
 			waitErr: waitErr, reason: strings.Repeat("я", maxProgressRunes+100),
 			wantPhase: PhaseInstaller, wantReason: strings.Repeat("я", maxProgressRunes),
