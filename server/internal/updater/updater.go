@@ -240,17 +240,15 @@ func (s *Service) getExecutable() (string, error) {
 func (s *Service) IsUpdateInProgress() bool {
 	lockFile := s.getLockFile()
 
-	data, err := os.ReadFile(lockFile)
+	pid, err := readLockPID(lockFile)
 	if err != nil {
-		// Lock file doesn't exist or can't be read
-		return false
-	}
-
-	pidStr := strings.TrimSpace(string(data))
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		// Invalid PID in lock file, remove stale lock
-		os.Remove(lockFile)
+		// A lock file that is there but names no PID is garbage, not a claim:
+		// remove it. One that cannot be read at all - usually because there
+		// is none - is nobody's to remove.
+		var invalid *strconv.NumError
+		if errors.As(err, &invalid) {
+			os.Remove(lockFile)
+		}
 		return false
 	}
 
@@ -274,12 +272,20 @@ func (s *Service) IsUpdateInProgress() bool {
 // self-update asks it about itself before it cleans up after a failure; step 2
 // asks it about its parent before it acts.
 func (s *Service) lockNamesPID(pid int) bool {
-	data, err := os.ReadFile(s.getLockFile())
-	if err != nil {
-		return false
-	}
-	got, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	got, err := readLockPID(s.getLockFile())
 	return err == nil && got == pid
+}
+
+// readLockPID returns the PID a lock file names. The trailing newline is what
+// the update script's printf leaves when it republishes its own PID. Reading
+// the claim is one function because two readers disagreeing on what a lock
+// says would judge the same directory differently.
+func readLockPID(lockFile string) (int, error) {
+	data, err := os.ReadFile(lockFile)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(data)))
 }
 
 // CreateLockAt claims the update directory by publishing lockFile with the
