@@ -116,9 +116,13 @@ func (s *Service) getArchSuffix() (string, error) {
 	return archAssetSuffix(runtime.GOARCH)
 }
 
-// downloadBinaries downloads one binary per daemon into files/<name>.
-// A release missing any of them is a download error: installing a new bot
-// next to an old Web UI leaves two halves of different versions on the router.
+// downloadBinaries puts one binary per daemon into files/<name>, downloaded
+// from the release assets - except its own daemon's, which step 2 of a
+// self-update already is: with selfBinary set, that one is hard-linked from
+// this executable, or copied when a link is not possible.
+// A release missing one of the binaries it does download is a download error:
+// installing a new bot next to an old Web UI leaves two halves of different
+// versions on the router.
 func (s *Service) downloadBinaries(ctx context.Context, release *Release) error {
 	suffix, err := s.getArchSuffix()
 	if err != nil {

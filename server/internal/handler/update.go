@@ -37,7 +37,7 @@ func NewUpdateHandler(sender telegram.MessageSender, flow UpdateFlow, version st
 func (h *UpdateHandler) HandleUpdate(msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 
-	// Start returns as soon as the download goroutine is scheduled, and that
+	// Start returns as soon as the handover goroutine is scheduled, and that
 	// goroutine reports progress through this callback. On a fast link its
 	// first line can beat the "Starting update" message below, which reads
 	// like a second update starting, so hold progress until that message is

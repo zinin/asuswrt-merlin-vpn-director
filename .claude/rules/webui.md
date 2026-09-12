@@ -56,7 +56,7 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 | GET | `/api/config` | `vpn-director.json` with `jwt_secret` blanked |
 | GET | `/api/update/check` | Latest release; `?force=1` pierces the 30-minute cache |
 | POST | `/api/update` | Starts the unified update, answers 202 |
-| GET | `/api/update/status` | Whether an update script is running |
+| GET | `/api/update/status` | Whether an update is running |
 
 `xray.active_server` is the only record of which server is running.
 `config.json` carries just the outbound, and a subscription routinely puts many
@@ -152,8 +152,8 @@ binary's bundle names are picked up right after an update.
 ## Update flow
 
 `internal/updateflow` is shared with the bot; the Web UI handlers are adapters
-over it. See `telegram-bot.md` for the script and the daemon table. Points that
-belong to the Web UI half:
+over it. See `telegram-bot.md` for the handover's two steps, the script and the
+daemon table. Points that belong to the Web UI half:
 
 - Both GitHub-facing routes extend the write deadline twice — once for the API
   call, once after it returns — because the flow serializes its callers on one
@@ -166,7 +166,7 @@ belong to the Web UI half:
   so the 401s and connection errors of a restarting server do not bounce the
   user to the login page. It reloads as soon as the new version answers. Five
   minutes is the restart window; past it the loop continues only while
-  `/api/update/status` still reports the script running, up to twenty minutes.
+  `/api/update/status` still reports an update running, up to twenty minutes.
   Both requests carry their own 8-second timeout: the loop awaits the status
   call, so a hung connection would otherwise keep it from reaching that limit.
   `/api/update/status` also lets a reloaded page rejoin an update it did not
@@ -190,7 +190,7 @@ reaching the generated script passes a strict allow-list, downloads are capped
 at 50 MB, and `files/` is wiped before every attempt so a partial download
 cannot be executed later. Since the self-update handover the new release's
 daemon binary also runs as root before it is installed: step 1 executes it as
-the installer (`internal/updater/selfupdate.go`). It is the binary the update
+the installer (`internal/updater/handover.go`). It is the binary the update
 installs and starts anyway, so the trust does not change.
 
 ## Known limits

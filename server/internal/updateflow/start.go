@@ -92,9 +92,13 @@ func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progre
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("update goroutine panicked", "error", r)
-				// Unwind before reporting: with report absorbing callback
-				// panics, anything arriving here is a failure of our own and
-				// the lock must go regardless of what reporting does.
+				// Unwind before reporting: report absorbs callback panics, so
+				// anything arriving here is a failure of our own, and only one
+				// from before the handover succeeded can reach it - past that
+				// point run makes a single report call and returns. The lock
+				// and files/ are still this process's then; once step 2 has
+				// exited 0 they belong to the update script, and unwinding
+				// would pull the payload from under it.
 				f.upd.CleanFiles()
 				f.upd.RemoveLock()
 				report(progress, "Update failed unexpectedly. Check logs.")
