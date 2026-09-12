@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // The self-update handover.
@@ -157,6 +160,14 @@ func (s *Service) selfUpdate(ctx context.Context, args []string, version string,
 	if err := s.requireParentLock(); err != nil {
 		return err
 	}
+	// From here on a SIGTERM must not end this process. Step 1 sends one when
+	// its timeout fires, and a step 2 killed between the script's start and its
+	// own exit is reported as a timeout, whereupon step 1 removes files/ and the
+	// lock from under the script that has just started. Notify, not Ignore: an
+	// ignored disposition is inherited across exec by the update script and by
+	// the daemons it restarts, and a Go daemon started with SIGTERM ignored keeps
+	// ignoring it. A caught signal is reset to the default in the child.
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGTERM)
 	return s.RunUpdateScript(RunOptions{
 		OldVersion: a.From,
 		NewVersion: a.To,

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestParseSelfUpdateArgs_AcceptsTheInvocationStep1Builds(t *testing.T) {
@@ -188,6 +189,39 @@ func newStep2Fixture(t *testing.T, onRequest func(path, lockFile string)) *step2
 // from the Web UI.
 func step2Args(to string) []string {
 	return selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: to, ChatID: 0, Initiator: "webui"})[1:]
+}
+
+// The assertion here is the test binary surviving the SIGTERM the update
+// script sends to it: without the signal.Notify in selfUpdate the whole
+// package run dies at this point. Step 1 sends that signal when its timeout
+// fires, and step 2 must live through it once the script is up.
+func TestSelfUpdate_SurvivesStep1sSIGTERMOnceTheScriptHasStarted(t *testing.T) {
+	f := newStep2Fixture(t, nil)
+	// The script is started detached but stays this process's child, so its
+	// $PPID is the test binary.
+	marker := filepath.Join(f.dir, "script-ran")
+	shell := filepath.Join(f.dir, "terminating-sh")
+	body := "#!/bin/sh\nkill -TERM $PPID\necho started > '" + marker + "'\nexit 0\n"
+	if err := os.WriteFile(shell, []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+	f.s.shell = shell
+	var stdout bytes.Buffer
+
+	if err := f.s.selfUpdate(context.Background(), step2Args("v1.2.4"), "v1.2.4", &stdout); err != nil {
+		t.Fatalf("selfUpdate() error = %v", err)
+	}
+
+	// The marker says the script really ran and really sent the signal; a test
+	// that never got one would pass for the wrong reason.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(marker); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the update script never ran, so nothing sent the SIGTERM this test is about")
+		}
+	}
 }
 
 func TestSelfUpdate_InstallsItsOwnReleaseAndStartsTheScript(t *testing.T) {
