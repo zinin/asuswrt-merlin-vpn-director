@@ -223,6 +223,46 @@ func TestHandover_KillsAStep2ThatRunsOutOfTime(t *testing.T) {
 	assertCleanedUp(t, s)
 }
 
+// Step 1 asks before it kills, and a step 2 that takes the offer decides the
+// outcome with its exit status as any other would. That matters for a step 2
+// no release has shipped yet: one that has already started the update script
+// can catch the signal and exit 0 instead of being killed with the script
+// running and having files/ and the lock removed from under it. A POSIX shell
+// runs a trap only once the foreground command returns, so the fake waits on a
+// background sleep - whose output goes nowhere, or it would hold step 2's pipes
+// open past its exit and cost this test installerWaitDelay. The trailing exit 1
+// is what a fake that was killed outright, or never signalled, would report.
+func TestHandover_AsksATimedOutStep2ToStopBeforeKillingIt(t *testing.T) {
+	record := t.TempDir()
+	held := filepath.Join(record, "held")
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64": fakeInstaller(record,
+			"trap 'exit 0' TERM\nsleep 30 >/dev/null 2>&1 &\necho $! > '"+held+"'\nwait", 1),
+	})
+	s.handoverTimeout = 200 * time.Millisecond
+	t.Cleanup(func() {
+		data, _ := os.ReadFile(held)
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	progress, _ := collect()
+
+	start := time.Now()
+	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
+		t.Fatalf("Handover() error = %v, want the exit 0 of a step 2 that stopped when asked", err)
+	}
+	if waited := time.Since(start); waited >= installerWaitDelay {
+		t.Errorf("Handover() took %v: step 2 was killed rather than asked to stop", waited)
+	}
+	if !s.lockNamesPID(os.Getpid()) {
+		t.Error("a handover whose step 2 exited 0 touched the lock the update script now owns")
+	}
+	if _, err := os.Stat(filepath.Join(s.getFilesDir(), "marker")); err != nil {
+		t.Error("a handover whose step 2 exited 0 removed files/ from under the update script")
+	}
+}
+
 // Exit 0 decides whatever else Wait reports. Here something step 2 started
 // keeps its output open, and Wait reports ErrWaitDelay once installerWaitDelay
 // has passed. The other such case, the deadline firing between step 2's exit

@@ -191,6 +191,13 @@ func startInstaller(ctx context.Context, installer string, argv []string, stdout
 		cmd.Dir = "/"
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
+		// Ask before killing. A step 2 that has already started the update
+		// script can catch this and exit 0, and the exit status is what
+		// decides success, so the script keeps the lock and files/ instead of
+		// having them wiped from under it. WaitDelay escalates to SIGKILL for
+		// one that does not answer. No router can update the step 1 it runs,
+		// so a later step 2 gets this chance only if it is given here.
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 		cmd.WaitDelay = installerWaitDelay
 		err := cmd.Start()
 		if err == nil {
