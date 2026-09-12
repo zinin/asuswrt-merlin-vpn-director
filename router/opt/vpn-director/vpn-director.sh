@@ -231,8 +231,16 @@ cmd_apply() {
                 _ensure_ipsets $required_ipsets
             fi
 
-            tunnel_apply
+            # Xray first. tproxy_apply soft-fails (a WARN and rc 0) while tunnel_apply
+            # hard-fails under errexit, so this order lets a Tunnel Director failure -
+            # a malformed tunnels object, say - end the run without stripping Xray
+            # clients of their TPROXY rules. The PREROUTING positions do not depend on
+            # the order: XRAY_TPROXY always inserts at 1, TUN_DIR at the position after
+            # the firmware's iface-mark rules, computed at insert time. Neither call is
+            # wrapped in `||` or `if !`: that would run its whole body with errexit
+            # off and let an unguarded failure inside pass as success.
             tproxy_apply
+            tunnel_apply
             ;;
         tunnel)
             required_ipsets=$(tunnel_get_required_ipsets)
@@ -328,8 +336,9 @@ cmd_update() {
         _ensure_ipsets $required_ipsets
     fi
 
-    tunnel_apply
+    # Xray first, for the reason spelled out in cmd_apply.
     tproxy_apply
+    tunnel_apply
 
     log "Update complete"
 }
