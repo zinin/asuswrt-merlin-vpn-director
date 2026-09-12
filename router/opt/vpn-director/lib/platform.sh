@@ -30,6 +30,8 @@
 #   platform_vpn_endpoints                 firmware VPN server hosts, one per line
 #   platform_load_module <name>            load a kernel module
 #   platform_cron_add <name> <schedule> <cmd> / platform_cron_del <name>
+#   platform_cron_requirements            what the user must install before cron runs the
+#                                         job; nothing and rc 1 when there is nothing owed
 #   platform_tproxy_extra_rules apply|stop [mark/mask] platform-only firewall rules for TPROXY
 #   platform_prerouting_base_pos           insert position for TUN_DIR in mangle PREROUTING
 #   platform_password_file                 file the Web UI verifies passwords against

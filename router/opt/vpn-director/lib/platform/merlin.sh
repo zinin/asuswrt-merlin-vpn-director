@@ -137,6 +137,13 @@ platform_cron_del() {
     cru d "$1"
 }
 
+# cru is the firmware's own and is always there, so a cron that refuses the job
+# on Merlin is not something the user can install their way out of: nothing to
+# print, rc 1.
+platform_cron_requirements() {
+    return 1
+}
+
 # Nothing to add outside our own chain on Merlin. The verb is still checked:
 # accepting anything would let a typo in a future call site pass as a clean
 # no-op on this platform and only surface on the one that acts on it.

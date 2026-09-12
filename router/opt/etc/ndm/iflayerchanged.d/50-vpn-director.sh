@@ -28,5 +28,9 @@ if [ ! -x "$VPD_SCRIPT" ]; then
     logger -t "vpn-director-hook" "vpn-director not found at $VPD_SCRIPT"
     exit 0
 fi
+if ! command -v nohup >/dev/null 2>&1; then
+    logger -t "vpn-director-hook" "nohup not found: opkg install coreutils-nohup"
+    exit 0
+fi
 nohup "$VPD_SCRIPT" --wait apply >/dev/null 2>&1 &
 exit 0

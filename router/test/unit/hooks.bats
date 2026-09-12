@@ -150,6 +150,30 @@ assert_no_apply() {
     grep -q "vpn-director not found" "$BATS_TEST_TMPDIR/logger.log"
 }
 
+# nohup is Entware's coreutils-nohup, which a partially provisioned router can
+# be missing. Unguarded, "nohup: not found" goes into the hook's >/dev/null,
+# the hook exits 0 and nothing is applied and nothing is logged - the silent
+# failure these hooks exist to prevent. All three, because the guard is a copy
+# in each file.
+@test "hooks: exit 0 and log when nohup is not installed" {
+    setup_hook_env
+    # The fakes are shell functions, which are found before PATH, so a missing
+    # nohup is staged by answering the one lookup the hook makes for it.
+    cat >> "$BATS_TEST_TMPDIR/fakes.sh" <<'EOF'
+command() { [ "$2" = nohup ] && return 1; return 0; }
+EOF
+    type=iptables table=mangle run_hook "$HOOKS/netfilter.d/50-vpn-director.sh" start
+    assert_success
+    run_hook "$HOOKS/wan.d/50-vpn-director.sh" start
+    assert_success
+    id=OpenVPN0 system_name=ovpn_br0 layer=ipv4 level=running \
+        run_hook "$HOOKS/iflayerchanged.d/50-vpn-director.sh" hook
+    assert_success
+    assert_no_apply
+    run grep -c "opkg install coreutils-nohup" "$BATS_TEST_TMPDIR/logger.log"
+    assert_output "3"
+}
+
 @test "hooks: are POSIX sh and executable in the tree" {
     for hook in netfilter.d wan.d iflayerchanged.d; do
         [ -x "$HOOKS/$hook/50-vpn-director.sh" ]

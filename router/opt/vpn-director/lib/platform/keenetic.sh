@@ -288,13 +288,11 @@ platform_cron_add() {
     mkdir -p "$dir" 2>/dev/null || return 1
     printf '%s root %s\n' "$schedule" "$cmd" > "$dir/$name" || return 1
     chmod 644 "$dir/$name"
-    # No init script is the cron package not being installed. Say so here,
-    # where the missing thing has a name: the caller only learns that
-    # scheduling failed, and a bare non-zero exit leaves nothing to act on.
-    if [[ ! -x $init ]]; then
-        log -l ERROR "Entware's cron is not installed ($init is missing): opkg install cron - the job $dir/$name is written and starts running once the package is there"
-        return 1
-    fi
+    # No init script is the cron package not being installed. What to do about
+    # it is platform_cron_requirements' answer: a contract function prints its
+    # answer or fails silently, and never logs - lib/platform.sh sources
+    # without common.sh, where log does not exist.
+    [[ -x $init ]] || return 1
     "$init" check >/dev/null 2>&1 || "$init" start >/dev/null 2>&1
 }
 
@@ -302,6 +300,15 @@ platform_cron_del() {
     local name="${1:-}" dir="${VPD_CRON_D:-/opt/etc/cron.d}"
     [[ -n $name ]] || return 1
     rm -f "$dir/$name"
+}
+
+# The one thing a Keenetic needs before the job file above can run. Printed,
+# not logged, and only when it is missing: the caller decides how to say it.
+platform_cron_requirements() {
+    local dir="${VPD_CRON_D:-/opt/etc/cron.d}" init="${VPD_CRON_INIT:-/opt/etc/init.d/S10cron}"
+    [[ -x $init ]] && return 1
+    printf "Entware's cron is not installed (%s is missing): opkg install cron - the job file in %s is already written and starts running once the package is there\n" \
+        "$init" "$dir"
 }
 
 # mangle INPUT jumps port 443 to _NDM_HTTP_INPUT_TLS_, which drops every TLS

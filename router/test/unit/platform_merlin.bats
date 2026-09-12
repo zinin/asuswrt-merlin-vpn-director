@@ -207,6 +207,15 @@ with_mock() {
     assert_failure
 }
 
+# cru is the firmware's own, always there: nothing for the user to install,
+# so nothing is printed and no Entware advice can reach a Merlin router.
+@test "platform_cron_requirements: merlin has nothing to require" {
+    load_platform
+    run platform_cron_requirements
+    assert_failure
+    refute_output
+}
+
 @test "platform_cron_add / platform_cron_del: cru a and cru d" {
     load_platform
     : > /tmp/bats_cru_calls.log

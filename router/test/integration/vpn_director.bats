@@ -393,6 +393,21 @@ setup() {
     PATH="$BATS_TEST_TMPDIR/bin:$PATH" run "$SCRIPTS_DIR/vpn-director.sh" cron install
     assert_failure
     assert_output --partial "Failed to schedule the daily ipset update"
+    # Merlin requires nothing: no Entware advice on a router that has no opkg.
+    refute_output --partial "opkg"
+}
+
+# The other half of the same seam: what the platform requires is the platform's
+# answer, and cmd_cron is what logs it.
+@test "vpn-director: cron install on Keenetic names the missing cron package" {
+    VPD_PLATFORM=keenetic PATH="$TEST_ROOT/mocks/keenetic:$PATH" \
+        VPD_CRON_D="$BATS_TEST_TMPDIR/cron.d" \
+        VPD_CRON_INIT="$BATS_TEST_TMPDIR/no-such-S10cron" \
+        run "$SCRIPTS_DIR/vpn-director.sh" cron install
+    assert_failure
+    assert_output --partial "Failed to schedule the daily ipset update"
+    assert_output --partial "opkg install cron"
+    [ -f "$BATS_TEST_TMPDIR/cron.d/vpn_director_update" ]
 }
 
 @test "vpn-director: cron remove drops the job" {

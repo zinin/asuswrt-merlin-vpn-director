@@ -412,6 +412,13 @@ cmd_cron() {
             # the schedule is the thing that did not happen, and still fail.
             if ! platform_cron_add vpn_director_update "0 3 * * *" "$SCRIPT_DIR/vpn-director.sh update"; then
                 log -l ERROR "Failed to schedule the daily ipset update"
+                # The platform states what it needs; it does not log (the
+                # contract in lib/platform.sh). A platform that needs nothing
+                # installed says nothing, and the line above stands alone.
+                local cron_req
+                if cron_req="$(platform_cron_requirements)"; then
+                    log -l ERROR "$cron_req"
+                fi
                 exit 1
             fi
             log "Scheduled daily ipset update"
