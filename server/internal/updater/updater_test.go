@@ -18,10 +18,29 @@ func TestIsUpdateInProgress_NoLockFile(t *testing.T) {
 	}
 }
 
+// writeUpdateLeftovers fills the update directory the way an attempt in flight
+// leaves it: the installer step 1 downloads, a half-written one, the payload,
+// and the two files a later report is made of.
+func writeUpdateLeftovers(t *testing.T, s *Service) (gone, kept []string) {
+	t.Helper()
+	if err := os.MkdirAll(s.getFilesDir(), 0755); err != nil {
+		t.Fatalf("mkdir files dir: %v", err)
+	}
+	gone = []string{s.getInstallerFile(), s.getInstallerFile() + ".part", filepath.Join(s.getFilesDir(), "marker")}
+	kept = []string{filepath.Join(s.getUpdateDir(), "update.log"), filepath.Join(s.getUpdateDir(), "notify.json")}
+	for _, path := range append(append([]string(nil), gone...), kept...) {
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return gone, kept
+}
+
 func TestIsUpdateInProgress_ValidLock(t *testing.T) {
 	tempDir := t.TempDir()
 	lockFile := filepath.Join(tempDir, "lock")
-	s := &Service{lockFile: lockFile}
+	s := &Service{lockFile: lockFile, updateDir: tempDir}
+	gone, kept := writeUpdateLeftovers(t, s)
 
 	// Create lock with current PID (which is alive)
 	pid := os.Getpid()
@@ -31,6 +50,14 @@ func TestIsUpdateInProgress_ValidLock(t *testing.T) {
 
 	if !s.IsUpdateInProgress() {
 		t.Error("IsUpdateInProgress() = false, want true (valid lock with alive process)")
+	}
+
+	// The owner is alive and still downloading: nothing of its is anyone
+	// else's to remove.
+	for _, path := range append(append([]string(nil), gone...), kept...) {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed from under a live update: %v", filepath.Base(path), err)
+		}
 	}
 }
 
@@ -57,7 +84,8 @@ func TestIsUpdateInProgress_StaleLock_InvalidPID(t *testing.T) {
 func TestIsUpdateInProgress_StaleLock_DeadProcess(t *testing.T) {
 	tempDir := t.TempDir()
 	lockFile := filepath.Join(tempDir, "lock")
-	s := &Service{lockFile: lockFile}
+	s := &Service{lockFile: lockFile, updateDir: tempDir}
+	gone, kept := writeUpdateLeftovers(t, s)
 
 	// Create lock with a PID that almost certainly doesn't exist
 	// Use a very high PID that's unlikely to be in use
@@ -72,6 +100,19 @@ func TestIsUpdateInProgress_StaleLock_DeadProcess(t *testing.T) {
 	// Lock file should be removed
 	if _, err := os.Stat(lockFile); !os.IsNotExist(err) {
 		t.Error("Stale lock file was not removed")
+	}
+
+	// The owner is dead and never ran its own cleanup, so its payload is
+	// reaped here; update.log and notify.json are what a later report reads.
+	for _, path := range gone {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s was left behind by a dead owner's cleanup", filepath.Base(path))
+		}
+	}
+	for _, path := range kept {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s must survive the stale-lock cleanup: %v", filepath.Base(path), err)
+		}
 	}
 }
 

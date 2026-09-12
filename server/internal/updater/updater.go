@@ -247,7 +247,9 @@ func (s *Service) getExecutable() (string, error) {
 }
 
 // IsUpdateInProgress checks if a lock file exists and the process is still alive.
-// If the process is dead, the stale lock is removed and false is returned.
+// If the process is dead, the stale lock and what its owner left behind - the
+// installer, its .part and files/ - are removed, update.log and notify.json
+// stay, and false is returned.
 func (s *Service) IsUpdateInProgress() bool {
 	lockFile := s.getLockFile()
 
@@ -271,7 +273,20 @@ func (s *Service) IsUpdateInProgress() bool {
 		if errors.Is(err, syscall.EPERM) {
 			return true
 		}
-		// Process is dead, remove stale lock
+		// Process is dead: reap what its owner left behind, not only the
+		// lock. A step 1 that died mid-handover - out of memory in the
+		// two-process window is the plausible way - never ran its deferred
+		// removals, and startup.cleanup only acts when notify.json exists, so
+		// the payload would sit in tmpfs until the next reboot. A dead PID
+		// means nobody writes into the directory any more: a re-parented
+		// step 2 stops on its own claim check. update.log and notify.json are
+		// left alone - they are what a later report is made of. The lock goes
+		// last, as in cleanUpOwned, so a Start that sees the stale lock
+		// meanwhile also reaps rather than claims a directory still being
+		// emptied.
+		os.Remove(s.getInstallerFile())
+		os.Remove(s.getInstallerFile() + ".part")
+		s.CleanFiles()
 		os.Remove(lockFile)
 		return false
 	}
