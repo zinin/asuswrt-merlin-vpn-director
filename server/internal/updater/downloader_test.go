@@ -628,3 +628,124 @@ func TestCopyExecutable_CopiesContentAndTheExecutableBit(t *testing.T) {
 		t.Errorf("dst mode = %v, want it executable", info.Mode().Perm())
 	}
 }
+
+// files/ survives a failed attempt, so step 2 can find its own binary already
+// there: a hard link to the executable it is running as. os.Link then fails
+// with "file exists", and a copy onto that destination opens it with O_TRUNC -
+// which empties the source along with it, because they are one file. The
+// payload binary would be zero bytes and the running daemon gone with it.
+func TestLinkOrCopy_KeepsTheSourceWhenTheDestinationIsAlreadyLinkedToIt(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "installer")
+	if err := os.WriteFile(src, []byte("the new webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "files", DaemonWebUI)
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(src, dst); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy() error = %v", err)
+	}
+
+	for _, path := range []string{src, dst} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != "the new webui" {
+			t.Errorf("%s = %q (%v), want the binary whole", filepath.Base(path), data, err)
+		}
+	}
+}
+
+// A destination left by an earlier attempt is replaced by the binary asked
+// for, and arrives with the mode a daemon needs rather than the one that file
+// happened to have.
+func TestLinkOrCopy_ReplacesAnExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "installer")
+	if err := os.WriteFile(src, []byte("the new webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(src, 0755); err != nil { // umask does not decide this
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "files", DaemonWebUI)
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("an older build"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dst, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy() error = %v", err)
+	}
+
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "the new webui" {
+		t.Errorf("dst = %q (%v), want the binary that was asked for", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Errorf("dst mode = %v, want 0755", info.Mode().Perm())
+	}
+}
+
+// O_CREATE leaves the mode of a file that is already there alone, so a
+// destination that exists has to be made executable explicitly.
+func TestCopyExecutable_MakesAnExistingDestinationExecutable(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+	if err := os.WriteFile(dst, []byte("an older build"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dst, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyExecutable(src, dst); err != nil {
+		t.Fatalf("copyExecutable() error = %v", err)
+	}
+
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "binary" {
+		t.Errorf("dst = %q (%v), want the source content", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Errorf("dst mode = %v, want 0755", info.Mode().Perm())
+	}
+}
+
+// A copy that fails leaves nothing behind under the name of a whole binary:
+// the update script would install it and the daemon would not start. The read
+// is what fails here; a Close that fails is removed the same way, and no test
+// in this suite can bring one about honestly.
+func TestCopyExecutable_LeavesNoPartialFileBehind(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.Mkdir(src, 0755); err != nil { // opens, but cannot be read
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+
+	if err := copyExecutable(src, dst); err == nil {
+		t.Fatal("copyExecutable() reported a directory copied")
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Error("a failed copy left its destination behind")
+	}
+}

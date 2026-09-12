@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -250,13 +251,30 @@ func linkOrCopy(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
-	if err := os.Link(src, dst); err == nil {
+	err := os.Link(src, dst)
+	if errors.Is(err, os.ErrExist) {
+		// A destination left by an earlier attempt may be a hard link to src
+		// itself - to the binary this process is running as. Copying onto it
+		// would open src with O_TRUNC under another name and empty it. Take
+		// it away and link afresh.
+		if err := os.Remove(dst); err != nil {
+			return err
+		}
+		err = os.Link(src, dst)
+	}
+	if err == nil {
 		return nil
 	}
-	return copyExecutable(src, dst)
+	// Another filesystem, typically: fall back to a copy, and say what the
+	// link refused if that fails too.
+	if copyErr := copyExecutable(src, dst); copyErr != nil {
+		return fmt.Errorf("link: %v; copy: %w", err, copyErr)
+	}
+	return nil
 }
 
-// copyExecutable copies src to dst, creating dst with mode 0755.
+// copyExecutable copies src to dst, which ends up executable whether or not
+// it was there before, or does not end up there at all.
 func copyExecutable(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -267,10 +285,24 @@ func copyExecutable(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	// O_CREATE leaves the mode of a file that is already there alone, and the
+	// update script installs this one as a daemon it then starts.
+	if err := out.Chmod(0755); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
 		os.Remove(dst)
 		return err
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		// Whatever reached the disk is half a binary under the name of a
+		// whole one: the script would install it and the daemon would not
+		// start.
+		os.Remove(dst)
+		return err
+	}
+	return nil
 }
