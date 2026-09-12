@@ -359,6 +359,9 @@ setup() {
     local vpd_dir
     vpd_dir="$(cd "$SCRIPTS_DIR" && pwd)"
     grep -qF "cru a vpn_director_update 0 3 * * * $vpd_dir/vpn-director.sh update" /tmp/bats_cru_calls.log
+    # The job name of the versions before the unified CLI: dropped on every
+    # install, or a router upgraded from one of them keeps two jobs.
+    grep -qF "cru d update_ipsets" /tmp/bats_cru_calls.log
 }
 
 @test "vpn-director: cron remove drops the job" {
@@ -366,6 +369,7 @@ setup() {
     run "$SCRIPTS_DIR/vpn-director.sh" cron remove
     assert_success
     grep -qF "cru d vpn_director_update" /tmp/bats_cru_calls.log
+    grep -qF "cru d update_ipsets" /tmp/bats_cru_calls.log
 }
 
 @test "vpn-director: cron without install|remove fails with usage" {

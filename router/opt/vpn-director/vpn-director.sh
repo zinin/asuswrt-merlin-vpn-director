@@ -399,11 +399,18 @@ cmd_cron() {
     _load_common
     case "$COMPONENT" in
         install)
+            # update_ipsets is the job name of the versions before the unified CLI. It is dropped
+            # on every install so a router upgraded from one of them does not keep two jobs.
+            # `|| true`: the job usually does not exist, and a platform whose cron tool reports
+            # that with an error must not abort the install.
+            platform_cron_del update_ipsets || true
             platform_cron_add vpn_director_update "0 3 * * *" "$SCRIPT_DIR/vpn-director.sh update"
             log "Scheduled daily ipset update"
             ;;
         remove)
             platform_cron_del vpn_director_update
+            # The legacy job as well, for the reason spelled out in install.
+            platform_cron_del update_ipsets || true
             log "Removed daily ipset update"
             ;;
         *)
