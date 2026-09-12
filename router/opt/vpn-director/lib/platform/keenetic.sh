@@ -169,6 +169,11 @@ platform_tunnel_table() {
 # 10.73.149.113 255.255.255.0 -> 10.73.149.1: the server side of an OpenVPN
 # "subnet" topology, which is the gateway the route needs when the config
 # names none.
+#
+# Only the octets are checked, not that the mask is a mask: a /31 or /32 (an
+# OpenVPN "topology p2p", where the peer is not the subnet's first host) gets
+# an answer that is wrong rather than none, and the caller installs it. That
+# is what tunnel_director.tunnels.<id>.gateway is for.
 _keenetic_first_host() {
     local a1 a2 a3 a4 m1 m2 m3 m4 o net first
     IFS=. read -r a1 a2 a3 a4 <<< "${1:-}"
@@ -185,10 +190,16 @@ _keenetic_first_host() {
 
 # platform_tunnel_route <id> [gateway] - the route the tunnel's table needs
 # -------------------------------------------------------------------------------------------------
-# Wireguard: "default dev nwgN". OpenVPN: "default via <gateway> dev ovpn_brN",
-# the gateway being tunnel_director.tunnels.<id>.gateway when the caller
-# passes one, else the first host of the tunnel subnet RCI reports. Nothing
-# while an OpenVPN tunnel is down: RCI reports no address then.
+# Wireguard: "default dev nwgN" - a peer-to-peer device the kernel routes
+# through without a next hop, so a configured gateway has nothing to apply to
+# and is ignored (silently: a platform function may not log).
+#
+# OpenVPN: "default via <gateway> dev ovpn_brN", the gateway being
+# tunnel_director.tunnels.<id>.gateway when the caller passes one, else the
+# first host of the tunnel subnet RCI reports. Only that second path needs the
+# tunnel up - RCI reports no address for a down tunnel, so it prints nothing;
+# with a gateway in hand the spec is printed either way and the failure moves
+# to "ip route replace", which needs the interface.
 platform_tunnel_route() {
     local id="${1:-}" gateway="${2:-}" iface json addr mask
     iface="$(platform_tunnel_iface "$id")" || return 1
@@ -245,4 +256,75 @@ platform_vpn_endpoints() {
         elif .type == "Wireguard" then
             ((.wireguard.peer // []) | if type == "array" then .[] else . end | .remote // empty)
         else empty end' 2>/dev/null
+}
+
+# -------------------------------------------------------------------------------------------------
+# Kernel modules, cron, TPROXY, PREROUTING position
+# -------------------------------------------------------------------------------------------------
+# No modprobe on KeeneticOS. The modules of the "Kernel modules for Netfilter"
+# firmware component (opkg-kmod-netfilter) sit under /lib/modules/<release>/
+# and nothing autoloads them; a missing .ko means the component is not
+# installed, which the caller reports.
+platform_load_module() {
+    local name="${1:-}" dir="${VPD_MODULES_DIR:-/lib/modules/$(uname -r)}"
+    [[ -n $name ]] || return 1
+    if grep -q "^${name} " "${VPD_PROC_MODULES:-/proc/modules}" 2>/dev/null; then
+        return 0
+    fi
+    [[ -f "$dir/$name.ko" ]] || return 1
+    insmod "$dir/$name.ko" 2>/dev/null
+}
+
+# Entware's cron (Vixie, package "cron") reads /opt/etc/cron.d: one file per
+# job, "<schedule> root <command>", picked up within a minute. The daemon is
+# started when the init script's check says it is not running; its process is
+# named cron, not crond, so the script is asked rather than pidof. The job
+# file is written before the daemon is checked, so a router that gets the cron
+# package later already has its job.
+platform_cron_add() {
+    local name="${1:-}" schedule="${2:-}" cmd="${3:-}"
+    local dir="${VPD_CRON_D:-/opt/etc/cron.d}" init="${VPD_CRON_INIT:-/opt/etc/init.d/S10cron}"
+    [[ -n $name && -n $schedule && -n $cmd ]] || return 1
+    mkdir -p "$dir" 2>/dev/null || return 1
+    printf '%s root %s\n' "$schedule" "$cmd" > "$dir/$name" || return 1
+    chmod 644 "$dir/$name"
+    [[ -x $init ]] || return 1
+    "$init" check >/dev/null 2>&1 || "$init" start >/dev/null 2>&1
+}
+
+platform_cron_del() {
+    local name="${1:-}" dir="${VPD_CRON_D:-/opt/etc/cron.d}"
+    [[ -n $name ]] || return 1
+    rm -f "$dir/$name"
+}
+
+# mangle INPUT jumps port 443 to _NDM_HTTP_INPUT_TLS_, which drops every TLS
+# ClientHello whose SNI is not the router's own; TPROXY keeps the original
+# port, so proxied HTTPS would die there. ACCEPT in mangle INPUT ends that
+# chain's traversal for packets carrying our mark. Position 1, ahead of NDM's
+# jump. NDM deletes the rule on every rebuild; the netfilter.d hook re-applies.
+# The mark is the caller's (tproxy.sh passes "$XRAY_FWMARK/$XRAY_FWMARK_MASK").
+platform_tproxy_extra_rules() {
+    local verb="${1:-}" mark="${2:-0x100/0x100}" i=0
+    case "$verb" in
+        apply)
+            iptables -t mangle -C INPUT -m mark --mark "$mark" -j ACCEPT 2>/dev/null ||
+                iptables -t mangle -I INPUT 1 -m mark --mark "$mark" -j ACCEPT
+            ;;
+        stop)
+            # Every copy; bounded, for an iptables whose -D always succeeds.
+            while [[ $i -lt 16 ]] && iptables -t mangle -D INPUT -m mark --mark "$mark" -j ACCEPT 2>/dev/null; do
+                i=$((i + 1))
+            done
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# XRAY_TPROXY takes position 1; TUN_DIR goes right after it, ahead of every
+# _NDM_* jump: NDM guards its DNS routing chain with "-m mark --mark 0x0",
+# so our marks must be set before it runs.
+platform_prerouting_base_pos() {
+    printf '2\n'
 }

@@ -497,6 +497,23 @@ load '../test_helper'
     grep -q "WARN.*invalid gateway 'gateway.example'" "$LOG_FILE"
 }
 
+# The dotted shape matches, the value is still not an address: the octet check
+# is the only thing between "10.8.0.999" and ip route.
+@test "_tunnel_gateway: drops an address whose octet is above 255 with a WARN" {
+    load_common
+    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.999"' "$TEST_ROOT/fixtures/vpn-director.json" \
+        > "$BATS_TEST_TMPDIR/vpn-director.json"
+    export VPD_CONFIG_FILE="$BATS_TEST_TMPDIR/vpn-director.json"
+    source "$LIB_DIR/config.sh"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/firewall.sh"
+    source "$LIB_DIR/tunnel.sh" --source-only
+    run --separate-stderr _tunnel_gateway wgc1
+    assert_success
+    refute_output
+    grep -q "WARN.*invalid gateway '10.8.0.999'" "$LOG_FILE"
+}
+
 @test "tunnel_apply: hands the configured gateway to platform_tunnel_route_ensure" {
     load_common
     jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.1"' "$TEST_ROOT/fixtures/vpn-director.json" \

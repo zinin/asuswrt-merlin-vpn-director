@@ -90,7 +90,7 @@ _tproxy_init() {
 # -------------------------------------------------------------------------------------------------
 _tproxy_check_module() {
     if ! platform_load_module xt_TPROXY; then
-        log -l ERROR "xt_TPROXY module not available"
+        log -l ERROR "xt_TPROXY module not available (KeeneticOS: install the \"Kernel modules for Netfilter\" firmware component)"
         return 1
     fi
     return 0
@@ -476,7 +476,7 @@ _tproxy_setup_iptables() {
     # errexit off for its whole body, and it ends in a log - so a failure here
     # would otherwise be an apply that says "successfully" while the firmware
     # drops the proxied traffic.
-    platform_tproxy_extra_rules apply ||
+    platform_tproxy_extra_rules apply "$XRAY_FWMARK/$XRAY_FWMARK_MASK" ||
         log -l WARN "Failed to apply platform TPROXY rules; proxied traffic may be dropped"
 
     # Jump from PREROUTING to our chain for every LAN interface, each at its own
@@ -501,7 +501,7 @@ _tproxy_setup_iptables() {
 _tproxy_teardown_iptables() {
     # Best effort: tproxy_stop calls this bare under errexit, so a platform whose
     # cleanup fails must not abort the teardown before the jump and the chain go.
-    platform_tproxy_extra_rules stop || true
+    platform_tproxy_extra_rules stop "$XRAY_FWMARK/$XRAY_FWMARK_MASK" || true
     purge_fw_rules -q "mangle PREROUTING" "-j $XRAY_CHAIN\$"
     delete_fw_chain -q mangle "$XRAY_CHAIN"
 

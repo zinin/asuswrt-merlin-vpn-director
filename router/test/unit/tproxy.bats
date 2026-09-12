@@ -459,14 +459,14 @@ EOF
     grep -q "ipset add TPROXY_BYPASS 198.51.100.9" /tmp/bats_ipset_calls.log
 }
 
-@test "_tproxy_setup_iptables: applies platform extra rules and one jump per LAN interface" {
+@test "_tproxy_setup_iptables: applies platform extra rules with the configured mark and one jump per LAN interface" {
     load_tproxy_module
-    platform_tproxy_extra_rules() { echo "extra $1" >> "$BATS_TEST_TMPDIR/extra.log"; }
+    platform_tproxy_extra_rules() { echo "extra $1 $2" >> "$BATS_TEST_TMPDIR/extra.log"; }
     platform_lan_ifaces() { printf 'br0\nbr1\n'; }
     : > /tmp/bats_iptables_calls.log
     run _tproxy_setup_iptables
     assert_success
-    grep -q "extra apply" "$BATS_TEST_TMPDIR/extra.log"
+    grep -qF "extra apply 0x100/0x100" "$BATS_TEST_TMPDIR/extra.log"
     # Each interface asks for its own position, so no jump displaces another and
     # the next apply finds both already in place instead of rewriting them.
     grep -q -- '-I PREROUTING 1 -i br0 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
@@ -511,12 +511,12 @@ EOF
     assert_output --partial "Failed to apply platform TPROXY rules"
 }
 
-@test "_tproxy_teardown_iptables: removes platform extra rules" {
+@test "_tproxy_teardown_iptables: removes platform extra rules with the configured mark" {
     load_tproxy_module
-    platform_tproxy_extra_rules() { echo "extra $1" >> "$BATS_TEST_TMPDIR/extra.log"; }
+    platform_tproxy_extra_rules() { echo "extra $1 $2" >> "$BATS_TEST_TMPDIR/extra.log"; }
     run _tproxy_teardown_iptables
     assert_success
-    grep -q "extra stop" "$BATS_TEST_TMPDIR/extra.log"
+    grep -qF "extra stop 0x100/0x100" "$BATS_TEST_TMPDIR/extra.log"
 }
 
 # tproxy_stop calls this bare under set -euo pipefail, so a platform whose

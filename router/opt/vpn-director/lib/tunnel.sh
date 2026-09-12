@@ -127,9 +127,10 @@ _tunnel_table_allowed() {
 # dotted IPv4 address is dropped with a WARN so a typo never reaches ip route.
 # -------------------------------------------------------------------------------------------------
 _tunnel_gateway() {
-    local gateway o
-    gateway="$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "${1:-}" '.[$t].gateway // empty' 2>/dev/null)"
-    [[ -n $gateway ]] || return 0
+    local raw gateway o
+    raw="$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "${1:-}" '.[$t].gateway // empty' 2>/dev/null)"
+    [[ -n $raw ]] || return 0
+    gateway="$raw"
     if [[ $gateway =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
         for o in "${BASH_REMATCH[@]:1}"; do
             if [[ $((10#$o)) -gt 255 ]]; then
@@ -141,7 +142,7 @@ _tunnel_gateway() {
         gateway=""
     fi
     if [[ -z $gateway ]]; then
-        log -l WARN "Tunnel '$1': invalid gateway '$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r --arg t "$1" '.[$t].gateway')' ignored (expected an IPv4 address)"
+        log -l WARN "Tunnel '$1': invalid gateway '$raw' ignored (expected an IPv4 address)"
         return 0
     fi
     printf '%s\n' "$gateway"

@@ -250,6 +250,18 @@ with_mock() {
     refute_output
 }
 
+# Digits alone are not an octet. Without the range check the shift arithmetic
+# would happily fold 300 into a neighbouring octet and print a "first host".
+@test "_keenetic_first_host: rejects an octet above 255" {
+    load_platform
+    run _keenetic_first_host 10.0.0.1 255.255.300.0
+    assert_failure
+    refute_output
+    run _keenetic_first_host 10.0.300.1 255.255.255.0
+    assert_failure
+    refute_output
+}
+
 @test "platform_tunnel_route: OpenVPN via the subnet's first host, Wireguard by device" {
     load_platform
     run platform_tunnel_route OpenVPN0
@@ -322,9 +334,141 @@ with_mock() {
     [ "${#lines[@]}" -eq 2 ]
 }
 
+# RCI hands a single Wireguard peer back as an object where several come as an
+# array; the fixture has the array, this is the other shape.
+@test "platform_vpn_endpoints: a lone Wireguard peer arrives as an object" {
+    load_platform
+    mkdir -p "$BATS_TEST_TMPDIR/rci/show"
+    jq '.Wireguard1.wireguard.peer = .Wireguard1.wireguard.peer[0]' \
+        "$TEST_ROOT/fixtures/keenetic/rci/show/interface.json" \
+        > "$BATS_TEST_TMPDIR/rci/show/interface.json"
+    BATS_RCI_FIXTURES="$BATS_TEST_TMPDIR/rci" run platform_vpn_endpoints
+    assert_success
+    assert_line --index 0 "203.0.113.7"
+    assert_line --index 1 "198.51.100.9"
+    [ "${#lines[@]}" -eq 2 ]
+}
+
 @test "platform_vpn_endpoints: fails when NDM does not answer" {
     load_platform
     BATS_RCI_DOWN=1 run platform_vpn_endpoints
     assert_failure
     refute_output
+}
+
+# ------------------------------------------------------------ modules / cron
+
+@test "platform_load_module: a module /proc/modules lists needs no insmod" {
+    load_platform
+    run platform_load_module xt_TPROXY
+    assert_success
+    [ ! -s /tmp/bats_insmod_calls.log ]
+}
+
+@test "platform_load_module: insmods the .ko of a module that is not loaded" {
+    load_platform
+    : > "$VPD_MODULES_DIR/xt_comment.ko"
+    run platform_load_module xt_comment
+    assert_success
+    grep -qF "insmod $VPD_MODULES_DIR/xt_comment.ko" /tmp/bats_insmod_calls.log
+}
+
+@test "platform_load_module: fails without insmod when the .ko is missing" {
+    load_platform
+    run platform_load_module xt_comment
+    assert_failure
+    refute_output
+    [ ! -s /tmp/bats_insmod_calls.log ]
+}
+
+# fake_cron_init <check rc> writes a stand-in S10cron that records its verb.
+fake_cron_init() {
+    cat > "$VPD_CRON_INIT" <<EOF
+#!/bin/sh
+echo "\$1" >> "$BATS_TEST_TMPDIR/cron-init.calls"
+[ "\$1" = check ] && exit $1
+exit 0
+EOF
+    chmod +x "$VPD_CRON_INIT"
+}
+
+@test "platform_cron_add: writes a cron.d job for root and starts a cron that is not running" {
+    load_platform
+    fake_cron_init 1
+    run platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
+    assert_success
+    run cat "$VPD_CRON_D/vpn_director_update"
+    assert_output "0 3 * * * root /opt/vpn-director/vpn-director.sh update"
+    run cat "$BATS_TEST_TMPDIR/cron-init.calls"
+    assert_line --index 0 "check"
+    assert_line --index 1 "start"
+}
+
+@test "platform_cron_add: leaves a running cron alone" {
+    load_platform
+    fake_cron_init 0
+    run platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/cron-init.calls"
+    assert_output "check"
+}
+
+@test "platform_cron_add: fails when the cron package is not installed, the job file written" {
+    load_platform
+    run platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
+    assert_failure
+    [ -f "$VPD_CRON_D/vpn_director_update" ]
+}
+
+@test "platform_cron_del: removes the job; a job that is not there is fine" {
+    load_platform
+    fake_cron_init 0
+    platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
+    run platform_cron_del vpn_director_update
+    assert_success
+    [ ! -e "$VPD_CRON_D/vpn_director_update" ]
+    run platform_cron_del update_ipsets
+    assert_success
+}
+
+# ------------------------------------------------------------- firewall bits
+
+@test "platform_tproxy_extra_rules apply: the accept rule at position 1 of mangle INPUT" {
+    load_platform
+    : > /tmp/bats_iptables_calls.log
+    run platform_tproxy_extra_rules apply
+    assert_success
+    grep -qF -- '-t mangle -C INPUT -m mark --mark 0x100/0x100 -j ACCEPT' /tmp/bats_iptables_calls.log
+    grep -qF -- '-t mangle -I INPUT 1 -m mark --mark 0x100/0x100 -j ACCEPT' /tmp/bats_iptables_calls.log
+}
+
+@test "platform_tproxy_extra_rules: the configured mark replaces the default" {
+    load_platform
+    : > /tmp/bats_iptables_calls.log
+    run platform_tproxy_extra_rules apply 0x200/0x200
+    assert_success
+    grep -qF -- '-I INPUT 1 -m mark --mark 0x200/0x200 -j ACCEPT' /tmp/bats_iptables_calls.log
+}
+
+@test "platform_tproxy_extra_rules stop: deletes the accept rule and succeeds" {
+    load_platform
+    : > /tmp/bats_iptables_calls.log
+    run platform_tproxy_extra_rules stop
+    assert_success
+    grep -qF -- '-t mangle -D INPUT -m mark --mark 0x100/0x100 -j ACCEPT' /tmp/bats_iptables_calls.log
+}
+
+@test "platform_tproxy_extra_rules: rejects a verb that is not apply or stop" {
+    load_platform
+    run platform_tproxy_extra_rules
+    assert_failure
+    refute_output
+    run platform_tproxy_extra_rules aply
+    assert_failure
+}
+
+@test "platform_prerouting_base_pos: 2, right after XRAY_TPROXY and ahead of every _NDM_ jump" {
+    load_platform
+    run platform_prerouting_base_pos
+    assert_output "2"
 }
