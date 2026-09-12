@@ -317,6 +317,11 @@ func TestHandover_LeavesTheDirectoryToAScriptThatTookTheLock(t *testing.T) {
 	if data, _ := os.ReadFile(s.getLockFile()); strings.TrimSpace(string(data)) != "1" {
 		t.Errorf("lock = %q, want the script's claim left in place", data)
 	}
+	// The installer is step 1's own file wherever the lock has gone, and the
+	// contract has it removed whatever the outcome.
+	if _, err := os.Stat(s.getInstallerFile()); !os.IsNotExist(err) {
+		t.Error("the installer was left behind in a directory the update script now owns")
+	}
 }
 
 func TestHandover_CapsWhatStep2CanPutInFrontOfTheUser(t *testing.T) {
@@ -536,5 +541,38 @@ func TestLineWriter_SplitsAnOverlongLineAtARuneBoundary(t *testing.T) {
 	}
 	if strings.Join(got, "") != line {
 		t.Error("the pieces do not add up to the line that was written")
+	}
+}
+
+// The installer is part of what a failed handover owns, so it goes while the
+// lock still names this process - a removal after the claim is dropped reaches
+// into a directory the next attempt may already be filling.
+func TestCleanUpOwned_RemovesTheInstallerUnderTheClaim(t *testing.T) {
+	s, _ := newHandoverService(t, map[string]string{})
+	if err := os.WriteFile(s.getInstallerFile(), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	s.cleanUpOwned()
+
+	assertCleanedUp(t, s)
+}
+
+// The claim gates the whole cleanup, the installer included. Handover's own
+// deferred removal is what still takes the installer away in this case, so
+// the contract's promise that it goes whatever the outcome is kept.
+func TestCleanUpOwned_TouchesNothingOnceTheLockNamesAnotherProcess(t *testing.T) {
+	s, _ := newHandoverService(t, map[string]string{})
+	if err := os.WriteFile(s.getInstallerFile(), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.getLockFile(), []byte("1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.cleanUpOwned()
+
+	if _, err := os.Stat(s.getInstallerFile()); err != nil {
+		t.Errorf("the installer was removed although the lock names another process: %v", err)
 	}
 }

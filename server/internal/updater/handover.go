@@ -82,7 +82,9 @@ func (s *Service) Handover(ctx context.Context, release *Release, opts RunOption
 	}
 	installer := s.getInstallerFile()
 	// Needed by nobody afterwards: on success step 2 has linked itself into
-	// files/, and after a failure nothing runs it again.
+	// files/, and after a failure nothing runs it again. A failure that still
+	// owns the directory takes it away in cleanUpOwned, under the claim; this
+	// covers the success path and a lock that has passed to the update script.
 	defer os.Remove(installer)
 
 	if err := s.downloadInstaller(ctx, release, installer); err != nil {
@@ -318,15 +320,18 @@ func truncateRunes(s string, n int) string {
 	return string([]rune(s)[:n])
 }
 
-// cleanUpOwned removes files/ and the lock after a failed handover, but only
-// while the lock names this process. A lock naming another process means the
-// update script has taken over, and the directory is its to clean.
+// cleanUpOwned removes the installer, files/ and the lock after a failed
+// handover, but only while the lock names this process. A lock naming another
+// process means the update script has taken over, and the directory is its to
+// clean. The lock goes last, so the whole cleanup happens while the claim
+// still says whose directory this is.
 func (s *Service) cleanUpOwned() {
 	if !s.lockNamesPID(os.Getpid()) {
 		slog.Warn("the update lock names another process, leaving the update directory to it",
 			"lock", s.getLockFile())
 		return
 	}
+	os.Remove(s.getInstallerFile())
 	s.CleanFiles()
 	s.RemoveLock()
 }
