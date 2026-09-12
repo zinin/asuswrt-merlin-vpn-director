@@ -154,16 +154,24 @@ func (s *Service) downloadInstaller(ctx context.Context, release *Release, insta
 
 // runInstaller runs step 2 and waits for it, at most the handover timeout.
 // Its stdout lines go to progress; its last stderr line is the reason a
-// failure is reported with.
+// failure is reported with - its first crash line, when it died of a Go
+// runtime failure.
 func (s *Service) runInstaller(ctx context.Context, installer string, opts RunOptions, progress func(string)) error {
 	ctx, cancel := context.WithTimeout(ctx, s.getHandoverTimeout())
 	defer cancel()
 
-	var reason string
+	var reason, crash string
 	stdout := &lineWriter{line: progressRelay(progress)}
 	stderr := &lineWriter{line: func(l string) {
 		slog.Warn("self-update step 2", "stderr", l)
 		reason = l
+		// A Go runtime failure - a panic, or the out-of-memory kill a 256 MB
+		// router makes plausible - ends stderr with stack frames, so the last
+		// line would be a frame. The first "panic:" or "fatal error:" line is
+		// the headline, and the one thing the user can act on.
+		if crash == "" && (strings.HasPrefix(l, "panic:") || strings.HasPrefix(l, "fatal error:")) {
+			crash = l
+		}
 	}}
 
 	cmd, err := startInstaller(ctx, installer, selfUpdateArgv(opts), stdout, stderr, s.getInstallerWaitDelay())
@@ -173,6 +181,9 @@ func (s *Service) runInstaller(ctx context.Context, installer string, opts RunOp
 	err = cmd.Wait()
 	stdout.flush()
 	stderr.flush()
+	if crash != "" {
+		reason = crash
+	}
 	return handoverOutcome(cmd.ProcessState, ctx.Err(), err, reason)
 }
 

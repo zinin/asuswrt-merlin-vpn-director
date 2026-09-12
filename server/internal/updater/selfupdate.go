@@ -36,7 +36,9 @@ import (
 //  3. Result: every stdout line is a progress line for the user. Exit 0 means
 //     the update script has started and owns the lock and files/. Any other
 //     exit means no script started and nothing outside UpdateDir changed; the
-//     last non-empty stderr line is the reason shown to the user.
+//     last non-empty stderr line is the reason shown to the user. A step 2
+//     that dies of a Go runtime failure is reported by its first "panic:" or
+//     "fatal error:" line instead: the last line of a crash is a stack frame.
 //  4. Files: UpdateDir, and LockFile holding the PID of its owner - step 1
 //     while step 2 runs, then the script. notify.json only gains fields, and
 //     its status stays "ok" or "failed": a bot on this release reads every

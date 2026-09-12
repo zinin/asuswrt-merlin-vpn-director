@@ -209,6 +209,43 @@ func TestHandover_AFailingStep2IsReportedWithItsLastStderrLine(t *testing.T) {
 	assertCleanedUp(t, s)
 }
 
+// A step 2 that dies of a Go runtime failure prints the headline first and the
+// stack after it, so the last stderr line is a frame - a file and an offset the
+// user can do nothing with. The headline names what happened.
+func TestHandover_AStep2ThatCrashedIsReportedWithItsCrashLine(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		headline string
+	}{
+		{name: "panic", headline: "panic: runtime error: something broke"},
+		{name: "fatal error", headline: "fatal error: runtime: out of memory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := t.TempDir()
+			s, release := newHandoverService(t, map[string]string{
+				"webui-arm64": fakeInstaller(record,
+					"echo '"+tc.headline+"' >&2\n"+
+						"echo >&2\n"+
+						"echo 'goroutine 1 [running]:' >&2\n"+
+						"echo 'main.main()' >&2\n"+
+						"printf '\\t/src/main.go:12 +0x1f\\n' >&2", 2),
+			})
+			progress, _ := collect()
+
+			err := s.Handover(context.Background(), release, validOpts(), progress)
+
+			he := assertHandoverPhase(t, err, PhaseInstaller)
+			if !strings.Contains(he.Err.Error(), tc.headline) {
+				t.Errorf("reason = %q, want the %s line", he.Err, tc.name)
+			}
+			if strings.Contains(he.Err.Error(), "/src/main.go") {
+				t.Errorf("reason = %q, want the headline rather than a stack frame", he.Err)
+			}
+			assertCleanedUp(t, s)
+		})
+	}
+}
+
 func TestHandover_KillsAStep2ThatRunsOutOfTime(t *testing.T) {
 	record := t.TempDir()
 	s, release := newHandoverService(t, map[string]string{
