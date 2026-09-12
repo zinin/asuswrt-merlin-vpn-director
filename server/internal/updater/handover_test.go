@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -367,4 +368,140 @@ func TestStartInstaller_RetriesATextFileBusyExec(t *testing.T) {
 	if err := cmd.Wait(); err != nil {
 		t.Errorf("installer exit = %v", err)
 	}
+}
+
+// exitedState is the ProcessState of a process that chose its own exit code,
+// as a step 2 with something to say does.
+func exitedState(t *testing.T, code int) *os.ProcessState {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", "exit "+strconv.Itoa(code))
+	cmd.Run()
+	if cmd.ProcessState == nil {
+		t.Fatal("/bin/sh did not run")
+	}
+	return cmd.ProcessState
+}
+
+// signalledState is the ProcessState of a process that was killed before it
+// could choose an exit code, as a step 2 that ignores the SIGTERM is.
+func signalledState(t *testing.T) *os.ProcessState {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+	if cmd.ProcessState == nil {
+		t.Fatal("no process state for a killed process")
+	}
+	return cmd.ProcessState
+}
+
+// The outcome is step 2's exit status read together with the context: a
+// timeout is only what the deadline took away from step 2 by force. A step 2
+// that picked its own exit code has a reason for the user, and throwing that
+// away for "Update timed out" throws away the one thing they can act on.
+func TestHandoverOutcome_ReportsATimeoutOnlyForADeadlineThatKilledStep2(t *testing.T) {
+	exited0 := exitedState(t, 0)
+	exited3 := exitedState(t, 3)
+	killed := signalledState(t)
+	waitErr := errors.New("exit status 3")
+
+	tests := []struct {
+		name string
+		// state, ctxErr, waitErr and reason are what runInstaller holds after
+		// Wait; wantPhase 0 means the handover succeeded.
+		state      *os.ProcessState
+		ctxErr     error
+		waitErr    error
+		reason     string
+		wantPhase  HandoverPhase
+		wantReason string
+	}{
+		{name: "exit 0 is the update script started", state: exited0},
+		{
+			name: "exit 0 counts even past the deadline", state: exited0,
+			ctxErr: context.DeadlineExceeded, waitErr: context.DeadlineExceeded,
+		},
+		{
+			name: "the deadline killed step 2", state: killed,
+			ctxErr: context.DeadlineExceeded, waitErr: errors.New("signal: killed"),
+			wantPhase: PhaseTimeout, wantReason: context.DeadlineExceeded.Error(),
+		},
+		{
+			name: "the deadline killed a step 2 that left no state", state: nil,
+			ctxErr: context.DeadlineExceeded, waitErr: errors.New("signal: killed"),
+			wantPhase: PhaseTimeout, wantReason: context.DeadlineExceeded.Error(),
+		},
+		{
+			name: "step 2 answered the deadline with an exit code of its own", state: exited3,
+			ctxErr: context.DeadlineExceeded, waitErr: waitErr, reason: "no space left on the router",
+			wantPhase: PhaseInstaller, wantReason: "no space left on the router",
+		},
+		{
+			name: "step 2 failed with time to spare", state: exited3,
+			waitErr: waitErr, reason: "no space left on the router",
+			wantPhase: PhaseInstaller, wantReason: "no space left on the router",
+		},
+		{
+			name: "a cancelled context is not a timeout", state: killed,
+			ctxErr: context.Canceled, waitErr: errors.New("signal: killed"), reason: "stopping",
+			wantPhase: PhaseInstaller, wantReason: "stopping",
+		},
+		{
+			name: "a step 2 that said nothing is reported with the wait error", state: exited3,
+			waitErr: waitErr, wantPhase: PhaseInstaller, wantReason: waitErr.Error(),
+		},
+		{
+			name: "a long reason is cut to what a message can hold", state: exited3,
+			waitErr: waitErr, reason: strings.Repeat("я", maxProgressRunes+100),
+			wantPhase: PhaseInstaller, wantReason: strings.Repeat("я", maxProgressRunes),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := handoverOutcome(tt.state, tt.ctxErr, tt.waitErr, tt.reason)
+			if tt.wantPhase == 0 {
+				if err != nil {
+					t.Fatalf("handoverOutcome() = %v, want the handover to have succeeded", err)
+				}
+				return
+			}
+			he := assertHandoverPhase(t, err, tt.wantPhase)
+			if he.Err.Error() != tt.wantReason {
+				t.Errorf("reason = %q, want %q", he.Err, tt.wantReason)
+			}
+		})
+	}
+}
+
+// A step 2 that catches the SIGTERM the deadline sends, says why it is giving
+// up and picks its own exit code is a failure with a reason, not a timeout.
+func TestHandover_ReportsTheReasonOfAStep2ThatAnsweredTheDeadline(t *testing.T) {
+	record := t.TempDir()
+	held := filepath.Join(record, "held")
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64": fakeInstaller(record,
+			"trap \"echo 'no space left on the router' >&2; exit 3\" TERM\n"+
+				"sleep 30 >/dev/null 2>&1 &\necho $! > '"+held+"'\nwait", 1),
+	})
+	s.handoverTimeout = 200 * time.Millisecond
+	t.Cleanup(func() {
+		data, _ := os.ReadFile(held)
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	progress, _ := collect()
+
+	err := s.Handover(context.Background(), release, validOpts(), progress)
+
+	if he := assertHandoverPhase(t, err, PhaseInstaller); he.Err.Error() != "no space left on the router" {
+		t.Errorf("reason = %q, want the reason step 2 gave", he.Err)
+	}
+	assertCleanedUp(t, s)
 }

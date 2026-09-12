@@ -167,20 +167,43 @@ func (s *Service) runInstaller(ctx context.Context, installer string, opts RunOp
 	err = cmd.Wait()
 	stdout.flush()
 	stderr.flush()
+	return handoverOutcome(cmd.ProcessState, ctx.Err(), err, reason)
+}
+
+// handoverOutcome decides what step 2 did from what it left behind: state is
+// what Wait put in cmd.ProcessState, ctxErr the context's error by then,
+// waitErr what Wait returned and reason step 2's last stderr line.
+func handoverOutcome(state *os.ProcessState, ctxErr, waitErr error, reason string) error {
 	// The exit status decides, not Wait's error: exit 0 means the script has
 	// started and owns the lock and files/. Wait still returns an error for an
 	// exit 0 when the deadline fired between that exit and the reap, or when
 	// something step 2 started held its output open (ErrWaitDelay).
-	if cmd.ProcessState != nil && cmd.ProcessState.Success() {
+	if state != nil && state.Success() {
 		return nil
 	}
-	if ctx.Err() != nil {
-		return &HandoverError{Phase: PhaseTimeout, Err: ctx.Err()}
+	// A timeout is what the deadline took from step 2 by force. A step 2 that
+	// answered the SIGTERM with an exit code of its own had something to say,
+	// and so did one whose context was cancelled rather than timed out:
+	// reporting either as "Update timed out" throws away the reason, which is
+	// the one thing the user can act on.
+	if errors.Is(ctxErr, context.DeadlineExceeded) && endedBySignal(state) {
+		return &HandoverError{Phase: PhaseTimeout, Err: ctxErr}
 	}
-	if reason == "" {
-		reason = err.Error()
+	if reason == "" && waitErr != nil {
+		reason = waitErr.Error()
 	}
 	return &HandoverError{Phase: PhaseInstaller, Err: errors.New(truncateRunes(reason, maxProgressRunes))}
+}
+
+// endedBySignal reports whether step 2 was ended by a signal instead of
+// choosing its own exit code. A process that left no state at all never got
+// to choose one either.
+func endedBySignal(state *os.ProcessState) bool {
+	if state == nil {
+		return true
+	}
+	ws, ok := state.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled()
 }
 
 // startInstaller starts step 2 from "/", retrying while exec reports
