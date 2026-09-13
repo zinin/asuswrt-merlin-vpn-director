@@ -258,8 +258,17 @@ _ipset_exists() {
 # _ipset_count - get number of entries in an ipset
 # -------------------------------------------------------------------------------------------------
 _ipset_count() {
-    ipset list "$1" 2>/dev/null |
-        awk '/Number of entries:/ { print $4; exit }' || true
+    local name="$1" cnt
+    # "Number of entries:" appears only on kernels whose set revision reports
+    # it. KeeneticOS's 4.9 kernel prints a header with just "Size in memory:",
+    # so the probe comes back empty - and an empty count reads as zero in
+    # "[[ $cnt -eq 0 ]]", which reported every freshly built set as empty.
+    # The dump is the portable answer: one "add" line per entry, everywhere.
+    cnt=$(ipset list "$name" -t 2>/dev/null | awk '/Number of entries:/ { print $4; exit }' || true)
+    if [[ -z $cnt ]]; then
+        cnt=$(ipset save "$name" 2>/dev/null | grep -c '^add ' || true)
+    fi
+    printf '%s\n' "${cnt:-0}"
 }
 
 ###################################################################################################
@@ -568,7 +577,9 @@ ipset_status() {
             continue
         fi
         type=$(printf '%s\n' "$info" | awk '/^Type:/ { print $2 }')
-        entries=$(printf '%s\n' "$info" | awk '/Number of entries:/ { print $4 }')
+        entries=$(printf '%s\n' "$info" | awk '/Number of entries:/ { print $4; exit }')
+        # Same kernels as in _ipset_count: no count in the header.
+        [[ -n $entries ]] || entries=$(_ipset_count "$name")
         printf '%-24s %10s %s\n' "$name" "${entries:-0}" "${type:-unknown}"
     done <<< "$ipsets"
 

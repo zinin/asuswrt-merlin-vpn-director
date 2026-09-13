@@ -9,6 +9,42 @@ ipset_name_exists() {
     esac
 }
 
+# Entries the fake kernel holds per set.
+ipset_entry_count() {
+    case "$1" in
+        ru|us|ca) echo 1000 ;;
+        XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS) echo 5 ;;
+        us_ca) echo 2 ;;
+        *) echo 0 ;;
+    esac
+}
+
+# Print the header of a set. KeeneticOS's 4.9 kernel reports set revision 6,
+# whose header carries no "Number of entries:" line at all - only the size in
+# memory. BATS_IPSET_NO_ENTRY_COUNT=1 reproduces that kernel.
+ipset_print_header() {
+    local name="$1" type="$2"
+    echo "Name: $name"
+    echo "Type: $type"
+    if [ "${BATS_IPSET_NO_ENTRY_COUNT:-0}" = "1" ]; then
+        echo "Revision: 6"
+        echo "Header: family inet hashsize 16384 maxelem 16384"
+        echo "Size in memory: 526720"
+        echo "References: 1"
+    else
+        echo "Number of entries: $(ipset_entry_count "$name")"
+    fi
+}
+
+# Drop the terse flag: it selects header-only output, which is all this mock
+# ever prints.
+args=""
+for a in "$@"; do
+    [ "$a" = "-t" ] || [ "$a" = "--terse" ] || args="$args $a"
+done
+# shellcheck disable=SC2086
+set -- $args
+
 case "$1" in
     list)
         # Handle -n flag for name-only listing
@@ -29,25 +65,22 @@ case "$1" in
         else
             name="$2"
             case "$name" in
-                ru|us|ca)
-                    echo "Name: $name"
-                    echo "Type: hash:net"
-                    echo "Number of entries: 1000"
-                    ;;
-                XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS)
-                    echo "Name: $name"
-                    echo "Type: hash:net"
-                    echo "Number of entries: 5"
-                    ;;
+                ru|us|ca|XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS)
+                    ipset_print_header "$name" hash:net ;;
                 us_ca)
-                    echo "Name: $name"
-                    echo "Type: list:set"
-                    echo "Number of entries: 2"
-                    ;;
+                    ipset_print_header "$name" list:set ;;
                 *) exit 1 ;;  # ipset doesn't exist
             esac
         fi
         ;;
-    create|add|flush|destroy|save|restore) exit 0 ;;
+    save)
+        # "ipset save <name>" dumps one "add" line per entry, on every kernel.
+        name="${2:-}"
+        [ -n "$name" ] && ipset_name_exists "$name" || exit 0
+        echo "create $name hash:net family inet hashsize 16384 maxelem 16384"
+        awk -v n="$(ipset_entry_count "$name")" -v s="$name" \
+            'BEGIN { for (i = 1; i <= n; i++) printf "add %s 10.%d.%d.0/24\n", s, int(i / 256), i % 256 }'
+        ;;
+    create|add|flush|destroy|restore) exit 0 ;;
     *) exit 0 ;;
 esac

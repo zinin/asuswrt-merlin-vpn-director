@@ -186,6 +186,26 @@ load '../test_helper'
     assert_output "1000"
 }
 
+# KeeneticOS's kernel reports a set revision whose header has no "Number of
+# entries:" line, so the header probe comes back empty. An empty count reads as
+# zero in "[[ $cnt -eq 0 ]]", which turned every freshly built set into a
+# "ipset 'ru' is empty" warning and left the status column blank - while the set
+# held all 11464 entries.
+@test "_ipset_count: counts the dump when the kernel's header omits the entry count" {
+    load_ipset_module
+    export BATS_IPSET_NO_ENTRY_COUNT=1
+    run _ipset_count "ru"
+    assert_success
+    assert_output "1000"
+}
+
+@test "_ipset_count: answers 0, never empty, for a set that does not exist" {
+    load_ipset_module
+    run _ipset_count "nosuchset"
+    assert_success
+    assert_output "0"
+}
+
 # ============================================================================
 # ipset_status - show ipset information
 # ============================================================================
@@ -195,6 +215,14 @@ load '../test_helper'
     run ipset_status
     assert_success
     assert_output --partial "IPSet Status"
+}
+
+@test "ipset_status: shows entry counts on a kernel whose header omits them" {
+    load_ipset_module
+    export BATS_IPSET_NO_ENTRY_COUNT=1
+    run ipset_status
+    assert_success
+    assert_output --partial "1000"
 }
 
 # ============================================================================
