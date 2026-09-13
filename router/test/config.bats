@@ -159,6 +159,17 @@ load 'test_helper'
 # Spec 12: a tunnel gateway that is not a dotted IPv4 is dropped at load so
 # it never reaches ip route. The rest of the tunnel (and the rest of the
 # config) still loads; apply-time _tunnel_gateway is the belt.
+#
+# Entware jq has no Oniguruma: test/match/sub abort `source config.sh` under
+# set -e as soon as any gateway string is present, valid IPv4 included.
+# Host bats cannot catch that (this workstation's jq has regex). Pin the
+# jq programs themselves.
+@test "config.sh: jq programs do not call regex functions Keenetic jq lacks" {
+    run grep -nE 'test\(|match\(|sub\(' "$LIB_DIR/config.sh"
+    assert_failure
+    refute_output
+}
+
 @test "config.sh: drops a non-IPv4 tunnel gateway and keeps a valid one" {
     load_common
     local tmp_cfg="$BATS_TEST_TMPDIR/vpn-director-gateway.json"
