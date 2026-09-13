@@ -170,6 +170,20 @@ load 'test_helper'
     refute_output
 }
 
+# The same pin over every shell file that ships to a router. Entware jq on
+# KeeneticOS is built without Oniguruma, so test/match/capture/scan/splits abort
+# any jq program under set -e on the device while a workstation's jq accepts
+# them - which is how 0d5dc6f passed green here and failed on the router. This is
+# a source pin, not a run under the device's jq. sub(/gsub( stay with the
+# config.sh-scoped test above, because awk shares those names and common.sh uses
+# awk's sub().
+@test "shipped shell does not call jq regex functions Keenetic jq lacks" {
+    run grep -rnE '(^|[^A-Za-z_])(test|match|capture|scan|splits)\(' \
+        "$SCRIPTS_DIR" "$PROJECT_ROOT/../install.sh"
+    assert_failure
+    refute_output
+}
+
 @test "config.sh: drops a non-IPv4 tunnel gateway and keeps a valid one" {
     load_common
     local tmp_cfg="$BATS_TEST_TMPDIR/vpn-director-gateway.json"
