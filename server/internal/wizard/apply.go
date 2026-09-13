@@ -76,10 +76,19 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		excl = []string{"ru"}
 	}
 
-	// Build valid routes set for validation
-	validRoutes := make(map[string]bool)
-	for _, r := range RouteOptions {
-		validRoutes[r] = true
+	// A route is valid if it is xray, a tunnel the platform lists, or one
+	// already in the loaded config (so a tunnel the firmware dropped still
+	// gets rewritten rather than silently dropped from the wizard apply).
+	validRoutes := map[string]bool{"xray": true}
+	if loaded, err := a.config.LoadVPNConfig(); err == nil && loaded != nil {
+		for id := range loaded.TunnelDirector.Tunnels {
+			validRoutes[id] = true
+		}
+	}
+	if info, err := a.vpn.Platform(); err == nil {
+		for _, t := range info.Tunnels {
+			validRoutes[t.ID] = true
+		}
 	}
 
 	// Build new configuration
@@ -133,6 +142,12 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		vpnCfg.Xray.ExcludeSets = excl
 		vpnCfg.Xray.ExcludeIPs = excludeIPs
 		vpnCfg.Xray.Servers = serverIPs
+		for name, tunnel := range tunnels {
+			if existing, ok := vpnCfg.TunnelDirector.Tunnels[name]; ok {
+				tunnel.Gateway = existing.Gateway
+				tunnels[name] = tunnel
+			}
+		}
 		vpnCfg.TunnelDirector.Tunnels = tunnels
 		// The wizard stores addresses as entered, so a client the old wizard
 		// wrote as 1.2.3.4/32 comes back as 1.2.3.4. paused_clients is matched

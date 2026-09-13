@@ -27,4 +27,5 @@ type StepHandler interface {
 type StepDeps struct {
 	Sender telegram.MessageSender
 	Config service.ConfigStore
+	VPN    service.VPNDirector // the tunnels this router has, for the route keyboard
 }

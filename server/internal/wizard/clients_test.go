@@ -1,10 +1,12 @@
 package wizard
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 func TestIsValidLANIP(t *testing.T) {
@@ -383,6 +385,7 @@ func TestClientsStep_HandleCallback_Route(t *testing.T) {
 		sender := &mockSender{}
 		deps := &StepDeps{
 			Sender: sender,
+			VPN:    &mockVPNDirector{platform: platformWith("ovpnc3")},
 		}
 
 		step := NewClientsStep(deps, nil)
@@ -418,6 +421,7 @@ func TestClientsStep_HandleCallback_Route(t *testing.T) {
 		sender := &mockSender{}
 		deps := &StepDeps{
 			Sender: sender,
+			VPN:    &mockVPNDirector{platform: platformWith("wgc5")},
 		}
 
 		step := NewClientsStep(deps, nil)
@@ -487,6 +491,7 @@ func TestClientsStep_HandleCallback_InvalidRoute(t *testing.T) {
 		sender := &mockSender{}
 		deps := &StepDeps{
 			Sender: sender,
+			VPN:    &mockVPNDirector{platform: platformWith("OpenVPN0")},
 		}
 
 		step := NewClientsStep(deps, nil)
@@ -602,6 +607,7 @@ func TestClientsStep_HandleMessage_ValidIP(t *testing.T) {
 		sender := &mockSender{}
 		deps := &StepDeps{
 			Sender: sender,
+			VPN:    &mockVPNDirector{platform: platformWith("OpenVPN0", "Wireguard1")},
 		}
 
 		step := NewClientsStep(deps, nil)
@@ -639,8 +645,7 @@ func TestClientsStep_HandleMessage_ValidIP(t *testing.T) {
 			t.Fatal("expected keyboard to be sent")
 		}
 
-		// Keyboard should have route options
-		// Row 1: Xray, Row 2: ovpnc1-5, Row 3: wgc1-5, Row 4: Cancel
+		// xray, one row per platform tunnel, Cancel
 		if len(sender.lastKeyboard.InlineKeyboard) != 4 {
 			t.Errorf("expected 4 rows in route selection, got %d", len(sender.lastKeyboard.InlineKeyboard))
 		}
@@ -650,6 +655,7 @@ func TestClientsStep_HandleMessage_ValidIP(t *testing.T) {
 		sender := &mockSender{}
 		deps := &StepDeps{
 			Sender: sender,
+			VPN:    &mockVPNDirector{platform: platformWith("wgc1")},
 		}
 
 		step := NewClientsStep(deps, nil)
@@ -810,10 +816,11 @@ func TestClientsStep_HandleMessage_WrongStep(t *testing.T) {
 }
 
 func TestClientsStep_RouteSelectionKeyboard(t *testing.T) {
-	t.Run("route selection shows all options", func(t *testing.T) {
+	t.Run("route selection shows the platform tunnels", func(t *testing.T) {
 		sender := &mockSender{}
 		deps := &StepDeps{
 			Sender: sender,
+			VPN:    &mockVPNDirector{platform: platformWith("OpenVPN0", "Wireguard1")},
 		}
 
 		step := NewClientsStep(deps, nil)
@@ -837,37 +844,102 @@ func TestClientsStep_RouteSelectionKeyboard(t *testing.T) {
 		}
 
 		kb := sender.lastKeyboard.InlineKeyboard
+		if len(kb) != 4 {
+			t.Fatalf("expected 4 rows (xray, two tunnels, Cancel), got %d", len(kb))
+		}
 
-		// Row 0: Xray
 		if kb[0][0].Text != "Xray" {
 			t.Errorf("expected Xray button, got '%s'", kb[0][0].Text)
 		}
-
-		// Row 1: ovpnc1-5 (5 buttons)
-		if len(kb[1]) != 5 {
-			t.Errorf("expected 5 ovpn buttons, got %d", len(kb[1]))
+		if kb[1][0].Text != "OpenVPN0 desc OpenVPN0" {
+			t.Errorf("expected OpenVPN0 button, got '%s'", kb[1][0].Text)
 		}
-		if kb[1][0].Text != "ovpnc1" {
-			t.Errorf("expected ovpnc1 button, got '%s'", kb[1][0].Text)
+		if kb[2][0].Text != "Wireguard1 desc Wireguard1 (down)" {
+			t.Errorf("expected Wireguard1 (down) button, got '%s'", kb[2][0].Text)
 		}
-		if kb[1][4].Text != "ovpnc5" {
-			t.Errorf("expected ovpnc5 button, got '%s'", kb[1][4].Text)
-		}
-
-		// Row 2: wgc1-5 (5 buttons)
-		if len(kb[2]) != 5 {
-			t.Errorf("expected 5 wg buttons, got %d", len(kb[2]))
-		}
-		if kb[2][0].Text != "wgc1" {
-			t.Errorf("expected wgc1 button, got '%s'", kb[2][0].Text)
-		}
-		if kb[2][4].Text != "wgc5" {
-			t.Errorf("expected wgc5 button, got '%s'", kb[2][4].Text)
-		}
-
-		// Row 3: Cancel
 		if kb[3][0].Text != "Cancel" {
 			t.Errorf("expected Cancel button, got '%s'", kb[3][0].Text)
 		}
 	})
+}
+
+func platformWith(ids ...string) vpnconfig.PlatformInfo {
+	var info vpnconfig.PlatformInfo
+	for i, id := range ids {
+		info.Tunnels = append(info.Tunnels, vpnconfig.PlatformTunnel{ID: id, Connected: i%2 == 0, Description: "desc " + id})
+	}
+	return info
+}
+
+func TestClientsStep_RouteKeyboardListsThePlatformTunnels(t *testing.T) {
+	sender := &mockSender{}
+	deps := &StepDeps{Sender: sender, VPN: &mockVPNDirector{platform: platformWith("OpenVPN0", "Wireguard1")}}
+	step := NewClientsStep(deps, nil)
+	state := &State{ChatID: 1, Step: StepClientIP, Exclusions: map[string]bool{}}
+
+	handled := step.HandleMessage(&tgbotapi.Message{Text: "192.168.1.5", Chat: &tgbotapi.Chat{ID: 1}}, state)
+
+	if !handled || state.GetStep() != StepClientRoute || state.GetPendingIP() != "192.168.1.5" {
+		t.Fatalf("handled=%v step=%v pending=%q", handled, state.GetStep(), state.GetPendingIP())
+	}
+	rows := sender.lastKeyboard.InlineKeyboard
+	// xray, one row per tunnel, Cancel.
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want 4", len(rows))
+	}
+	if rows[0][0].CallbackData == nil || *rows[0][0].CallbackData != "route:xray" {
+		t.Errorf("row 0 = %+v", rows[0][0])
+	}
+	if *rows[1][0].CallbackData != "route:OpenVPN0" || rows[1][0].Text != "OpenVPN0 desc OpenVPN0" {
+		t.Errorf("row 1 = %+v", rows[1][0])
+	}
+	if *rows[2][0].CallbackData != "route:Wireguard1" || rows[2][0].Text != "Wireguard1 desc Wireguard1 (down)" {
+		t.Errorf("row 2 = %+v", rows[2][0])
+	}
+}
+
+func TestClientsStep_PlatformUnavailableStaysOnTheIPPrompt(t *testing.T) {
+	sender := &mockSender{}
+	deps := &StepDeps{Sender: sender, VPN: &mockVPNDirector{platformErr: errors.New("down")}}
+	step := NewClientsStep(deps, nil)
+	state := &State{ChatID: 1, Step: StepClientIP, Exclusions: map[string]bool{}}
+
+	step.HandleMessage(&tgbotapi.Message{Text: "192.168.1.5", Chat: &tgbotapi.Chat{ID: 1}}, state)
+
+	if state.GetStep() != StepClientIP || state.GetPendingIP() != "" {
+		t.Errorf("step=%v pending=%q, want the IP prompt again", state.GetStep(), state.GetPendingIP())
+	}
+	if !strings.Contains(sender.lastText, "platform info unavailable") {
+		t.Errorf("text = %q", sender.lastText)
+	}
+}
+
+func TestClientsStep_RouteCallbackIsValidatedAgainstThePlatform(t *testing.T) {
+	sender := &mockSender{}
+	vpn := &mockVPNDirector{platform: platformWith("OpenVPN0")}
+	deps := &StepDeps{Sender: sender, VPN: vpn}
+	step := NewClientsStep(deps, nil)
+	state := &State{ChatID: 1, Step: StepClientRoute, PendingIP: "192.168.1.5", Exclusions: map[string]bool{}}
+	cb := func(data string) *tgbotapi.CallbackQuery {
+		return &tgbotapi.CallbackQuery{Data: data, Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 1}}}
+	}
+
+	step.HandleCallback(cb("route:wgc1"), state)
+	if len(state.GetClients()) != 0 || !strings.Contains(sender.lastText, "Invalid route") {
+		t.Errorf("wgc1 accepted on a router without it: clients=%v text=%q", state.GetClients(), sender.lastText)
+	}
+
+	step.HandleCallback(cb("route:OpenVPN0"), state)
+	clients := state.GetClients()
+	if len(clients) != 1 || clients[0].Route != "OpenVPN0" || state.GetStep() != StepClients {
+		t.Errorf("OpenVPN0: clients=%v step=%v", clients, state.GetStep())
+	}
+
+	state.SetStep(StepClientRoute)
+	state.SetPendingIP("192.168.1.6")
+	vpn.platformErr = errors.New("down")
+	step.HandleCallback(cb("route:OpenVPN0"), state)
+	if len(state.GetClients()) != 1 || !strings.Contains(sender.lastText, "platform info unavailable") {
+		t.Errorf("platform down: clients=%v text=%q", state.GetClients(), sender.lastText)
+	}
 }

@@ -21,7 +21,7 @@ func NewHandler(
 	vpn service.VPNDirector,
 	xray service.XrayGenerator,
 ) *Handler {
-	deps := &StepDeps{Sender: sender, Config: config}
+	deps := &StepDeps{Sender: sender, Config: config, VPN: vpn}
 	manager := NewManager()
 
 	// Create step handlers with next callbacks

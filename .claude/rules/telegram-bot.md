@@ -96,7 +96,7 @@ server/
 
 1. **Server Selection** — choose Xray server from servers.json
 2. **Exclusions** — select country sets to exclude (user-configurable)
-3. **Clients** — add LAN clients with route (xray/ovpnc1-5/wgc1-5)
+3. **Clients** — add LAN clients with a route (xray or a tunnel the platform lists: `wgcN`/`ovpncN` on Merlin, `OpenVPNN`/`WireguardN` on Keenetic)
 4. **Confirm** — review and apply
 
 On apply:

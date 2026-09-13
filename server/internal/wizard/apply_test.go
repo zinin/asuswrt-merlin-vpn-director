@@ -165,7 +165,7 @@ func TestApplier_Apply_Success(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -263,7 +263,7 @@ func TestApplier_Apply_KeepsAPausedClientPausedAcrossASpellingChange(t *testing.
 			PausedClients: []string{"192.168.50.20/32"},
 		},
 	}
-	applier := NewApplier(manager, sender, configStore, &mockVPNDirector{}, &mockXrayGenerator{})
+	applier := NewApplier(manager, sender, configStore, &mockVPNDirector{platform: platformWith("wgc1")}, &mockXrayGenerator{})
 
 	state := &State{
 		ChatID:      123,
@@ -302,7 +302,7 @@ func TestApplier_Apply_DefaultExclusions(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -471,7 +471,7 @@ func TestApplier_Apply_MultipleClientsToSameTunnel(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -755,7 +755,7 @@ func TestApplier_Apply_ExclusionsSorted(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -841,7 +841,7 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -853,7 +853,7 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 			Exclusions:  map[string]bool{"ru": true},
 			Clients: []ClientRoute{
 				{IP: "192.168.1.10", Route: "xray"},
-				{IP: "192.168.1.20", Route: "invalid_route"}, // Invalid
+				{IP: "192.168.1.20", Route: "not_a_tunnel"}, // neither the platform nor the config
 				{IP: "192.168.1.30", Route: "wgc1"},
 			},
 		}
@@ -865,17 +865,51 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 			t.Errorf("expected 1 xray client, got %d", len(configStore.savedConfig.Xray.Clients))
 		}
 
-		// Should have 1 tunnel (wgc1 only, invalid_route skipped)
+		// Should have 1 tunnel (wgc1 only, not_a_tunnel skipped)
 		if len(configStore.savedConfig.TunnelDirector.Tunnels) != 1 {
 			t.Errorf("expected 1 tunnel, got %d", len(configStore.savedConfig.TunnelDirector.Tunnels))
 		}
 		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["wgc1"]; !ok {
 			t.Error("expected tunnel 'wgc1' to exist")
 		}
-		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["invalid_route"]; ok {
-			t.Error("expected tunnel 'invalid_route' NOT to exist")
+		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["not_a_tunnel"]; ok {
+			t.Error("expected tunnel 'not_a_tunnel' NOT to exist")
 		}
 	})
+}
+
+func TestApplier_Apply_PreservesExistingTunnelGateway(t *testing.T) {
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{
+			{Name: "Server1", IPs: []string{"1.2.3.4"}},
+		},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			DataDir: "/opt/vpn-director/data",
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: map[string]vpnconfig.TunnelConfig{
+					"wgc1": {Clients: []string{"192.168.1.1"}, Exclude: []string{"ru"}, Gateway: "10.73.149.1"},
+				},
+			},
+		},
+	}
+	applier := NewApplier(&trackingManager{}, &trackingSender{}, configStore, &mockVPNDirector{platform: platformWith("wgc1")}, &mockXrayGenerator{})
+
+	if err := applier.Apply(123, &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients:     []ClientRoute{{IP: "192.168.1.10", Route: "wgc1"}},
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	got := configStore.savedConfig.TunnelDirector.Tunnels["wgc1"]
+	if got.Gateway != "10.73.149.1" {
+		t.Errorf("Gateway = %q, want 10.73.149.1 (configure must not drop it)", got.Gateway)
+	}
+	if len(got.Clients) != 1 || got.Clients[0] != "192.168.1.10" {
+		t.Errorf("Clients = %v, want [192.168.1.10]", got.Clients)
+	}
 }
 
 // The wizard is the third path that writes config.json, and it owes the same
