@@ -101,10 +101,25 @@ IPDENY_DIRECT_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
 # _ipset_boot_wait - defer execution if system just booted
 # -------------------------------------------------------------------------------------------------
 # Uses MIN_BOOT_TIME and BOOT_WAIT_DELAY from config.sh
-# If uptime < MIN_BOOT_TIME, sleep for BOOT_WAIT_DELAY seconds
+# If uptime < MIN_BOOT_TIME, sleep for BOOT_WAIT_DELAY seconds - at most once
+# per boot. On Keenetic every NDM hook of the boot burst runs `--wait apply`
+# (120 s), and a 60 s sleep under the lock by each successive holder pushed the
+# third and later waiters past their budget: `Timed out waiting for lock` at
+# every boot. The network only has to be waited for once, so the first instance
+# that sleeps records the boot id in a marker and the ones behind it skip the
+# sleep. The lock is still taken before this runs, so the semantics for
+# stop/restart are unchanged.
+#
+# The marker counts only while its content equals the current boot id: a /tmp
+# that survived a reboot, or a truncated marker, must never suppress the wait.
+# A boot id that cannot be read leaves the id empty, which no marker matches -
+# the safe direction is to sleep. The marker is written after the sleep, so a
+# sleeper that was killed does not mark the wait as done.
+#
+# Test seams: VPD_PROC_UPTIME, VPD_BOOT_ID_FILE, VPD_BOOT_WAIT_MARKER.
 # -------------------------------------------------------------------------------------------------
 _ipset_boot_wait() {
-    local uptime_secs min_time wait_delay
+    local uptime_secs min_time wait_delay marker boot_id
 
     # Get config values (default to sensible values if not set)
     min_time="${MIN_BOOT_TIME:-120}"
@@ -114,12 +129,22 @@ _ipset_boot_wait() {
     [[ $wait_delay -eq 0 ]] && return 0
 
     # Get current uptime in seconds
-    uptime_secs=$(awk '{ print int($1) }' /proc/uptime)
+    uptime_secs=$(awk '{ print int($1) }' "${VPD_PROC_UPTIME:-/proc/uptime}")
 
-    if [[ $uptime_secs -lt $min_time ]]; then
-        log "Uptime ${uptime_secs}s < ${min_time}s, sleeping ${wait_delay}s..."
-        sleep "$wait_delay"
+    [[ $uptime_secs -lt $min_time ]] || return 0
+
+    marker="${VPD_BOOT_WAIT_MARKER:-$IPS_BUILDER_DIR/boot_wait_done}"
+    boot_id="$(cat "${VPD_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null || true)"
+
+    if [[ -n $boot_id && "$(cat "$marker" 2>/dev/null || true)" == "$boot_id" ]]; then
+        log "Uptime ${uptime_secs}s < ${min_time}s, but an earlier instance already waited this boot; not sleeping again"
+        return 0
     fi
+
+    log "Uptime ${uptime_secs}s < ${min_time}s, sleeping ${wait_delay}s..."
+    sleep "$wait_delay"
+    mkdir -p "$(dirname "$marker")" 2>/dev/null || true
+    printf '%s\n' "$boot_id" > "$marker" 2>/dev/null || true
 }
 
 # -------------------------------------------------------------------------------------------------

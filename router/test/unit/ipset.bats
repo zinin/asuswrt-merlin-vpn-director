@@ -629,3 +629,86 @@ EOF
     # Should skip invalid tunnel (string) and extract 'ru' from valid tunnel
     [ "$result" = "ru" ]
 }
+
+# ============================================================================
+# _ipset_boot_wait - sleep for the network, at most once per boot
+# ============================================================================
+
+# config.sh makes MIN_BOOT_TIME and BOOT_WAIT_DELAY read-only, so these tests
+# source ipset.sh without it and set the two values themselves. sleep is a
+# function, which shadows the command for the subshell `run` uses; it records
+# its argument, since the parent cannot see a variable set in there.
+load_boot_wait() {
+    load_common
+    source "$LIB_DIR/ipset.sh" --source-only
+    MIN_BOOT_TIME="${1:-120}"
+    BOOT_WAIT_DELAY="${2:-30}"
+
+    export VPD_PROC_UPTIME="$BATS_TEST_TMPDIR/uptime"
+    export VPD_BOOT_ID_FILE="$BATS_TEST_TMPDIR/boot_id"
+    export VPD_BOOT_WAIT_MARKER="$BATS_TEST_TMPDIR/marker"
+    export SLEEP_LOG="$BATS_TEST_TMPDIR/slept"
+    printf '10.00 5.00\n' > "$VPD_PROC_UPTIME"
+    printf 'boot-id-one\n' > "$VPD_BOOT_ID_FILE"
+    sleep() { printf '%s\n' "$1" >> "$SLEEP_LOG"; }
+}
+
+@test "_ipset_boot_wait: the first instance of a boot sleeps and records the boot id" {
+    load_boot_wait
+
+    run _ipset_boot_wait
+    assert_success
+    assert_output --partial "sleeping 30s"
+
+    run cat "$SLEEP_LOG"
+    assert_output "30"
+    run cat "$VPD_BOOT_WAIT_MARKER"
+    assert_output "boot-id-one"
+}
+
+@test "_ipset_boot_wait: a later instance of the same boot does not sleep again" {
+    load_boot_wait
+    printf 'boot-id-one\n' > "$VPD_BOOT_WAIT_MARKER"
+
+    run _ipset_boot_wait
+    assert_success
+    assert_output --partial "already waited this boot"
+
+    [ ! -e "$SLEEP_LOG" ]
+}
+
+@test "_ipset_boot_wait: a marker from an earlier boot does not suppress the wait" {
+    load_boot_wait
+    printf 'boot-id-zero\n' > "$VPD_BOOT_WAIT_MARKER"
+
+    run _ipset_boot_wait
+    assert_success
+    assert_output --partial "sleeping 30s"
+
+    run cat "$SLEEP_LOG"
+    assert_output "30"
+    run cat "$VPD_BOOT_WAIT_MARKER"
+    assert_output "boot-id-one"
+}
+
+@test "_ipset_boot_wait: an uptime past MIN_BOOT_TIME neither sleeps nor writes a marker" {
+    load_boot_wait
+    printf '900.00 100.00\n' > "$VPD_PROC_UPTIME"
+
+    run _ipset_boot_wait
+    assert_success
+    refute_output --partial "sleeping"
+
+    [ ! -e "$SLEEP_LOG" ]
+    [ ! -e "$VPD_BOOT_WAIT_MARKER" ]
+}
+
+@test "_ipset_boot_wait: BOOT_WAIT_DELAY=0 returns at once" {
+    load_boot_wait 120 0
+
+    run _ipset_boot_wait
+    assert_success
+
+    [ ! -e "$SLEEP_LOG" ]
+    [ ! -e "$VPD_BOOT_WAIT_MARKER" ]
+}
