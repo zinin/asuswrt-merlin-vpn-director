@@ -401,10 +401,36 @@ EOF
     run platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
     assert_success
     run cat "$VPD_CRON_D/vpn_director_update"
-    assert_output "0 3 * * * root /opt/vpn-director/vpn-director.sh update"
+    assert_line --index 0 "PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    assert_line --index 1 "0 3 * * * root /opt/vpn-director/vpn-director.sh update"
     run cat "$BATS_TEST_TMPDIR/cron-init.calls"
     assert_line --index 0 "check"
     assert_line --index 1 "start"
+}
+
+# Vixie cron refuses a crontab that is not 0600: it logs "(*system*) BAD FILE
+# MODE" to syslog at startup and ignores the file, so the job never runs and
+# nothing anywhere says why. /opt/etc/crontab, which the package ships and
+# which does run, is 0600 for the same reason. Measured on KeeneticOS 5.1.5.
+@test "platform_cron_add: writes the job 0600, the only mode Vixie cron accepts" {
+    load_platform
+    fake_cron_init 0
+    platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
+    run stat -c '%a' "$VPD_CRON_D/vpn_director_update"
+    assert_success
+    assert_output "600"
+}
+
+# A job started from cron.d inherits cron's own PATH, /usr/bin:/bin, where none
+# of Entware's tools are: the update would die on its first jq or ipset.
+@test "platform_cron_add: the job carries the PATH Entware's tools need" {
+    load_platform
+    fake_cron_init 0
+    platform_cron_add vpn_director_update "0 3 * * *" "/opt/vpn-director/vpn-director.sh update"
+    run cat "$VPD_CRON_D/vpn_director_update"
+    assert_success
+    assert_line --index 0 --partial "/opt/sbin"
+    assert_line --index 0 --partial "/opt/bin"
 }
 
 @test "platform_cron_add: leaves a running cron alone" {

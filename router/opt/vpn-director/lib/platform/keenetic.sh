@@ -286,8 +286,20 @@ platform_cron_add() {
     local dir="${VPD_CRON_D:-/opt/etc/cron.d}" init="${VPD_CRON_INIT:-/opt/etc/init.d/S10cron}"
     [[ -n $name && -n $schedule && -n $cmd ]] || return 1
     mkdir -p "$dir" 2>/dev/null || return 1
-    printf '%s root %s\n' "$schedule" "$cmd" > "$dir/$name" || return 1
-    chmod 644 "$dir/$name"
+    # Vixie cron refuses a crontab that is not 0600: it logs "(*system*) BAD
+    # FILE MODE" at startup and ignores the file, so the job never runs and the
+    # only trace is one syslog line. /opt/etc/crontab, which the package ships
+    # and which does run, is 0600 for the same reason. Set the mode on an empty
+    # file, before the content goes in.
+    : > "$dir/$name" || return 1
+    chmod 600 "$dir/$name" || return 1
+    # A job started from cron.d inherits cron's own PATH - /usr/bin:/bin - and
+    # none of Entware's tools live there, so the update would die on its first
+    # jq. This is the PATH the NDM hooks and S99vpn-director use.
+    {
+        printf 'PATH=%s\n' '/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+        printf '%s root %s\n' "$schedule" "$cmd"
+    } >> "$dir/$name" || return 1
     # No init script is the cron package not being installed. What to do about
     # it is platform_cron_requirements' answer: a contract function prints its
     # answer or fails silently, and never logs - lib/platform.sh sources
