@@ -410,9 +410,18 @@ func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
 	if route != "xray" {
 		if _, ok := cfg.TunnelDirector.Tunnels[route]; !ok {
 			// Not configured yet: fine when the router has the tunnel (the
-			// keyboard listed it from the platform), stale otherwise.
+			// keyboard listed it from the platform), stale otherwise. Either way
+			// the client is not added, so say why - a redrawn list that simply
+			// lacks the new row reads as a bug.
 			info, err := h.deps.VPN.Platform()
-			if err != nil || !info.HasTunnel(route) {
+			if err != nil {
+				h.deps.Sender.SendPlain(chatID, "platform info unavailable, try again")
+				text, kb := h.buildClientList(cfg)
+				h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+				return
+			}
+			if !info.HasTunnel(route) {
+				h.deps.Sender.SendPlain(chatID, fmt.Sprintf("route %s is no longer available", route))
 				text, kb := h.buildClientList(cfg)
 				h.deps.Sender.EditMessage(chatID, msgID, text, kb)
 				return

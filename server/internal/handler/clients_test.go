@@ -570,6 +570,35 @@ func TestClientsHandler_HandleAddRoute_UnknownRouteIsStale(t *testing.T) {
 	if config.savedConfig != nil {
 		t.Error("a route the router does not have must not be saved")
 	}
+	// A list redrawn without the new row reads as a bug; the user is told why.
+	if len(sender.plainTexts) == 0 || !strings.Contains(sender.plainTexts[len(sender.plainTexts)-1], "route wgc1 is no longer available") {
+		t.Errorf("plain texts = %v, want the vanished route named", sender.plainTexts)
+	}
+	if sender.editMsgID != 42 {
+		t.Errorf("the list was not refreshed: editMsgID = %d", sender.editMsgID)
+	}
+}
+
+func TestClientsHandler_HandleAddRoute_PlatformErrorIsReported(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{vpnConfig: &vpnconfig.VPNDirectorConfig{}}
+	vpn := &mockVPNClients{platformErr: errors.New("down")}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: config, VPN: vpn})
+	h.mu.Lock()
+	h.addState[100] = "192.168.1.5"
+	h.mu.Unlock()
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		Data:    "clients:route:wgc1",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	if config.savedConfig != nil {
+		t.Error("a route that could not be checked must not be saved")
+	}
+	if len(sender.plainTexts) == 0 || !strings.Contains(sender.plainTexts[len(sender.plainTexts)-1], "platform info unavailable, try again") {
+		t.Errorf("plain texts = %v, want the platform reported as unavailable", sender.plainTexts)
+	}
 	if sender.editMsgID != 42 {
 		t.Errorf("the list was not refreshed: editMsgID = %d", sender.editMsgID)
 	}
