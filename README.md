@@ -1,8 +1,8 @@
 🇬🇧 English | [🇷🇺 Русский](README.ru.md)
 
-# VPN Director for Asuswrt-Merlin
+# VPN Director for Asuswrt-Merlin and KeeneticOS
 
-Selective traffic routing through Xray TPROXY and OpenVPN tunnels.
+Selective traffic routing through Xray TPROXY and OpenVPN/WireGuard tunnels.
 
 ## Features
 
@@ -40,7 +40,7 @@ After installation:
    ```
    https://<router-ip>:8444
    ```
-   Log in with your router's admin password.
+   Merlin: the router admin password. KeeneticOS: user `root` with the Entware password.
 
 4. Setup Telegram bot (optional):
    ```bash
@@ -49,6 +49,8 @@ After installation:
 
 ## Requirements
 
+### Asuswrt-Merlin
+
 - Asuswrt-Merlin firmware
 - Entware installed
 - Required packages:
@@ -56,6 +58,18 @@ After installation:
   opkg install curl coreutils-base64 coreutils-sha256sum gawk jq xray-core procps-ng-pgrep procps-ng-pkill procps-ng-ps
   ```
 - OpenVPN client configured in router UI (for Tunnel Director)
+
+### KeeneticOS
+
+- KeeneticOS 4.x/5.x with Entware installed on USB storage
+- Firmware component "Kernel modules for Netfilter" (the router reboots once when it is added)
+- Packages `install.sh` installs on request:
+  ```bash
+  opkg install bash curl jq iptables ipset ip-full flock coreutils-nohup coreutils-base64 coreutils-sha256sum gawk procps-ng-pgrep procps-ng-pkill procps-ng-ps openssl-util cron xray
+  ```
+- An OpenVPN or WireGuard client interface configured in the router UI (for Tunnel Director)
+
+MIPS (`mipsle`) builds ship untested.
 
 ### Optional
 
@@ -102,7 +116,10 @@ HTTPS web interface for managing VPN Director from the browser.
 
 ### Access
 
-Open `https://<router-ip>:8444` and log in with the router's admin password (authenticated via `/etc/shadow`).
+Open `https://<router-ip>:8444`.
+
+- **Asuswrt-Merlin**: log in with the router admin password (authenticated via `/etc/shadow`).
+- **KeeneticOS**: log in as user `root` with the Entware password (`/opt/etc/passwd`, set with `passwd` over SSH).
 
 A self-signed TLS certificate is generated automatically during installation. Your browser will show a security warning — this is expected.
 
@@ -200,7 +217,22 @@ Traffic from specified LAN clients is transparently redirected through Xray usin
 
 ### Tunnel Director
 
-Routes traffic from specified LAN clients through OpenVPN/WireGuard tunnels based on destination. Configurable exclusions allow direct access to specified countries for optimal performance.
+Routes traffic from specified LAN clients through OpenVPN/WireGuard tunnels based on destination. Configurable exclusions allow direct access to specified countries for optimal performance. A tunnel key is an id the platform lists (`wgc1` / `ovpnc1` on Merlin, `OpenVPN0` / `Wireguard1` on KeeneticOS). On KeeneticOS an OpenVPN tunnel may set optional `gateway` (the next hop; otherwise the subnet's first host).
+
+```json
+{
+  "tunnel_director": {
+    "tunnels": {
+      "wgc1": { "clients": ["192.168.50.0/24"], "exclude": ["<country_code>"] },
+      "OpenVPN0": {
+        "clients": ["192.168.1.5"],
+        "exclude": ["<country_code>"],
+        "gateway": "10.73.149.1"
+      }
+    }
+  }
+}
+```
 
 ### Country IPSets
 
@@ -217,12 +249,13 @@ This project uses Entware init.d for automatic startup:
 | Script | When Called | Purpose |
 |--------|-------------|---------|
 | `/opt/etc/init.d/S99vpn-director` | After Entware initialized | Runs `vpn-director.sh apply` to initialize all components |
-| `/jffs/scripts/firewall-start` | After firewall rules applied | Reapplies configuration after firewall reload |
-| `/jffs/scripts/wan-event` | On WAN connected | Runs `vpn-director.sh apply` on WAN connection |
+| `/jffs/scripts/firewall-start` | After firewall rules applied (Merlin) | Reapplies configuration after firewall reload |
+| `/jffs/scripts/wan-event` | On WAN connected (Merlin) | Runs `vpn-director.sh apply` on WAN connection |
+| `/opt/etc/ndm/netfilter.d`, `wan.d`, `iflayerchanged.d` (`50-vpn-director.sh`) | NDM firewall rebuild / WAN start / VPN client IPv4 layer (KeeneticOS) | Detached `vpn-director.sh --wait apply` |
 
 **Note:** The init.d script ensures Entware bash is available before running vpn-director scripts.
 
-To enable user scripts: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
+On Merlin, to enable user scripts: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
 
 ## Process Monitoring
 

@@ -3,8 +3,7 @@
 Traffic routing system for home routers: Xray TPROXY, Tunnel Director, IPSet Builder.
 
 Firmware-specific facts belong behind the platform contract in `lib/platform.sh`, implemented
-per platform under `lib/platform/`; the implementation shipped today is Asuswrt-Merlin
-(`lib/platform/merlin.sh`).
+per platform under `lib/platform/`: Asuswrt-Merlin (`merlin.sh`) and KeeneticOS (`keenetic.sh`).
 
 ## Commands
 
@@ -48,6 +47,9 @@ cd server && go run ./cmd/webui --dev
 | `router/opt/vpn-director/lib/common.sh` | Core utilities: log, tmp_file, download_file, resolve_ip |
 | `router/opt/vpn-director/lib/platform.sh` | Platform detection (`VPD_PLATFORM`) and loader of the platform contract |
 | `router/opt/vpn-director/lib/platform/merlin.sh` | Asuswrt-Merlin implementation: nvram, rt_tables, cru |
+| `router/opt/vpn-director/lib/platform/keenetic.sh` | KeeneticOS implementation: RCI, ip-full, insmod, cron.d |
+| `router/opt/etc/ndm/*/50-vpn-director.sh` | KeeneticOS hooks: firewall rebuilds, WAN, tunnel interfaces |
+| `server/internal/platform/` | Platform name and password file for the daemons |
 | `router/files.manifest` | Shipped files with platform tags; read by `install.sh` and the updater |
 | `router/opt/vpn-director/lib/firewall.sh` | Firewall helpers: chain, rule, block/allow host |
 | `router/opt/vpn-director/lib/config.sh` | JSON config loader (vpn-director.json → shell vars) |
@@ -65,7 +67,7 @@ cd server && go run ./cmd/webui --dev
 | `server/cmd/bot/main.go` | Telegram bot daemon: DI, signal handling |
 | `server/cmd/webui/main.go` | Web UI daemon: HTTPS server, DI, dev mode |
 | `server/internal/webapi/` | HTTP API: router, JWT middleware, handlers, response deadlines |
-| `server/internal/auth/` | Password check against `/etc/shadow`, JWT issue and validation |
+| `server/internal/auth/` | Password check against the platform password file, JWT issue and validation |
 | `web/` | Vue 3 SPA, embedded into the webui binary with `go:embed` |
 | `router/opt/vpn-director/setup_telegram_bot.sh` | Bot configuration script |
 
@@ -76,7 +78,8 @@ cd server && go run ./cmd/webui --dev
 {
   "tunnel_director": {
     "tunnels": {
-      "wgc1": { "clients": ["192.168.50.0/24"], "exclude": ["<country_code>"] }
+      "wgc1": { "clients": ["192.168.50.0/24"], "exclude": ["<country_code>"] },
+      "OpenVPN0": { "clients": ["192.168.1.5"], "exclude": ["<country_code>"], "gateway": "10.73.149.1" }
     }
   }
 }
@@ -84,7 +87,9 @@ cd server && go run ./cmd/webui --dev
 - All traffic from `clients` goes through tunnel
 - Traffic to destinations in `exclude` bypasses VPN (direct)
 - A tunnel key is any id `platform_tunnels` lists (Merlin: `wgcN` and `ovpncN` from
-  `/etc/iproute2/rt_tables`, plus `main`); a key the platform does not list is skipped with a warning
+  `/etc/iproute2/rt_tables`, plus `main`; Keenetic: `OpenVPNN` and `WireguardN` from
+  RCI, plus `main`); a key the platform does not list is skipped with a warning
+- Optional `gateway` is the Keenetic OpenVPN next hop; ignored on Merlin and on Keenetic WireGuard
 
 **IPSet Types**: Country sets — 2-letter ISO codes from multi-source download
 
@@ -118,12 +123,13 @@ cd server && go run ./cmd/webui --dev
 - Logging: `log -l ERROR|WARN|INFO|DEBUG|TRACE "message"`
 - Platform facts (WAN, tunnels, cron, kernel modules) belong behind the `platform_*` functions;
   core modules never test the platform name. Tests set `VPD_PLATFORM=merlin` through
-  `test_helper.bash`
+  `test_helper.bash`; Keenetic tests export `VPD_PLATFORM=keenetic`
 
 ## Modular Docs
 
 See `.claude/rules/` for detailed docs:
 - `packet-flow.md` — packet processing order, Xray vs TD priority, fwmark bit layout
+- `keenetic.md` — KeeneticOS facts: NDM, RCI, hooks, marks, fast path, cron
 - `tunnel-director.md` — rule format, chain architecture, fwmark layout
 - `ipset-builder.md` — IPdeny sources, dump/restore, combo sets
 - `xray-tproxy.md` — TPROXY chain, exclusions, fail-safe

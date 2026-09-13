@@ -18,7 +18,7 @@ paths: "**/*.sh, jffs/**/*"
 - Locking: `acquire_lock [name]` prevents concurrent script execution; with `VPD_LOCK_WAIT=<sec>` (set by `vpn-director.sh --wait[=SEC]`) it waits for the lock instead of exiting 0
 - Temp files: `tmp_file` / `tmp_dir` with auto-cleanup on exit
 
-## Key Utilities (common.sh)
+## Key Utilities (common.sh and the platform contract)
 
 | Function | Description |
 |----------|-------------|
@@ -155,6 +155,9 @@ bash/ksh extension that dash rejects, and generated scripts run under
 # never matches on a router: the kernel prints "lookup wan0"
 ip rule show | grep -c "fwmark 0x100.*lookup 100"
 ```
+
+KeeneticOS has no `/etc/iproute2/rt_tables`; `ip rule show` prints table numbers,
+and `_tproxy_table_label` falls back to the number so both sides still agree.
 
 `_tproxy_setup_routing` did exactly this and re-added its rule on every apply —
 seven copies on a router with 23 days of uptime, and auto-apply from the Web UI
@@ -318,3 +321,11 @@ log() {
     { echo "$1" >> "$LOG_FILE"; } 2>/dev/null || true
 }
 ```
+
+### busybox wget on KeeneticOS segfaults on https
+
+**Problem**: Entware's busybox `wget` on KeeneticOS segfaults on https URLs
+(no working TLS). A download that only called wget would never complete.
+
+**Solution**: `download_file` prefers wget, then falls back to curl when wget
+is missing or fails. Keenetic installs `curl` as a required package.

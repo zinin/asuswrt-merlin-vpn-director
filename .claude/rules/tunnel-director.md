@@ -25,6 +25,11 @@ Routes LAN client traffic through VPN tunnels. All traffic goes through the tunn
       "ovpnc1": {
         "clients": ["192.168.1.5"],
         "exclude": ["<country_code>"]
+      },
+      "OpenVPN0": {
+        "clients": ["192.168.1.10"],
+        "exclude": ["<country_code>"],
+        "gateway": "10.73.149.1"
       }
     }
   }
@@ -33,9 +38,10 @@ Routes LAN client traffic through VPN tunnels. All traffic goes through the tunn
 
 | Field | Description |
 |-------|-------------|
-| Tunnel key | A tunnel id `platform_tunnels` lists (Merlin: `wgcN`, `ovpncN` from `/etc/iproute2/rt_tables`, plus `main`) |
+| Tunnel key | A tunnel id `platform_tunnels` lists (Merlin: `wgcN`, `ovpncN` from `/etc/iproute2/rt_tables`, plus `main`; Keenetic: `OpenVPNN`, `WireguardN` from RCI, plus `main`) |
 | `clients` | Array of LAN IPs/CIDRs (RFC1918 only) |
 | `exclude` | Array of country codes for direct routing |
+| `gateway` | Optional. Keenetic OpenVPN next hop; ignored on Merlin and on Keenetic WireGuard |
 
 ## Behavior
 
@@ -51,10 +57,17 @@ Single chain in mangle table:
 PREROUTING
     └─> TUN_DIR
           ├─ src 192.168.50.0/24 + dst <country> -> RETURN
+          ├─ src 192.168.50.0/24 -> PPE                  (Keenetic only)
           ├─ src 192.168.50.0/24 -> MARK 0x10000 (wgc1)
           ├─ src 192.168.1.5 + dst <country> -> RETURN
+          ├─ src 192.168.1.5 -> PPE                      (Keenetic only)
           └─ src 192.168.1.5 -> MARK 0x20000 (ovpnc1)
 ```
+
+The routing table for each tunnel comes from `platform_tunnel_table` (Merlin: the
+id from `rt_tables`; Keenetic: `KEENETIC_TABLE_BASE + idx`). `platform_tunnel_offload_target`
+prints `PPE` on Keenetic (nothing, rc 1 on Merlin); `tunnel.sh` places that target
+inside `TUN_DIR` with the identical match immediately before `MARK`.
 
 ## Advanced Configuration
 
@@ -118,7 +131,7 @@ From `lib/ipset.sh`: `_ipset_exists`, `parse_exclude_sets_from_json`, `TUN_DIR_H
 
 From the platform contract (`lib/platform.sh`, sourced by `common.sh`): `platform_tunnels`,
 `platform_tunnel_table`, `platform_tunnel_route_ensure`, `platform_tunnel_table_release`,
-`platform_prerouting_base_pos`, `platform_lan_ifaces`
+`platform_tunnel_offload_target`, `platform_prerouting_base_pos`, `platform_lan_ifaces`
 
 ## Requirements
 

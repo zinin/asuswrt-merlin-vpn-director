@@ -16,7 +16,7 @@ Both work in `mangle` table's `PREROUTING` chain but use separate fwmark bit fie
 ## Packet Processing Order
 
 ```
-Incoming packet from LAN (br0)
+Incoming packet from LAN (LAN interface)
          │
          ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -33,7 +33,7 @@ Incoming packet from LAN (br0)
 │                 + set mark 0x100                             │
 │                 ══► Packet goes to Xray, exits PREROUTING   │
 │                                                              │
-│  pos 2: ──► TUN_DIR chain (if mark field 0x00ff0000 == 0)   │
+│  pos N: ──► TUN_DIR chain (if mark field 0x00ff0000 == 0)   │
 │              │                                               │
 │              ├─ src + dst in exclude? ──► RETURN            │
 │              ├─ src matched? ──► MARK 0xN0000               │
@@ -46,22 +46,32 @@ Incoming packet from LAN (br0)
 │                    ip rule lookup                            │
 │                                                              │
 │  pref 200:   fwmark 0x100/0x100 ──► table 100 (Xray local)  │
-│  pref 16384: fwmark 0x10000/0xff0000 ──► table wgc1         │
-│  pref 16385: fwmark 0x20000/0xff0000 ──► table ovpnc1       │
+│  pref 16384: fwmark 0x10000/0xff0000 ──► table wgc1 / 2000  │
+│  pref 16385: fwmark 0x20000/0xff0000 ──► table ovpnc1 / 2001│
 │  ...                                                         │
 │  pref 32767: default ──► table main (WAN)                   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
+On KeeneticOS 5.1.5 pref 200 was free of NDM policies (no tables in the 40s).
+Built-in LTE backup stays at prefs 100/101, fwmark `0xffffaaa`, table 4096.
+A user connection policy measured at prefs 102/103, table 4097, fwmark `0xffffaab`.
+`_tproxy_setup_routing` still reconciles only rules carrying our mark or our
+table, because other firmware versions may still park policies at 200.
+
 ## Priority: Xray vs Tunnel Director
 
 **Xray has absolute priority** because:
 
 1. XRAY_TPROXY jumps are inserted from position 1 in PREROUTING, one per LAN interface
-   (`platform_lan_ifaces`; Merlin: `br0`)
+   (`platform_lan_ifaces`; Merlin and Keenetic: `br0`)
 2. TPROXY target **redirects** the packet to local Xray socket
 3. Packet never continues to the TUN_DIR chain
+
+TUN_DIR's insert position is `platform_prerouting_base_pos`: Merlin after the
+firmware's iface-mark rules (or 1 when it has none); Keenetic **2**, ahead of
+every `_NDM_*` jump.
 
 **Implication**: If a client IP is in both `xray.clients` and a TD rule, traffic goes through Xray only. TD rule is ignored for that client.
 
@@ -122,6 +132,10 @@ ip route add local default dev lo table 100
 ip rule add pref 200 fwmark 0x100/0x100 table 100
 ```
 
+On Keenetic, `platform_tproxy_extra_rules apply` also puts `-m mark --mark <fwmark> -j ACCEPT`
+at position 1 of `mangle INPUT`, so TPROXY-marked HTTPS never reaches
+`_NDM_HTTP_INPUT_TLS_`.
+
 ## Tunnel Director Details
 
 ### Chain Structure (tunnel.sh)
@@ -179,23 +193,27 @@ hook re-applies. `restart tunnel` forces it.
 ### Position Calculation
 
 ```bash
-platform_prerouting_base_pos()  # Platform contract; Merlin: the position after the
-                                # firmware's iface-mark rules, or 1 when it has none
+platform_prerouting_base_pos()  # Platform contract
+                                # Merlin: the position after the firmware's iface-mark
+                                #   rules, or 1 when it has none
+                                # Keenetic: 2, ahead of every _NDM_* jump
 ```
 
 Each LAN interface gets its own jump, at `base_pos`, `base_pos + 1`, … — one shared position would
 make every interface displace the one before it, and each rewrite is a window with no jump.
 
-Typically (Merlin, one LAN interface):
+Typically (one LAN interface):
 - Position 1: XRAY_TPROXY
-- Position 2+: Firmware iface-mark rules (if any)
-- Position N: TUN_DIR (single chain)
+- Merlin: firmware iface-mark rules (if any), then TUN_DIR
+- Keenetic: Position 2: TUN_DIR (ahead of every `_NDM_*` jump)
 
 ### IP Rules
 
 ```bash
-# For each TD rule; the table is the one platform_tunnel_table names for the tunnel id:
-ip rule add pref {16384 + idx} fwmark {mark}/{mask} table {wgc1|ovpnc1|main}
+# For each TD rule; the table is the one platform_tunnel_table names for the tunnel id
+# (Merlin: the id from rt_tables; Keenetic: 2000+idx, route re-installed by
+# platform_tunnel_route_ensure):
+ip rule add pref {16384 + idx} fwmark {mark}/{mask} table {wgc1|ovpnc1|main|2000}
 ```
 
 ## Traffic Flow Examples
@@ -306,10 +324,12 @@ Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 
 | File | Function | Purpose |
 |------|----------|---------|
-| `lib/tproxy.sh:475-481` | PREROUTING jumps from pos 1 | Xray priority |
-| `lib/tproxy.sh:397-484` | `_tproxy_setup_iptables()` | Chain rules |
-| `lib/platform/merlin.sh:146-160` | `platform_prerouting_base_pos()` | TD position calc |
-| `lib/tunnel.sh:444-450` | PREROUTING jump with mark check | First-match-wins |
-| `lib/tunnel.sh:428-429` | ip rule creation | Fwmark → table routing |
-| `lib/tunnel.sh:128-137` | `_tunnel_ensure_routes()` | Re-install tunnel routes on an apply with no rebuild |
+| `lib/tproxy.sh` | `_tproxy_setup_iptables()` | Chain rules and PREROUTING jumps from pos 1 |
+| `lib/platform/merlin.sh` | `platform_prerouting_base_pos()` | TD position after firmware iface-mark rules |
+| `lib/platform/keenetic.sh` | `platform_prerouting_base_pos()` | prints `2`, ahead of every `_NDM_*` jump |
+| `lib/platform/keenetic.sh` | `platform_tunnel_route_ensure()` | `ip route replace` into `2000+idx` |
+| `lib/platform/keenetic.sh` | `platform_tproxy_extra_rules()` | `ACCEPT` at mangle INPUT pos 1 |
+| `lib/tunnel.sh` | PREROUTING jump with mark check | First-match-wins |
+| `lib/tunnel.sh` | ip rule creation | Fwmark → `platform_tunnel_table` |
+| `lib/tunnel.sh` | `_tunnel_ensure_routes()` | Re-install tunnel routes on an apply with no rebuild |
 | `lib/platform/keenetic.sh` | `platform_tunnel_offload_target()` | `PPE` — takes a marked flow out of the firmware fast path |

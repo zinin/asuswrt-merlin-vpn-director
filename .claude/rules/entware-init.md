@@ -4,7 +4,7 @@ paths: "opt/etc/init.d/**/*"
 
 # Entware Init System: Complete Guide
 
-Documentation for the Entware service initialization system on ASUS routers with Merlin firmware (and other Entware-enabled devices).
+Documentation for the Entware service initialization system on Asuswrt-Merlin and KeeneticOS (both run `rc.unslung`).
 
 ## Overview
 
@@ -14,6 +14,8 @@ Entware uses a simple SysV-style init script system based on:
 - **S\*\* scripts** — individual service scripts
 
 The entire system is located in `/opt/etc/init.d/`.
+
+On KeeneticOS the Entware `cron` package's `S10cron` (`PROCS=cron`) is what `platform_cron_add` starts.
 
 ## Architecture
 

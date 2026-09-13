@@ -100,7 +100,7 @@ fi
 ###################################################################################################
 show_help() {
     cat <<'EOF'
-VPN Director - Unified traffic routing for Asuswrt-Merlin
+VPN Director - Unified traffic routing for Asuswrt-Merlin and KeeneticOS
 
 Usage:
   vpn-director <command> [component] [options]

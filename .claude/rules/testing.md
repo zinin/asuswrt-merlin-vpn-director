@@ -11,8 +11,12 @@ Uses [Bats](https://bats-core.readthedocs.io/) (Bash Automated Testing System) w
 ## Running Tests
 
 ```bash
+# Four places: a directory argument is not recursive, so unit + integration
+# alone miss router/test/*.bats
+bats router/test/*.bats router/test/unit router/test/integration
+
 bats -r router/test/           # Run all tests (recursive)
-bats router/test/              # Top-level files only - a directory argument is not recursive
+bats router/test/              # Top-level files only
 bats router/test/unit/         # Run unit tests only
 bats router/test/integration/  # Run integration tests only
 bats router/test/common.bats   # Run specific test file
@@ -27,7 +31,10 @@ router/test/
 │   ├── hosts                # Mock /etc/hosts
 │   ├── vpn-director.json    # Test config
 │   ├── vless_servers.b64    # VLESS subscription mock
-│   └── rt_tables            # Mock routing tables
+│   ├── rt_tables            # Mock routing tables
+│   └── keenetic/
+│       ├── proc_modules     # Mock /proc/modules
+│       └── rci/**           # RCI JSON fixtures
 ├── mocks/                   # Mock executables
 │   ├── nvram                # Mock nvram command
 │   ├── iptables             # Mock iptables
@@ -38,11 +45,21 @@ router/test/
 │   ├── ip                   # Mock ip command
 │   ├── lsmod                # Mock kernel module list
 │   ├── modprobe             # Mock module loading
-│   └── pgrep                # Mock process lookup
+│   ├── pgrep                # Mock process lookup
+│   ├── insmod               # Mock insmod (Keenetic modules)
+│   ├── cru                  # Mock cru (Merlin cron)
+│   └── keenetic/
+│       └── curl             # RCI fixtures, per-test PATH
 ├── unit/                    # Unit tests for lib/ modules
 │   ├── ipset.bats           # Tests for lib/ipset.sh
 │   ├── tunnel.bats          # Tests for lib/tunnel.sh
-│   └── tproxy.bats          # Tests for lib/tproxy.sh
+│   ├── tproxy.bats          # Tests for lib/tproxy.sh
+│   ├── platform.bats        # platform_detect and loader
+│   ├── platform_merlin.bats
+│   ├── platform_keenetic.bats
+│   ├── hooks.bats           # NDM hooks
+│   ├── install.bats
+│   └── configure.bats
 ├── integration/             # Integration tests
 │   ├── vpn_director.bats    # Tests for vpn-director.sh CLI
 │   └── ipset_sources.bats   # Tests for IPSet download sources
@@ -51,6 +68,15 @@ router/test/
 ├── config.bats              # Tests for lib/config.sh
 └── import_server_list.bats  # Tests for import_server_list.sh
 ```
+
+## Platform under test
+
+`VPD_PLATFORM` (default `merlin` from `test_helper.bash`; `platform_keenetic.bats`
+and the Keenetic integration test in `vpn_director.bats` export `keenetic`)
+selects the contract implementation without probing the machine. `VPD_PROBE_ROOT`
+prefixes every path `platform_detect` looks at. Seams for Keenetic unit tests:
+`VPD_MODULES_DIR`, `VPD_PROC_MODULES`, `VPD_CRON_D`, `VPD_CRON_INIT`,
+`BATS_IP_*`, `BATS_RCI_*`.
 
 ## Writing Tests
 
@@ -111,6 +137,9 @@ Mocks are shell scripts in `router/test/mocks/` that simulate router commands:
 - **nslookup**: Returns mock DNS responses
 - **logger**: Silent (no syslog in tests)
 - **ip**: Returns mock interface info
+- **insmod**: Records module loads (Keenetic)
+- **cru**: Merlin cron helper
+- **keenetic/curl**: Serves RCI fixtures; put on PATH per test
 
 Mocks are added to PATH before real commands via `setup()`.
 
@@ -123,7 +152,7 @@ Mocks are added to PATH before real commands via `setup()`.
 2. Add `load 'test_helper'` at top (use relative path: `load '../test_helper'` from subdirs)
 3. Use appropriate `load_*` helper to source scripts
 4. Add mocks to `router/test/mocks/` if needed
-5. Run: `bats router/test/unit/new_module.bats`
+5. Run: `bats router/test/unit/new_module.bats` (or the four-place invocation above)
 
 ## Gotcha: modules replace the EXIT trap bats reports through
 

@@ -54,8 +54,8 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			return
 		}
 		// A route is xray or a tunnel this router has, asked of the platform
-		// now: the list is the firmware's (wgc1..ovpnc5 on Merlin, OpenVPN0,
-		// Wireguard1, ... on Keenetic) and a tunnel can appear or go at any time.
+		// now: the list is the firmware's (Merlin wgcN/ovpncN, Keenetic
+		// OpenVPN0, Wireguard1, ...) and a tunnel can appear or go at any time.
 		if req.Route != "xray" {
 			extendWriteDeadline(w, statusDeadline)
 			info, err := deps.VPN.Platform()

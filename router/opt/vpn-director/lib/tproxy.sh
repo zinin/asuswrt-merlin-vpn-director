@@ -183,9 +183,12 @@ _tproxy_check_required_ipsets() {
 # -------------------------------------------------------------------------------------------------
 # Ours: the rule carries our mark value under any mask (an earlier
 # fwmark_mask), or our table under any mark (an earlier route_table). The
-# preference is not ownership: KeeneticOS keeps its connection-policy rules
-# at 200 as well, and deleting one of those would cut that policy's clients
-# off. <mark> is what "ip rule show" printed ("0x100/0x100", "0x100" or "").
+# preference is not ownership: on KeeneticOS 5.1.5 pref 200 was free (a
+# user connection policy landed at prefs 102/103, table 4097, fwmark
+# 0xffffaab; built-in LTE backup stays at 100/101, 0xffffaaa, table 4096;
+# no tables in the 40s). Other firmware versions may still park policies
+# at 200, so a rule that is not ours is left alone. <mark> is what
+# "ip rule show" printed ("0x100/0x100", "0x100" or "").
 # -------------------------------------------------------------------------------------------------
 _tproxy_rule_is_ours() {
     local mark="${1%%/*}" table="${2:-}" want_table="${3:-}"
