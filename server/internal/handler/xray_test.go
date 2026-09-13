@@ -325,6 +325,9 @@ func (m *mockVPNDirectorWithXray) Restart() error          { return m.restartErr
 func (m *mockVPNDirectorWithXray) RestartXray() error      { return m.restartXrayErr }
 func (m *mockVPNDirectorWithXray) Stop() error             { return m.stopErr }
 func (m *mockVPNDirectorWithXray) Update() error           { return nil }
+func (m *mockVPNDirectorWithXray) Platform() (vpnconfig.PlatformInfo, error) {
+	return vpnconfig.PlatformInfo{}, nil
+}
 
 // trackingXrayConfigStore holds a config the way a configured router does, so
 // a test can read back what the switch wrote. The plain mockConfigStore stands

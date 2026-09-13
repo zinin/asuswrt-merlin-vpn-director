@@ -687,3 +687,44 @@ func TestNewActiveServer_CarriesNoCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestTunnelConfig_GatewaySurvivesASave(t *testing.T) {
+	in := `{"data_dir":"/d","tunnel_director":{"tunnels":{"OpenVPN0":{"clients":["192.168.1.5"],"exclude":["ru"],"gateway":"10.73.149.1"}}},"xray":{"clients":[],"servers":[],"exclude_ips":[],"exclude_sets":[]}}`
+	var cfg VPNDirectorConfig
+	if err := json.Unmarshal([]byte(in), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.TunnelDirector.Tunnels["OpenVPN0"].Gateway; got != "10.73.149.1" {
+		t.Fatalf("Gateway = %q, want 10.73.149.1", got)
+	}
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"gateway":"10.73.149.1"`) {
+		t.Errorf("save dropped the gateway: %s", out)
+	}
+	// Absent stays absent: a Merlin config must not grow an empty gateway.
+	cfg.TunnelDirector.Tunnels["wgc1"] = TunnelConfig{Clients: []string{"192.168.1.6"}, Exclude: []string{}}
+	out, _ = json.Marshal(cfg)
+	if strings.Contains(string(out), `"gateway":""`) {
+		t.Errorf("save wrote an empty gateway: %s", out)
+	}
+}
+
+func TestPlatformInfo_DecodesTheCLIDocumentAndFindsTunnels(t *testing.T) {
+	doc := `{"platform":"keenetic","arch":"aarch64","password_file":"/opt/etc/passwd","lan_ifaces":["br0"],"wan_if":"eth2.4","tunnels":[{"id":"OpenVPN0","iface":"ovpn_br0","type":"openvpn","connected":true,"description":"office-ovpn"}]}`
+	var info PlatformInfo
+	if err := json.Unmarshal([]byte(doc), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.Platform != "keenetic" || info.PasswordFile != "/opt/etc/passwd" || info.WANIf != "eth2.4" {
+		t.Errorf("decoded %+v", info)
+	}
+	if len(info.Tunnels) != 1 || info.Tunnels[0].Iface != "ovpn_br0" || !info.Tunnels[0].Connected {
+		t.Errorf("tunnels = %+v", info.Tunnels)
+	}
+	if !info.HasTunnel("OpenVPN0") || info.HasTunnel("wgc1") || info.HasTunnel("xray") {
+		t.Error("HasTunnel answers for the wrong ids")
+	}
+}

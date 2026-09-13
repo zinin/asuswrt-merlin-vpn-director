@@ -62,6 +62,10 @@ type VPNDirector interface {
 	// Update downloads fresh ipsets and reapplies the configuration
 	// (vpn-director.sh update). Apply reuses cached ipsets instead.
 	Update() error
+	// Platform runs `vpn-director.sh platform` and decodes it: the tunnels
+	// the router has, by id. Live, uncached; the caller validates routes
+	// against it at the moment of the change.
+	Platform() (vpnconfig.PlatformInfo, error)
 }
 
 // XrayGenerator is the interface for Xray config generation. The optional

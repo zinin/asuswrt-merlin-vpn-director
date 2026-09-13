@@ -17,6 +17,8 @@ type mockVPNDirector struct {
 	restartXrayCalled bool
 	applyErr          error
 	restartXrayErr    error
+	platform          vpnconfig.PlatformInfo
+	platformErr       error
 }
 
 func (m *mockVPNDirector) Status() (string, error) { return "", nil }
@@ -31,6 +33,9 @@ func (m *mockVPNDirector) RestartXray() error {
 }
 func (m *mockVPNDirector) Stop() error   { return nil }
 func (m *mockVPNDirector) Update() error { return nil }
+func (m *mockVPNDirector) Platform() (vpnconfig.PlatformInfo, error) {
+	return m.platform, m.platformErr
+}
 
 // mockXrayGenerator for testing
 type mockXrayGenerator struct {

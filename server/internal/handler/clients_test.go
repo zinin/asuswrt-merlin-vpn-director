@@ -78,7 +78,9 @@ func (m *mockConfigClients) DataDirOrDefault() string                 { return "
 func (m *mockConfigClients) ScriptsDir() string                       { return "/scripts" }
 
 type mockVPNClients struct {
-	applyErr error
+	applyErr    error
+	platform    vpnconfig.PlatformInfo
+	platformErr error
 }
 
 func (m *mockVPNClients) Status() (string, error) { return "", nil }
@@ -87,6 +89,9 @@ func (m *mockVPNClients) Restart() error          { return nil }
 func (m *mockVPNClients) RestartXray() error      { return nil }
 func (m *mockVPNClients) Stop() error             { return nil }
 func (m *mockVPNClients) Update() error           { return nil }
+func (m *mockVPNClients) Platform() (vpnconfig.PlatformInfo, error) {
+	return m.platform, m.platformErr
+}
 
 func TestClientsHandler_HandleClients_WithClients(t *testing.T) {
 	sender := &mockSenderClients{}

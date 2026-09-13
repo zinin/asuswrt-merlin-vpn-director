@@ -203,3 +203,38 @@ func TestVPNDirectorService_NilExecutorUsesDefault(t *testing.T) {
 		t.Error("executor should not be nil after NewVPNDirectorService with nil")
 	}
 }
+
+func TestVPNDirectorService_Platform(t *testing.T) {
+	// The CLI's combined output: WARN lines from log() on stderr, then the
+	// one-line document on stdout. The service reads the last non-empty line.
+	out := "2026-09-12T20:00:00 WARN  [vpn-director] - platform: cannot map tunnel 'OpenVPN2' to an interface; omitted\n" +
+		`{"platform":"keenetic","arch":"aarch64","password_file":"/opt/etc/passwd","lan_ifaces":["br0"],"wan_if":"eth2.4","tunnels":[{"id":"OpenVPN0","iface":"ovpn_br0","type":"openvpn","connected":true,"description":"office-ovpn"}]}` + "\n"
+	mock := &mockExecutor{result: &shell.Result{Output: out, ExitCode: 0}}
+	svc := NewVPNDirectorService("/opt/vpn-director", mock)
+
+	info, err := svc.Platform()
+	if err != nil {
+		t.Fatalf("Platform() error: %v", err)
+	}
+	if info.Platform != "keenetic" || len(info.Tunnels) != 1 || info.Tunnels[0].ID != "OpenVPN0" {
+		t.Errorf("Platform() = %+v", info)
+	}
+	// No --wait: the command takes no lock.
+	assertCall(t, mock.calls[0], "platform")
+	assertTimeout(t, mock.timeouts[0], StatusTimeout)
+}
+
+func TestVPNDirectorService_PlatformErrors(t *testing.T) {
+	mock := &mockExecutor{result: &shell.Result{Output: "unsupported platform", ExitCode: 1}}
+	if _, err := NewVPNDirectorService("/opt/vpn-director", mock).Platform(); err == nil || !strings.Contains(err.Error(), "unsupported platform") {
+		t.Errorf("non-zero exit: err = %v, want the script output", err)
+	}
+	mock = &mockExecutor{result: &shell.Result{Output: "not json\n", ExitCode: 0}}
+	if _, err := NewVPNDirectorService("/opt/vpn-director", mock).Platform(); err == nil {
+		t.Error("garbage output: want a decode error")
+	}
+	mock = &mockExecutor{err: errors.New("command timed out after 30s")}
+	if _, err := NewVPNDirectorService("/opt/vpn-director", mock).Platform(); err == nil {
+		t.Error("executor error: want it back")
+	}
+}

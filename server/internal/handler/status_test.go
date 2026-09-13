@@ -26,6 +26,9 @@ func (m *mockVPNDirector) Restart() error          { return m.restartErr }
 func (m *mockVPNDirector) RestartXray() error      { return nil }
 func (m *mockVPNDirector) Stop() error             { return m.stopErr }
 func (m *mockVPNDirector) Update() error           { return nil }
+func (m *mockVPNDirector) Platform() (vpnconfig.PlatformInfo, error) {
+	return vpnconfig.PlatformInfo{}, nil
+}
 
 // mockConfigStore is used by servers_test.go (Task 5.3)
 type mockConfigStore struct {

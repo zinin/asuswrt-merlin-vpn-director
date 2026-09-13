@@ -3,6 +3,8 @@ package devmode
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -251,5 +253,32 @@ func TestExecutor_SafeCommand_PassesContext(t *testing.T) {
 	}
 	if _, ok := mock.ctxs[0].Deadline(); !ok {
 		t.Error("the caller's context deadline did not reach the real executor")
+	}
+}
+
+func TestExecutor_MockCommand_VPNDirectorPlatform(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "platform.json")
+	if err := os.WriteFile(file, []byte("{\n  \"platform\": \"merlin\",\n  \"tunnels\": []\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := NewExecutor()
+	e.platformFile = file
+
+	result, err := e.Exec(context.Background(), "/opt/vpn-director/vpn-director.sh", "platform")
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("Exec = %+v, %v", result, err)
+	}
+	// One line, the way the CLI prints it and the service reads it.
+	if got := strings.TrimSpace(result.Output); got != `{"platform":"merlin","tunnels":[]}` || strings.Count(result.Output, "\n") != 1 {
+		t.Errorf("Output = %q", result.Output)
+	}
+}
+
+func TestExecutor_MockCommand_VPNDirectorPlatformMissingFile(t *testing.T) {
+	e := NewExecutor()
+	e.platformFile = filepath.Join(t.TempDir(), "absent.json")
+	result, err := e.Exec(context.Background(), "vpn-director.sh", "platform")
+	if err != nil || result.ExitCode == 0 {
+		t.Errorf("Exec = %+v, %v; want exit 1", result, err)
 	}
 }
