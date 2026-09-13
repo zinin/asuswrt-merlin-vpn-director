@@ -8,21 +8,6 @@ import (
 	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
-// validRoutes is the set of allowed route names for client assignment.
-var validRoutes = map[string]bool{
-	"xray":   true,
-	"wgc1":   true,
-	"wgc2":   true,
-	"wgc3":   true,
-	"wgc4":   true,
-	"wgc5":   true,
-	"ovpnc1": true,
-	"ovpnc2": true,
-	"ovpnc3": true,
-	"ovpnc4": true,
-	"ovpnc5": true,
-}
-
 // handleListClients returns a handler that lists all VPN clients with their
 // route assignment and pause status.
 func handleListClients(deps *Deps) http.HandlerFunc {
@@ -68,9 +53,20 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "route is required")
 			return
 		}
-		if !validRoutes[req.Route] {
-			jsonError(w, http.StatusBadRequest, "invalid route: must be one of xray, wgc1-wgc5, ovpnc1-ovpnc5")
-			return
+		// A route is xray or a tunnel this router has, asked of the platform
+		// now: the list is the firmware's (wgc1..ovpnc5 on Merlin, OpenVPN0,
+		// Wireguard1, ... on Keenetic) and a tunnel can appear or go at any time.
+		if req.Route != "xray" {
+			extendWriteDeadline(w, statusDeadline)
+			info, err := deps.VPN.Platform()
+			if err != nil {
+				jsonError(w, http.StatusServiceUnavailable, "platform info unavailable")
+				return
+			}
+			if !info.HasTunnel(req.Route) {
+				jsonError(w, http.StatusBadRequest, "invalid route: must be xray or a tunnel this router has")
+				return
+			}
 		}
 
 		unlock, ok := lockLongOp(w, r, deps, applyDeadline)

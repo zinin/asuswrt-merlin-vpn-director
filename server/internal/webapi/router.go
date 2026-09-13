@@ -82,6 +82,7 @@ func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
 	// Info
 	mux.HandleFunc("GET /api/ip", handleIP(deps))
 	mux.HandleFunc("GET /api/version", handleVersion(deps))
+	mux.HandleFunc("GET /api/platform", handlePlatform(deps))
 
 	// Servers
 	mux.HandleFunc("GET /api/servers", handleListServers(deps))
