@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/zinin/vpn-director/server/internal/platform"
 )
 
 func TestDownloadFile_Success(t *testing.T) {
@@ -341,12 +343,33 @@ func TestDownloadRelease_RefusesAManifestWithNoFileForThePlatform(t *testing.T) 
 	}
 }
 
-func TestGetPlatform_DefaultsToMerlin(t *testing.T) {
-	if got := (&Service{}).getPlatform(); got != "merlin" {
-		t.Errorf("getPlatform() = %q, want merlin", got)
+func TestGetPlatform(t *testing.T) {
+	if got, err := (&Service{platform: "keenetic"}).getPlatform(); err != nil || got != "keenetic" {
+		t.Errorf("injected: getPlatform() = %q, %v; want keenetic", got, err)
 	}
-	if got := (&Service{platform: "keenetic"}).getPlatform(); got != "keenetic" {
-		t.Errorf("getPlatform() = %q, want the injected platform", got)
+	t.Setenv(platform.EnvVar, platform.Keenetic)
+	if got, err := (&Service{}).getPlatform(); err != nil || got != "keenetic" {
+		t.Errorf("detected: getPlatform() = %q, %v; want keenetic from %s", got, err, platform.EnvVar)
+	}
+	s := &Service{}
+	s.SetPlatform("merlin")
+	if got, _ := s.getPlatform(); got != "merlin" {
+		t.Errorf("SetPlatform: getPlatform() = %q, want merlin", got)
+	}
+	t.Setenv(platform.EnvVar, "")
+	t.Setenv("VPD_PROBE_ROOT", t.TempDir())
+	if _, err := (&Service{}).getPlatform(); err == nil {
+		t.Error("undetectable: getPlatform() guessed a platform instead of failing")
+	}
+}
+
+func TestDownloadRelease_RefusesWhenThePlatformIsUnknown(t *testing.T) {
+	t.Setenv(platform.EnvVar, "")
+	t.Setenv("VPD_PROBE_ROOT", t.TempDir())
+	s := &Service{updateDir: t.TempDir()}
+	err := s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported platform") {
+		t.Fatalf("DownloadRelease() = %v, want the detection error", err)
 	}
 }
 
@@ -403,6 +426,8 @@ func TestArchAssetSuffix(t *testing.T) {
 	}{
 		{goarch: "arm64", want: "arm64"},
 		{goarch: "arm", want: "arm"},
+		{goarch: "mipsle", want: "mipsle"},
+		{goarch: "mips", wantErr: true},
 		{goarch: "amd64", wantErr: true},
 		{goarch: "", wantErr: true},
 	}

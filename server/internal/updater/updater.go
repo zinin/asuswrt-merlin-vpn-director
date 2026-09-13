@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/zinin/vpn-director/server/internal/platform"
 )
 
 // Update directory paths.
@@ -120,7 +122,7 @@ type Service struct {
 	scriptFile         string                 // Configurable for testing
 	archSuffix         string                 // Injectable for testing, empty = derived from runtime.GOARCH
 	shell              string                 // Injectable for testing, empty = /bin/sh
-	platform           string                 // Injectable for testing, empty = "merlin" until platform detection lands
+	platform           string                 // Injectable: the manifest tag of this router's platform, detected when empty
 	daemon             string                 // The daemon this process is: Handover prefers its asset, step 2 links itself for it
 	selfBinary         string                 // Step 2 only: this executable, taken as the payload binary of daemon
 	parentPID          func() int             // Injectable for testing, nil = os.Getppid
@@ -219,14 +221,23 @@ func (s *Service) getShell() string {
 	return "/bin/sh"
 }
 
-// getPlatform returns the manifest tag of the platform this daemon runs on.
-// Detection is wired in with the Keenetic daemon work; until then every
-// installed router is an Asuswrt-Merlin one.
-func (s *Service) getPlatform() string {
+// SetPlatform tells the Service which platform's files to install. The
+// daemons call it with what they resolved at startup (--platform or
+// detection); step 2 of a self-update, which runs without flags, detects.
+func (s *Service) SetPlatform(name string) { s.platform = name }
+
+// getPlatform returns the manifest tag of the platform this daemon runs on:
+// the one it was told, else the one internal/platform detects. No default:
+// a router this cannot name would otherwise get another firmware's hooks.
+func (s *Service) getPlatform() (string, error) {
 	if s.platform != "" {
-		return s.platform
+		return s.platform, nil
 	}
-	return "merlin"
+	p, err := platform.Detect()
+	if err != nil {
+		return "", err
+	}
+	return p.Name, nil
 }
 
 // getParentPID returns the PID of the process that started this one: for

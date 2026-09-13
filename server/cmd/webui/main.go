@@ -19,6 +19,7 @@ import (
 	"github.com/zinin/vpn-director/server/internal/devmode"
 	"github.com/zinin/vpn-director/server/internal/logging"
 	"github.com/zinin/vpn-director/server/internal/paths"
+	"github.com/zinin/vpn-director/server/internal/platform"
 	"github.com/zinin/vpn-director/server/internal/service"
 	"github.com/zinin/vpn-director/server/internal/updateflow"
 	"github.com/zinin/vpn-director/server/internal/updater"
@@ -41,9 +42,19 @@ func main() {
 	}
 
 	configPath := flag.String("config", "/opt/vpn-director/vpn-director.json", "path to vpn-director.json")
-	shadowPath := flag.String("shadow", "/etc/shadow", "path to shadow file")
+	platformFlag := flag.String("platform", "", "platform this router runs (merlin|keenetic); detected when empty")
+	shadowPath := flag.String("shadow", "", "password file (default: the platform's - /etc/shadow on Merlin, /opt/etc/passwd on Keenetic)")
 	devFlag := flag.Bool("dev", false, "run in development mode (HTTP, mock executor, testdata paths)")
 	flag.Parse()
+
+	// The platform decides the password file and which release files the
+	// updater installs. Neither can be guessed: a wrong guess is a Web UI
+	// nobody can log into, or another firmware's hooks on this router.
+	plat, err := platform.Resolve(*platformFlag, *devFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// In dev mode, override defaults with testdata paths.
 	var p paths.Paths
@@ -54,7 +65,7 @@ func main() {
 		if *configPath == "/opt/vpn-director/vpn-director.json" {
 			*configPath = p.ScriptsDir + "/vpn-director.json"
 		}
-		if *shadowPath == "/etc/shadow" {
+		if *shadowPath == "" {
 			*shadowPath = p.ScriptsDir + "/shadow"
 		}
 		// Validate testdata/dev exists before proceeding.
@@ -66,6 +77,9 @@ func main() {
 		ensureDevFiles(*configPath, *shadowPath, p.DefaultDataDir)
 	} else {
 		p = paths.Default()
+		if *shadowPath == "" {
+			*shadowPath = plat.PasswordFile
+		}
 		// Before anything here spawns a shell, and with the flags resolved
 		// first so a relative --config keeps naming the same file. The update
 		// script starts this daemon from the update directory, which the bot
@@ -84,7 +98,7 @@ func main() {
 	defer logger.Close()
 	slog.SetDefault(slogger)
 
-	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag)
+	slog.Info("starting VPN Director Web UI", "version", Version, "commit", Commit, "dev", *devFlag, "platform", plat.Name)
 
 	if detachErr != nil {
 		slog.Warn("could not leave the directory this process was started in", "error", detachErr)
@@ -163,7 +177,9 @@ func main() {
 
 	// The Web UI updates both daemons through the same flow as the bot; the
 	// progress lines go to the Web UI log, since there is no chat to answer in.
-	updateFlow := updateflow.New(updater.NewForDaemon(updater.DaemonWebUI), Version, *devFlag)
+	upd := updater.NewForDaemon(updater.DaemonWebUI)
+	upd.SetPlatform(plat.Name)
+	updateFlow := updateflow.New(upd, Version, *devFlag)
 
 	deps := &webapi.Deps{
 		Config:  configSvc,

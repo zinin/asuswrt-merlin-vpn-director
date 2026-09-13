@@ -144,6 +144,11 @@ func (s *Service) generateScript(opts RunOptions) (string, error) {
 		return "", err
 	}
 
+	tag, err := s.getPlatform()
+	if err != nil {
+		return "", err
+	}
+
 	data := scriptData{
 		ChatID:     opts.ChatID,
 		Initiator:  opts.Initiator,
@@ -154,7 +159,7 @@ func (s *Service) generateScript(opts RunOptions) (string, error) {
 		NotifyFile: filepath.Join(updateDir, "notify.json"),
 		LockFile:   filepath.Join(updateDir, "lock"),
 		Daemons:    Daemons,
-		Files:      fileEntries(entries, s.getPlatform()),
+		Files:      fileEntries(entries, tag),
 	}
 
 	var buf bytes.Buffer

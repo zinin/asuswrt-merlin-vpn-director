@@ -25,6 +25,11 @@ const (
 // DownloadRelease downloads the release manifest, then every file it lists
 // for this platform, then the daemon binaries. Cleans files/ before starting.
 func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
+	tag, err := s.getPlatform()
+	if err != nil {
+		return err
+	}
+
 	filesDir := s.getFilesDir()
 
 	// Before the first and most destructive write of all, as before every
@@ -50,9 +55,9 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 	// script and no init file - worse than no update, and silent, because
 	// downloadFile accepts a zero-byte HTTP 200 as a manifest. install.sh
 	// refuses the same state on its side.
-	files := manifestFilesFor(entries, s.getPlatform())
+	files := manifestFilesFor(entries, tag)
 	if len(files) == 0 {
-		return fmt.Errorf("release %s: files.manifest lists no file for platform %s", release.TagName, s.getPlatform())
+		return fmt.Errorf("release %s: files.manifest lists no file for platform %s", release.TagName, tag)
 	}
 
 	for _, file := range files {
@@ -118,6 +123,9 @@ func archAssetSuffix(goarch string) (string, error) {
 		return "arm64", nil
 	case "arm":
 		return "arm", nil
+	case "mipsle":
+		// Keenetic MIPS models, all little-endian; built with GOMIPS=softfloat.
+		return "mipsle", nil
 	default:
 		return "", fmt.Errorf("unsupported architecture: %s", goarch)
 	}
