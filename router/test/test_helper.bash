@@ -115,5 +115,12 @@ load_tproxy_module() {
 load_import_server_list() {
     load_common
     export IMPORT_TEST_MODE=1
+    # import_server_list.sh sources common.sh itself, which re-installs the
+    # EXIT trap load_common just put back - and a failing assertion in this
+    # file would vanish into "Executed N instead of expected M" with no name.
+    # Same guard as load_common.
+    local bats_exit_trap
+    bats_exit_trap="$(trap -p EXIT)"
     source "$SCRIPTS_DIR/import_server_list.sh"
+    eval "${bats_exit_trap:-trap - EXIT}"
 }

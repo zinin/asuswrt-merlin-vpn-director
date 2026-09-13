@@ -146,19 +146,38 @@ parse_vless_uri() {
     else
         raw_name=""
     fi
-    raw_name=$(printf '%s' "$raw_name" | sed 's/%20/ /g; s/%2F/\//g; s/+/ /g')
-    # Filter: keep only letters (rus/eng), digits, spaces, basic punctuation
-    # Removes emoji and other non-standard characters
-    name=$(printf '%s' "$raw_name" | gawk '{
-        result = ""
-        n = split($0, chars, "")
-        for (i = 1; i <= n; i++) {
-            c = chars[i]
-            if (c ~ /[a-zA-Z0-9 .,;:!?()\-]/) { result = result c; continue }
-            if (c ~ /[а-яА-ЯёЁ]/) { result = result c }
+    # Percent-decode the fragment. A subscription encodes the whole name, so
+    # decoding only %20 left every other byte as its own hex digits - which the
+    # filter below keeps, being digits. That is how "Амстердам" reached
+    # servers.json as "D090D0BCD181D182...". Backslashes are escaped first
+    # because printf %b expands them; then %XX becomes \xXX for %b to turn back
+    # into the byte. A decoded newline would split the record, so drop those.
+    raw_name=$(printf '%s' "$raw_name" |
+        sed 's/\\/\\\\/g; s/+/ /g; s/%\([0-9a-fA-F][0-9a-fA-F]\)/\\x\1/g')
+    raw_name=$(printf '%b' "$raw_name" | tr -d '\n\r')
+
+    # Keep letters, digits, spaces and basic punctuation; drop emoji.
+    # Byte-oriented, and pinned to LC_ALL=C on purpose: the routers have no
+    # UTF-8 locale - KeeneticOS has no locale at all - so awk works on bytes
+    # there. A character-wise filter cuts a two-byte letter in half and keeps
+    # whichever half matches an ASCII class, which turned "Амстердам" into
+    # "Амс?е?дам" on the device while passing on a workstation. Two-byte
+    # sequences are the alphabets (Cyrillic, Greek, accented Latin); the
+    # three- and four-byte ones are the symbols and emoji this drops.
+    name=$(printf '%s' "$raw_name" | LC_ALL=C gawk '{
+        out = ""
+        n = length($0)
+        i = 1
+        while (i <= n) {
+            c = substr($0, i, 1)
+            if (c ~ /[a-zA-Z0-9 .,;:!?()-]/) { out = out c; i++; continue }
+            if (c ~ /[\xC0-\xDF]/) { out = out substr($0, i, 2); i += 2; continue }
+            if (c ~ /[\xE0-\xEF]/) { i += 3; continue }
+            if (c ~ /[\xF0-\xF4]/) { i += 4; continue }
+            i++
         }
-        gsub(/^[ ,]+|[ ,]+$/, "", result)
-        print result
+        gsub(/^[ ,]+|[ ,]+$/, "", out)
+        print out
     }')
     rest="${rest%%#*}"
 

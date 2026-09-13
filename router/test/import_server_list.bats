@@ -17,6 +17,12 @@ TEST_URI_URLENCODED='vless://11111111-2222-3333-4444-555555555555@server4.test.e
 # URI with cyrillic only (no emoji)
 TEST_URI_CYRILLIC='vless://11111111-2222-3333-4444-555555555555@server5.test.example:8443?type=tcp&security=tls#Казахстан, Алматы'
 
+# What a real subscription actually sends: the whole fragment percent-encoded,
+# flag emoji included. Decoding only %20 left the hex digits of every other
+# byte in the name, and the filter below keeps digits - so servers.json held
+# "F09F87B3F09F87B1 D090D0BC..." instead of a country.
+TEST_URI_PERCENT_ENCODED='vless://11111111-2222-3333-4444-555555555555@server6.test.example:8443?type=tcp&security=tls#%F0%9F%87%B3%F0%9F%87%B1%20%D0%90%D0%BC%D1%81%D1%82%D0%B5%D1%80%D0%B4%D0%B0%D0%BC%2C%20%D0%9D%D0%B8%D0%B4%D0%B5%D1%80%D0%BB%D0%B0%D0%BD%D0%B4%D1%8B%2C%20Extra'
+
 # ============================================================================
 # parse_vless_uri: Field extraction
 # ============================================================================
@@ -47,6 +53,28 @@ TEST_URI_CYRILLIC='vless://11111111-2222-3333-4444-555555555555@server5.test.exa
     result=$(parse_vless_uri "$TEST_URI_BASIC")
     name=$(printf '%s' "$result" | cut -d'|' -f4)
     [ "$name" = "Prague, Czechia" ]
+}
+
+@test "parse_vless_uri: decodes a percent-encoded name" {
+    load_import_server_list
+    result=$(parse_vless_uri "$TEST_URI_PERCENT_ENCODED")
+    name=$(printf '%s' "$result" | cut -d'|' -f4)
+    [ "$name" = "Амстердам, Нидерланды, Extra" ]
+}
+
+# The routers have no UTF-8 locale - KeeneticOS has no locale at all - so awk
+# works on bytes there. A character-wise filter splits a two-byte letter in
+# half and keeps whichever byte happens to match an ASCII class, which turned
+# "Амстердам" into "Амс?е?дам" on the device while passing here.
+@test "parse_vless_uri: keeps the name intact in the routers' byte locale" {
+    load_import_server_list
+    result=$(LC_ALL=C parse_vless_uri "$TEST_URI_PERCENT_ENCODED")
+    name=$(printf '%s' "$result" | cut -d'|' -f4)
+    [ "$name" = "Амстердам, Нидерланды, Extra" ]
+
+    result=$(LC_ALL=C parse_vless_uri "$TEST_URI_EMOJI_CYRILLIC")
+    name=$(printf '%s' "$result" | cut -d'|' -f4)
+    [ "$name" = "Россия, Москва" ]
 }
 
 @test "parse_vless_uri extracts reality stream params" {
