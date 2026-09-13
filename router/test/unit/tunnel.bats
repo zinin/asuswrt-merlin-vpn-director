@@ -405,6 +405,38 @@ load '../test_helper'
     [ ! -e "$TUN_DIR_TABLES" ]
 }
 
+# An apply of {} (or empty) used to log "No tunnels configured" and return 0,
+# leaving the chain, the PREROUTING jump, ip rule 16384 and the hash in place.
+# Only `stop tunnel` removed them. Wizards write {} when the last TD client
+# is gone; a leftover MARK still forces that client into the tunnel.
+@test "tunnel_apply: empty tunnels tears down previously applied Tunnel Director" {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export TUN_DIR_CHAIN=TUN_DIR
+    export TUN_DIR_PREF_BASE=16384
+    export TUN_DIR_MARK_MASK=0x00ff0000
+    export TUN_DIR_MARK_SHIFT=16
+    export TUN_DIR_TUNNELS_JSON='{"wgc1":{"clients":["192.168.50.0/24"],"exclude":["ru"]}}'
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+
+    run tunnel_apply
+    assert_success
+    [ -f "$TUN_DIR_HASH" ]
+    [ -f "$TUN_DIR_TABLES" ]
+
+    : > /tmp/bats_iptables_calls.log
+    : > /tmp/bats_ip_calls.log
+    TUN_DIR_TUNNELS_JSON='{}'
+    run tunnel_apply
+    assert_success
+    [ ! -e "$TUN_DIR_HASH" ]
+    [ ! -e "$TUN_DIR_TABLES" ]
+    grep -q -- '-t mangle -X TUN_DIR' /tmp/bats_iptables_calls.log
+    grep -q -- '-t mangle -S PREROUTING' /tmp/bats_iptables_calls.log
+    grep -q 'ip rule del pref 16384' /tmp/bats_ip_calls.log
+}
+
 # The jump is the whole point of the chain. A platform that cannot name its LAN
 # interfaces used to run the loop zero times, leaving a fully populated chain
 # with nothing jumping to it and tunnel_apply returning 0 - every client routed
@@ -484,13 +516,10 @@ load '../test_helper'
 
 @test "_tunnel_gateway: drops a value that is not an IPv4 address with a WARN" {
     load_common
-    jq '.tunnel_director.tunnels.wgc1.gateway = "gateway.example"' "$TEST_ROOT/fixtures/vpn-director.json" \
-        > "$BATS_TEST_TMPDIR/vpn-director.json"
-    export VPD_CONFIG_FILE="$BATS_TEST_TMPDIR/vpn-director.json"
-    source "$LIB_DIR/config.sh"
-    source "$LIB_DIR/ipset.sh" --source-only
-    source "$LIB_DIR/firewall.sh"
     source "$LIB_DIR/tunnel.sh" --source-only
+    # Bypass config.sh: the load-time filter would strip this key before the
+    # apply-time belt sees it. config.bats covers that path.
+    TUN_DIR_TUNNELS_JSON='{"wgc1":{"gateway":"gateway.example"}}'
     run --separate-stderr _tunnel_gateway wgc1
     assert_success
     refute_output
@@ -501,13 +530,8 @@ load '../test_helper'
 # is the only thing between "10.8.0.999" and ip route.
 @test "_tunnel_gateway: drops an address whose octet is above 255 with a WARN" {
     load_common
-    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.999"' "$TEST_ROOT/fixtures/vpn-director.json" \
-        > "$BATS_TEST_TMPDIR/vpn-director.json"
-    export VPD_CONFIG_FILE="$BATS_TEST_TMPDIR/vpn-director.json"
-    source "$LIB_DIR/config.sh"
-    source "$LIB_DIR/ipset.sh" --source-only
-    source "$LIB_DIR/firewall.sh"
     source "$LIB_DIR/tunnel.sh" --source-only
+    TUN_DIR_TUNNELS_JSON='{"wgc1":{"gateway":"10.8.0.999"}}'
     run --separate-stderr _tunnel_gateway wgc1
     assert_success
     refute_output

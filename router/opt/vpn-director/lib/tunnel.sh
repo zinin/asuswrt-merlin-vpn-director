@@ -287,9 +287,11 @@ tunnel_apply() {
     local changes=0
     local warnings=0
 
-    # Check if tunnels config is empty
+    # Check if tunnels config is empty. A leftover chain/jump/ip rule would
+    # still force previously matched clients into the tunnel, so tear down.
     if [[ -z $TUN_DIR_TUNNELS_JSON ]] || [[ $TUN_DIR_TUNNELS_JSON == "{}" ]]; then
         log "No tunnels configured"
+        tunnel_stop
         return 0
     fi
 
