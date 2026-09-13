@@ -109,6 +109,15 @@ platform_tunnel_table_release() {
     return 0
 }
 
+# Nothing sits between a forwarded packet and mangle on this firmware, so a
+# marked flow keeps reaching TUN_DIR for its whole life and there is no
+# acceleration to opt out of. Printing a target name here would make tunnel.sh
+# add a rule naming a target this kernel does not have, and every apply would
+# die on it.
+platform_tunnel_offload_target() {
+    return 1
+}
+
 platform_vpn_endpoints() {
     local slot addr
     for slot in 1 2 3 4 5; do

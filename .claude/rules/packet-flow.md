@@ -132,10 +132,12 @@ Single chain with rules for all clients:
 TUN_DIR chain:
   # Client 1 (wgc1)
   -s 192.168.50.0/24 -m set --match-set <country> dst → RETURN
+  -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 → PPE       (Keenetic only)
   -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 → MARK 0x10000
 
   # Client 2 (ovpnc1)
   -s 192.168.1.5 -m set --match-set <country> dst → RETURN
+  -s 192.168.1.5 -m mark --mark 0x0/0xff0000 → PPE           (Keenetic only)
   -s 192.168.1.5 -m mark --mark 0x0/0xff0000 → MARK 0x20000
 ```
 
@@ -146,6 +148,33 @@ PREROUTING jump, one per LAN interface (`platform_lan_ifaces`; Merlin: `br0`):
 ```
 
 The `--mark 0x0/0xff0000` condition ensures **first-match-wins**: once a packet is marked, subsequent rules skip it.
+
+### The firmware fast path (`platform_tunnel_offload_target`)
+
+KeeneticOS binds an established **forwarded** flow to a NAT/route fast path that runs before
+`mangle` and never returns to it — the conntrack hook sits at priority -200, `mangle` at -150.
+Once a flow is bound, its packets never reach `TUN_DIR`, so the `MARK` is applied to the first
+few packets only and the rest miss `ip rule 16384` and leave through the WAN carrying the
+tunnel's source address. Measured on a KN-4521: conntrack counted 24 packets of one flow while
+`TUN_DIR` counted 6, and a 1 MB download stalled at exactly one TCP window (20610 bytes).
+
+`platform_tunnel_offload_target` names the mangle target that opts a flow out of it — `PPE` on
+Keenetic, which sets `ct->fast_ext` (a condition of both the `fastnat` and the `fastroute` entry
+test) and `FOE_ALG_SKIP`, closing the hardware path too. Merlin has no such path and prints
+nothing, so the rule does not exist there at all.
+
+Placement carries the meaning: the exclusion `RETURN`s run first, so an excluded destination
+keeps its acceleration, and the opt-out sits immediately before `MARK` with the identical match,
+where the `--mark 0x0/0xff0000` test still holds.
+
+Xray needs none of this — TPROXY terminates the connection in a local socket, so no forwarded
+flow is left to accelerate. That is why Xray worked on KeeneticOS while Tunnel Director did not.
+
+A flow already bound to the fast path stays bound until its conntrack entry expires; new flows
+are correct immediately. And because `tunnel_apply` hashes the *configuration*, a router that
+already has Tunnel Director applied with an unchanged config gets the rule on its next rebuild —
+seconds away on Keenetic, where any NDM firewall rebuild wipes our chains and the `netfilter.d`
+hook re-applies. `restart tunnel` forces it.
 
 ### Position Calculation
 
@@ -283,3 +312,4 @@ Packet from 192.168.50.10 to 8.8.8.8 (foreign):
 | `lib/tunnel.sh:444-450` | PREROUTING jump with mark check | First-match-wins |
 | `lib/tunnel.sh:428-429` | ip rule creation | Fwmark → table routing |
 | `lib/tunnel.sh:128-137` | `_tunnel_ensure_routes()` | Re-install tunnel routes on an apply with no rebuild |
+| `lib/platform/keenetic.sh` | `platform_tunnel_offload_target()` | `PPE` — takes a marked flow out of the firmware fast path |

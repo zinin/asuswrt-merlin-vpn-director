@@ -243,6 +243,25 @@ platform_tunnel_table_release() {
     return 0
 }
 
+# KeeneticOS binds an established *forwarded* flow to a fast path that runs
+# before mangle and never returns to it: the conntrack hook sits at priority
+# -200 and mangle at -150, so once a flow is bound its packets never reach
+# TUN_DIR at all. Tunnel Director's MARK is then applied to the first few
+# packets only, the rest miss the ip rule and leave through the WAN. Measured
+# on a KN-4521: conntrack counted 24 packets of a flow, TUN_DIR counted 6, and
+# a 1 MB download stalled at one TCP window.
+#
+# `-j PPE` (mangle only, Keenetic's 4.9-ndm kernel) sets ct->fast_ext on the
+# conntrack entry. `!ct->fast_ext` is a condition of both the fastnat and the
+# fastroute entry test, and the same target sets FOE_ALG_SKIP, which closes the
+# hardware path too. The flag lives as long as the conntrack entry.
+#
+# Xray needs none of this: TPROXY terminates the connection in a local socket,
+# so there is no forwarded flow left to accelerate.
+platform_tunnel_offload_target() {
+    printf 'PPE\n'
+}
+
 # Hosts the firmware's own tunnels talk to, so TPROXY never captures them:
 # each OpenVPN server (remote-endpoint-address) and each Wireguard peer's
 # current endpoint (wireguard.peer[].remote, C3). RCI hands one peer back as

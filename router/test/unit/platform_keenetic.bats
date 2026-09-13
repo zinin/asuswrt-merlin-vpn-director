@@ -328,6 +328,17 @@ with_mock() {
     grep -q 'ip route flush table 2007' /tmp/bats_ip_calls.log
 }
 
+# KeeneticOS takes an established forwarded flow into a fast path that runs
+# before mangle and never returns to it, so Tunnel Director's MARK is never
+# applied and the traffic leaves through the WAN. `-j PPE` sets ct->fast_ext,
+# which is what both the fastnat and the fastroute entry tests check.
+@test "platform_tunnel_offload_target: PPE, the target that opts a flow out of the fast path" {
+    load_platform
+    run platform_tunnel_offload_target
+    assert_success
+    assert_output "PPE"
+}
+
 @test "platform_vpn_endpoints: the OpenVPN server and every Wireguard peer, one per line" {
     load_platform
     run platform_vpn_endpoints

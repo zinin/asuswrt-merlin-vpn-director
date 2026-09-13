@@ -27,6 +27,9 @@
 #   platform_tunnel_route <id> [gateway]   route spec for the tunnel table (Keenetic)
 #   platform_tunnel_route_ensure <id> <idx> [gateway] install the tunnel table route
 #   platform_tunnel_table_release <id> <idx> drop the tunnel table route
+#   platform_tunnel_offload_target         mangle target that takes a flow out of the
+#                                          platform's NAT/route acceleration; nothing
+#                                          and rc 1 when none is needed
 #   platform_vpn_endpoints                 firmware VPN server hosts, one per line
 #   platform_load_module <name>            load a kernel module
 #   platform_cron_add <name> <schedule> <cmd> / platform_cron_del <name>
@@ -53,6 +56,12 @@
 #     config knows without reading config globals: tunnel.sh passes
 #     tunnel_director.tunnels.<id>.gateway (validated, or empty) and tproxy.sh
 #     passes "$XRAY_FWMARK/$XRAY_FWMARK_MASK". Merlin ignores both.
+#   * platform_tunnel_offload_target names a target, not a rule: tunnel.sh owns
+#     where it goes. It builds the rule with the same match as the MARK rule of
+#     the client it belongs to and places it immediately before that rule, so a
+#     destination the exclusions return on keeps the platform's acceleration.
+#     A platform that needs no opt-out must print nothing - a target name the
+#     kernel does not have fails the append and takes the apply down with it.
 #   * Keenetic's tunnel tables are KEENETIC_TABLE_BASE + idx (keenetic.sh).
 #
 # Testing: VPD_PROBE_ROOT prefixes every path platform_detect looks at.

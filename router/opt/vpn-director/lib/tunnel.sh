@@ -362,6 +362,14 @@ tunnel_apply() {
         return 1
     fi
 
+    # A platform whose firmware accelerates established forwarded flows past
+    # mangle names the target that opts a flow out of it (KeeneticOS: PPE);
+    # one that needs none prints nothing and returns 1. Asked once rather than
+    # per client: one answer keeps every client's block consistent, and the
+    # platform is not made to answer the same question N times.
+    local offload_target
+    offload_target="$(platform_tunnel_offload_target)" || offload_target=""
+
     # Process each tunnel
     local tunnel_idx=0
     local tables_tmp
@@ -461,6 +469,17 @@ tunnel_apply() {
                 ensure_fw_rule -q mangle "$TUN_DIR_CHAIN" \
                     -s "$client" -m set --match-set "$excl_set" dst -j RETURN
             done <<< "$excludes"
+
+            # Take the flow out of the firmware's fast path, with the same
+            # match as the MARK rule below and immediately before it. The
+            # exclusion RETURNs above fire first, so an excluded destination
+            # keeps its acceleration; after MARK the mark test would no longer
+            # match the packet MARK had just marked.
+            if [[ -n $offload_target ]]; then
+                ensure_fw_rule -q mangle "$TUN_DIR_CHAIN" \
+                    -s "$client" -m mark --mark "0x0/$_tunnel_mark_mask_hex" \
+                    -j "$offload_target"
+            fi
 
             # Add MARK rule for this client (first-match: only if not already marked)
             ensure_fw_rule -q mangle "$TUN_DIR_CHAIN" \

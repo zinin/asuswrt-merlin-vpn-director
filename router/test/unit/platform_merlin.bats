@@ -173,6 +173,18 @@ with_mock() {
     [ ! -s /tmp/bats_ip_calls.log ]
 }
 
+# Merlin's firmware puts nothing between a forwarded packet and mangle, so
+# there is no acceleration to opt out of and nothing for tunnel.sh to insert.
+# refute_output is the load-bearing half: a target name leaking out of this
+# platform would add a rule naming a target the Merlin kernel does not have,
+# and every apply would die on it.
+@test "platform_tunnel_offload_target: merlin has no fast path to opt out of" {
+    load_platform
+    run platform_tunnel_offload_target
+    assert_failure
+    refute_output
+}
+
 @test "platform_vpn_endpoints: non-empty vpn_clientN_addr values, one per line" {
     load_platform
     run platform_vpn_endpoints

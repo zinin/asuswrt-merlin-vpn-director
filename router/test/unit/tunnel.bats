@@ -533,3 +533,38 @@ load '../test_helper'
     assert_success
     assert_equal "$(grep -cF 'ensure wgc1 0 [10.8.0.1]' "$BATS_TEST_TMPDIR/ensure.log")" 2
 }
+
+# ============================================================================
+# The platform's fast-path opt-out
+# ============================================================================
+
+# The opt-out has to carry the same match as the MARK rule and sit immediately
+# before it. Above it, the exclusion RETURNs fire first, so an excluded
+# destination keeps its acceleration; below it, `--mark 0x0/0xff0000` would no
+# longer match a packet MARK had just marked, and the rule would never fire.
+@test "tunnel_apply: the platform's offload target goes immediately before MARK, same match" {
+    load_tunnel_module
+    platform_tunnel_offload_target() { printf 'PPE\n'; }
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_success
+    run grep -- '-A TUN_DIR' /tmp/bats_iptables_calls.log
+    assert_line --index 0 'iptables -t mangle -A TUN_DIR -s 192.168.50.0/24 -m set --match-set ru dst -j RETURN'
+    assert_line --index 1 'iptables -t mangle -A TUN_DIR -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 -j PPE'
+    assert_line --index 2 'iptables -t mangle -A TUN_DIR -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 -j MARK --set-xmark 0x10000/0xff0000'
+}
+
+# Merlin names no target (platform_tunnel_offload_target returns 1), and the
+# chain must then look exactly as it did before this feature existed - a rule
+# naming a target the kernel does not have would fail the append and take the
+# whole apply down with it.
+@test "tunnel_apply: no offload rule when the platform names no target" {
+    load_tunnel_module
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_success
+    run grep -- '-A TUN_DIR' /tmp/bats_iptables_calls.log
+    assert_line --index 0 'iptables -t mangle -A TUN_DIR -s 192.168.50.0/24 -m set --match-set ru dst -j RETURN'
+    assert_line --index 1 'iptables -t mangle -A TUN_DIR -s 192.168.50.0/24 -m mark --mark 0x0/0xff0000 -j MARK --set-xmark 0x10000/0xff0000'
+    assert_equal "${#lines[@]}" 2
+}
