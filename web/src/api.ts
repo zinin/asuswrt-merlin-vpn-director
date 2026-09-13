@@ -9,6 +9,7 @@ import type {
   IPResponse,
   LogResponse,
   OkResponse,
+  PlatformInfo,
   ServersResponse,
   StatusResponse,
   UpdateCheckResponse,
@@ -63,6 +64,8 @@ export default {
     api.get<IPResponse>('/api/ip'),
   getVersion: () =>
     api.get<VersionResponse>('/api/version'),
+  getPlatform: () =>
+    api.get<PlatformInfo>('/api/platform'),
 
   // Servers
   getServers: () =>
