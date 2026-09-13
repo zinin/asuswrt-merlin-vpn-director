@@ -188,18 +188,23 @@ check_keenetic_prerequisites() {
     if [[ -r $INSTALL_TTY ]]; then
         local answer=""
         printf "Install them now with opkg? [Y/n] "
-        read -r answer < "$INSTALL_TTY" || answer=""
-        case "$answer" in
-            ""|y|Y|yes|YES)
-                # shellcheck disable=SC2086
-                if opkg update && opkg install $missing; then
-                    print_success "Installed: $missing"
-                    return 0
-                fi
-                print_error "opkg install failed"
-                exit 1
-                ;;
-        esac
+        # A readable /dev/tty is not a controlling terminal: the read then fails with
+        # ENXIO, and a failed or EOF read must refuse, not take the default-yes branch.
+        if read -r answer < "$INSTALL_TTY" 2>/dev/null; then
+            case "$answer" in
+                ""|y|Y|yes|YES)
+                    # shellcheck disable=SC2086
+                    if opkg update && opkg install $missing; then
+                        print_success "Installed: $missing"
+                        return 0
+                    fi
+                    print_error "opkg install failed"
+                    exit 1
+                    ;;
+            esac
+        else
+            printf '\n'
+        fi
     fi
     print_error "Install the missing packages first:"
     print_info "  opkg update && opkg install $missing"

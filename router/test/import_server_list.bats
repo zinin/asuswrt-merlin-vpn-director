@@ -11,6 +11,10 @@ TEST_URI_EMOJI_CYRILLIC='vless://11111111-2222-3333-4444-555555555555@server2.te
 # URI with only emoji (should fallback to hostname)
 TEST_URI_EMOJI_ONLY='vless://11111111-2222-3333-4444-555555555555@server3.test.example:8443?type=tcp&security=tls#🇺🇸🌟✨'
 
+# URI whose fragment is a truncated two-byte sequence followed by a field separator
+# (percent-encoded \xC3|evil): the filter must not carry the | into the output
+TEST_URI_TRUNCATED_UTF8='vless://11111111-2222-3333-4444-555555555555@server2.test.example:8443?type=tcp&security=tls#%C3%7Cevil'
+
 # URI with URL-encoded spaces
 TEST_URI_URLENCODED='vless://11111111-2222-3333-4444-555555555555@server4.test.example:8443?type=tcp&security=tls#New%20York%20City'
 
@@ -113,6 +117,16 @@ TEST_URI_PERCENT_ENCODED='vless://11111111-2222-3333-4444-555555555555@server6.t
     name=$(printf '%s' "$result" | cut -d'|' -f4)
     # Emoji flag should be removed, cyrillic preserved
     [ "$name" = "Россия, Москва" ]
+}
+
+@test "parse_vless_uri: a truncated two-byte sequence does not smuggle a field separator" {
+    load_import_server_list
+    result=$(parse_vless_uri "$TEST_URI_TRUNCATED_UTF8")
+    name=$(printf '%s' "$result" | cut -d'|' -f4)
+    security=$(printf '%s' "$result" | cut -d'|' -f5)
+    # The lone \xC3 is dropped with its non-continuation byte, so no | shifts the fields
+    [ "$name" = "evil" ]
+    [ "$security" = "tls" ]
 }
 
 @test "parse_vless_uri: falls back to hostname when name is only emoji" {

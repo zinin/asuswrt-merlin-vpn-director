@@ -366,9 +366,11 @@ platform_tproxy_extra_rules() {
     esac
 }
 
-# XRAY_TPROXY takes position 1; TUN_DIR goes right after it, ahead of every
-# _NDM_* jump: NDM guards its DNS routing chain with "-m mark --mark 0x0",
-# so our marks must be set before it runs.
+# XRAY_TPROXY takes position 1 when Xray is applied and TUN_DIR goes right after
+# it, ahead of every _NDM_* jump: NDM guards its DNS routing chain with
+# "-m mark --mark 0x0", so our marks must be set before it runs. Without Xray the
+# constant leaves TUN_DIR behind the first _NDM_* jump (_NDM_PREROUTING_MC on
+# 5.1.5, multicast - harmless).
 platform_prerouting_base_pos() {
     printf '2\n'
 }

@@ -238,21 +238,19 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 	}
 	defer f.Close()
 
-	// Limit download size to prevent memory exhaustion
-	limitedReader := io.LimitReader(resp.Body, maxFileSize)
+	// Limit download size to prevent memory exhaustion. One byte past the limit,
+	// so an oversized body is detected by what was written rather than by probing
+	// the reader afterwards: a Read that returns (0, nil) is allowed to, and would
+	// have let a file truncated at exactly the limit pass as complete.
+	limitedReader := io.LimitReader(resp.Body, maxFileSize+1)
 	written, err := io.Copy(f, limitedReader)
 	if err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 
-	// Check if we hit the limit (file was truncated)
-	if written == maxFileSize {
-		// Try to read one more byte - if successful, file was too large
-		buf := make([]byte, 1)
-		if n, _ := resp.Body.Read(buf); n > 0 {
-			os.Remove(target)
-			return fmt.Errorf("file exceeds maximum size (%d MB)", maxFileSize/1024/1024)
-		}
+	if written > maxFileSize {
+		os.Remove(target)
+		return fmt.Errorf("file exceeds maximum size (%d MB)", maxFileSize/1024/1024)
 	}
 
 	return nil

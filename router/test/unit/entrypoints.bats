@@ -7,13 +7,15 @@ load '../test_helper'
 # KeeneticOS has no /usr/bin/env and its root filesystem is a read-only
 # squashfs, so "#!/usr/bin/env bash" cannot be repaired on the device: every
 # one of these has to start as a POSIX shell and hand over to bash itself.
-# Library files are excluded on purpose - they are only ever sourced.
+# Library files are excluded on purpose - they are only ever sourced, except
+# lib/send-email.sh, which S99vpn-director executes.
 entry_scripts() {
     printf '%s\n' \
         "$SCRIPTS_DIR/vpn-director.sh" \
         "$SCRIPTS_DIR/configure.sh" \
         "$SCRIPTS_DIR/import_server_list.sh" \
         "$SCRIPTS_DIR/setup_telegram_bot.sh" \
+        "$SCRIPTS_DIR/lib/send-email.sh" \
         "$PROJECT_ROOT/../install.sh"
 }
 

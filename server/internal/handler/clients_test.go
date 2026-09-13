@@ -501,8 +501,8 @@ func TestClientsHandler_RouteKeyboardListsPlatformTunnelsThenConfiguredOnes(t *t
 	if *rows[1][0].CallbackData != "clients:route:OpenVPN0" || rows[1][0].Text != "OpenVPN0 office" {
 		t.Errorf("row 1 = %+v", rows[1][0])
 	}
-	if *rows[2][0].CallbackData != "clients:route:wgc1" {
-		t.Errorf("row 2 = %+v: a configured tunnel the platform does not list stays reachable", rows[2][0])
+	if *rows[2][0].CallbackData != "clients:route:wgc1" || rows[2][0].Text != "wgc1 (unknown)" {
+		t.Errorf("row 2 = %+v: a configured tunnel the platform does not list stays reachable, marked unknown", rows[2][0])
 	}
 }
 
@@ -519,6 +519,10 @@ func TestClientsHandler_RouteKeyboardFallsBackToTheConfigWhenThePlatformIsDown(t
 	rows := sender.lastKeyboard.InlineKeyboard
 	if len(rows) != 3 || *rows[1][0].CallbackData != "clients:route:wgc1" {
 		t.Errorf("rows = %+v, want xray, wgc1, Cancel", rows)
+	}
+	// The platform is what is unknown here, not the tunnel, so no "(unknown)" label.
+	if rows[1][0].Text != "wgc1" {
+		t.Errorf("row 1 text = %q, want the bare tunnel name", rows[1][0].Text)
 	}
 	if len(sender.plainTexts) == 0 || !strings.Contains(sender.plainTexts[len(sender.plainTexts)-1], "platform info unavailable") {
 		t.Errorf("plain texts = %v", sender.plainTexts)

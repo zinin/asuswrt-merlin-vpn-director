@@ -171,7 +171,7 @@ parse_vless_uri() {
         while (i <= n) {
             c = substr($0, i, 1)
             if (c ~ /[a-zA-Z0-9 .,;:!?()-]/) { out = out c; i++; continue }
-            if (c ~ /[\xC0-\xDF]/) { out = out substr($0, i, 2); i += 2; continue }
+            if (c ~ /[\xC0-\xDF]/) { if (substr($0, i + 1, 1) ~ /[\x80-\xBF]/) { out = out substr($0, i, 2); i += 2 } else { i++ }; continue }
             if (c ~ /[\xE0-\xEF]/) { i += 3; continue }
             if (c ~ /[\xF0-\xF4]/) { i += 4; continue }
             i++

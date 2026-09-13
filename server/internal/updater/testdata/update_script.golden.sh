@@ -4,6 +4,10 @@
 
 set -e
 
+# pgrep, pkill and flock are Entware's; a daemon started by hand may lack /opt/bin -
+# the same PATH the init scripts and hooks set.
+PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 CHAT_ID=42
 INITIATOR="bot"
 OLD_VERSION="v1.2.0"

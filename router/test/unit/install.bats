@@ -432,6 +432,19 @@ EOF
     [ ! -e "$BATS_TEST_TMPDIR/opkg.log" ]
 }
 
+@test "check_keenetic_prerequisites: a terminal that yields no answer prints the opkg command and exits 1" {
+    load_installer
+    export VPD_MODULES_DIR="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPD_MODULES_DIR"
+    : > "$VPD_MODULES_DIR/xt_TPROXY.ko"
+    fake_opkg bash curl jq iptables ipset ip-full
+    : > "$BATS_TEST_TMPDIR/silent-tty"       # a read that yields nothing must refuse, not default to yes
+    INSTALL_TTY="$BATS_TEST_TMPDIR/silent-tty" run check_keenetic_prerequisites
+    assert_failure
+    assert_output --partial "opkg update && opkg install"
+    [ ! -e "$BATS_TEST_TMPDIR/opkg.log" ]
+}
+
 @test "check_keenetic_prerequisites: on a terminal installs the missing packages after a yes" {
     load_installer
     export VPD_MODULES_DIR="$BATS_TEST_TMPDIR/modules"

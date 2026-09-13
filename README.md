@@ -21,7 +21,7 @@ curl -fsSL \
   -H "Pragma: no-cache" \
   -H "If-Modified-Since: Thu, 01 Jan 1970 00:00:00 GMT" \
   "https://raw.githubusercontent.com/zinin/vpn-director/master/install.sh?v=$(date +%s)" \
-| /usr/bin/env bash
+| /opt/bin/bash
 ```
 
 After installation:
@@ -61,9 +61,9 @@ After installation:
 
 ### KeeneticOS
 
-- KeeneticOS 4.x/5.x with Entware installed on USB storage
+- KeeneticOS 5.x (verified on 5.1.5) with Entware installed on USB storage
 - Firmware component "Kernel modules for Netfilter" (the router reboots once when it is added)
-- Packages `install.sh` installs on request:
+- Packages `install.sh` installs on request (bash itself must be installed first: `opkg install bash`):
   ```bash
   opkg install bash curl jq iptables ipset ip-full flock coreutils-nohup coreutils-base64 coreutils-sha256sum gawk procps-ng-pgrep procps-ng-pkill procps-ng-ps openssl-util cron xray
   ```
@@ -169,6 +169,8 @@ An update started from the Web UI is announced in Telegram to every active chat.
 Updates are authenticated by TLS to github.com and nothing else — there is no signature and no checksum on the binaries or the scripts, and they are installed and run as root. This is the same trust model as the `curl … | bash` install command above; anyone who can publish a release to this repository can run code on your router.
 
 > Upgrading **to** the first release with the unified updater is still done by the old bot-only updater, which does not know about the Web UI. Re-run the [Quick Install](#quick-install) command once after that upgrade; every later update handles both.
+
+> **Upgrading from v0.11.x or earlier.** The updater built into those releases downloads a fixed file list without `lib/platform.sh`, so pressing «Update» installs this release incompletely: the shell CLI, the firewall hooks and the daily update stop working (the Xray TPROXY and Tunnel Director rules are no longer re-applied after a firewall restart) until you re-run the [Quick Install](#quick-install) command once. The Web UI and the bot themselves keep running. Every later update reads the release manifest and needs no such step.
 
 ## Telegram Bot
 

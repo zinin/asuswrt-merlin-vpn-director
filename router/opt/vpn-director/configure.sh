@@ -578,7 +578,7 @@ step_generate_configs() {
              $tunnels
              | to_entries
              | map(
-                 (if ($existing[.key].gateway | type) == "string"
+                 (if ($existing[.key] | type) == "object" and ($existing[.key].gateway | type) == "string"
                   then $existing[.key].gateway
                   else "" end) as $gw
                  | if (.value | has("gateway") | not) and ($gw != "")

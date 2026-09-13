@@ -101,6 +101,25 @@ write_daemon_config() {
     assert_output '["192.168.50.20"]'
 }
 
+# A string in place of the tunnel object is a shape tunnel_apply tolerates with a
+# WARN, so the gateway lookup must not error on it and fail the whole save.
+@test "step_generate_configs: survives a string in place of a tunnel object" {
+    load_wizard
+    write_daemon_config
+    jq '.tunnel_director.tunnels.wgc1 = "oops"' \
+        "$VPD_DIR/vpn-director.json" > "$VPD_DIR/vpn-director.json.new"
+    mv "$VPD_DIR/vpn-director.json.new" "$VPD_DIR/vpn-director.json"
+
+    run step_generate_configs
+
+    assert_success
+    run jq -c '[.tunnel_director.tunnels.wgc1.clients, .tunnel_director.tunnels.wgc1.exclude]' \
+        "$VPD_DIR/vpn-director.json"
+    assert_output '[["192.168.50.20"],["ru"]]'
+    run jq -e '.tunnel_director.tunnels.wgc1 | has("gateway")' "$VPD_DIR/vpn-director.json"
+    assert_failure
+}
+
 # A tunnel the wizard just created has no on-disk gateway to copy. Writing
 # "gateway": "" would be worse than omitting the key.
 @test "step_generate_configs: a new tunnel has no gateway key" {

@@ -6,8 +6,9 @@ paths: "**/*.sh, jffs/**/*"
 
 ## Script Structure
 
-- Shebang: `#!/usr/bin/env bash` for libraries, which are only ever sourced. A script a
-  router executes starts `#!/bin/sh` and hands over to bash itself (see "No `/usr/bin/env`
+- Shebang: `#!/usr/bin/env bash` for libraries, which are only ever sourced - except
+  `lib/send-email.sh`, which `S99vpn-director` executes. A script a router executes starts
+  `#!/bin/sh` and hands over to bash itself (see "No `/usr/bin/env`
   on KeeneticOS" below). Both forms then `set -euo pipefail`
 - Debug mode: `DEBUG=1 ./script.sh` enables `set -x` with informative PS4
 - shellcheck annotations for intentional expansions/externals (SC2086, SC2155, SC2034)

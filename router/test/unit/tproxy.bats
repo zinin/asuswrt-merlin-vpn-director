@@ -446,9 +446,10 @@ duplicate_last_rule() {
     refute_output
 }
 
-# KeeneticOS keeps its connection-policy rules at pref 200 too (fwmark
-# 0xffffd00 lookup 42, ...). Sharing a preference is not owning it: only a rule
-# with our mark value or our table is ours to remove.
+# Another owner may park a rule at our pref (a connection policy on some
+# KeeneticOS versions; 5.1.5 measured none at 200 - its policies sit at prefs
+# 102/103, table 4097). Sharing a preference is not owning it: only a rule with
+# our mark value or our table is ours to remove.
 @test "_tproxy_setup_routing: leaves another owner's rule at the same pref alone" {
     load_tproxy_module
     ip rule add pref 200 fwmark 0xffffd00 table 42

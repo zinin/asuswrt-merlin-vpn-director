@@ -329,16 +329,20 @@ func (h *ClientsHandler) HandleTextInput(msg *tgbotapi.Message) {
 
 // showRouteSelection offers xray, every tunnel the platform lists, and the
 // tunnels already in the config the platform does not list (so an existing
-// route stays reachable). When the platform cannot be asked the config's
-// tunnels are all there is, and the user is told.
+// route stays reachable), marked "(unknown)" the way the Web UI marks them.
+// When the platform cannot be asked the config's tunnels are all there is, and
+// the user is told: the tunnel is not unknown there, the platform is, so those
+// keep their bare names.
 func (h *ClientsHandler) showRouteSelection(chatID int64, ip string, cfg *vpnconfig.VPNDirectorConfig) {
 	kb := telegram.NewKeyboard()
 
 	kb.Button("xray", "clients:route:xray").Row()
 
 	listed := map[string]bool{}
+	platformAnswered := true
 	info, err := h.deps.VPN.Platform()
 	if err != nil {
+		platformAnswered = false
 		h.deps.Sender.SendPlain(chatID, "platform info unavailable; offering the configured tunnels only")
 	} else {
 		for _, t := range info.Tunnels {
@@ -362,7 +366,11 @@ func (h *ClientsHandler) showRouteSelection(chatID int64, ip string, cfg *vpncon
 	}
 	sort.Strings(tunnelNames)
 	for _, name := range tunnelNames {
-		kb.Button(name, fmt.Sprintf("clients:route:%s", name)).Row()
+		label := name
+		if platformAnswered {
+			label += " (unknown)"
+		}
+		kb.Button(label, fmt.Sprintf("clients:route:%s", name)).Row()
 	}
 
 	kb.Button("Cancel", "clients:route:cancel").Row()

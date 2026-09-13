@@ -248,11 +248,14 @@ cmd_apply() {
             # Xray first. tproxy_apply soft-fails (a WARN and rc 0) while tunnel_apply
             # hard-fails under errexit, so this order lets a Tunnel Director failure -
             # a malformed tunnels object, say - end the run without stripping Xray
-            # clients of their TPROXY rules. The PREROUTING positions do not depend on
-            # the order: XRAY_TPROXY always inserts at 1, TUN_DIR at the position after
-            # the firmware's iface-mark rules, computed at insert time. Neither call is
-            # wrapped in `||` or `if !`: that would run its whole body with errexit
-            # off and let an unguarded failure inside pass as success.
+            # clients of their TPROXY rules. The PREROUTING positions: XRAY_TPROXY always
+            # inserts at 1; TUN_DIR at the platform's base position, computed at insert
+            # time - on Merlin the slot after the firmware's iface-mark rules, which is 1
+            # as well when no firmware VPN client is up, so the two jumps then share
+            # position 1 and the one applied last comes first (pre-existing churn; Xray
+            # still wins through ip rule pref 200). Neither call is wrapped in `||` or
+            # `if !`: that would run its whole body with errexit off and let an unguarded
+            # failure inside pass as success.
             tproxy_apply
             tunnel_apply
             ;;
@@ -438,7 +441,8 @@ cmd_cron() {
             log "Scheduled daily ipset update"
             ;;
         remove)
-            platform_cron_del vpn_director_update
+            # Removing a job that is not there is not an error, and S99 stop must not abort here.
+            platform_cron_del vpn_director_update || true
             # The legacy job as well, for the reason spelled out in install.
             platform_cron_del update_ipsets || true
             log "Removed daily ipset update"

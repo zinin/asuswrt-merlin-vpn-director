@@ -17,9 +17,12 @@ interface RouteOption {
   label: string
 }
 
-// xray first, then every tunnel the router has, then any route a listed
-// client already uses that the platform does not list - so the user can see
-// and fix it. Rebuilt whenever the platform or the clients are reloaded.
+// xray first, then every tunnel the router has. These options also feed the Add
+// form's select, and POST /api/clients rejects a route the platform does not
+// list, so a listed client's unlisted route is added only when the platform
+// itself could not be asked - the fallback the form's own message describes.
+// The client rows print their route as text, so nothing is hidden either way.
+// Rebuilt whenever the platform or the clients are reloaded.
 const routeOptions = ref<RouteOption[]>([{ value: 'xray', label: 'xray' }])
 const platformTunnels = ref<PlatformTunnel[]>([])
 const platformError = ref('')
@@ -30,9 +33,11 @@ function buildRouteOptions() {
     const desc = t.description ? ` — ${t.description}` : ''
     opts.push({ value: t.id, label: `${t.id}${desc}${t.connected ? '' : ' (down)'}` })
   }
-  for (const c of clients.value) {
-    if (!opts.some((o) => o.value === c.route)) {
-      opts.push({ value: c.route, label: `${c.route} (unknown)` })
+  if (platformError.value !== '') {
+    for (const c of clients.value) {
+      if (!opts.some((o) => o.value === c.route)) {
+        opts.push({ value: c.route, label: c.route })
+      }
     }
   }
   routeOptions.value = opts
@@ -132,8 +137,7 @@ async function removeClient(ip: string) {
 }
 
 onMounted(async () => {
-  await loadClients()
-  await loadPlatform()
+  await Promise.all([loadClients(), loadPlatform()])
 })
 </script>
 

@@ -161,7 +161,7 @@ _tunnel_ensure_routes() {
     while read -r idx tunnel; do
         [[ -n $tunnel ]] || continue
         if ! platform_tunnel_route_ensure "$tunnel" "$idx" "$(_tunnel_gateway "$tunnel")"; then
-            log -l WARN "Tunnel '$tunnel': route not installed (interface down?); traffic falls through to main"
+            log -l WARN "Tunnel '$tunnel': route not installed (interface down or not mapped?); traffic falls through to main"
         fi
     done < "$TUN_DIR_TABLES"
 }
@@ -498,7 +498,7 @@ tunnel_apply() {
         local table
         table="$(platform_tunnel_table "$tunnel" "$tunnel_idx")"
         if ! platform_tunnel_route_ensure "$tunnel" "$tunnel_idx" "$(_tunnel_gateway "$tunnel")"; then
-            log -l WARN "Tunnel '$tunnel': route not installed (interface down?); traffic falls through to main"
+            log -l WARN "Tunnel '$tunnel': route not installed (interface down or not mapped?); traffic falls through to main"
             warnings=1
         fi
 
