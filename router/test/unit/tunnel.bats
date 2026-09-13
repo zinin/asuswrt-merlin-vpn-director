@@ -394,6 +394,61 @@ load '../test_helper'
     [ -f "$TUN_DIR_TABLES" ]
 }
 
+# config.sh makes TUN_DIR_TUNNELS_JSON read-only, so a test that needs a tunnel
+# list of its own sources the modules without it - the same way the teardown test
+# further down does.
+load_tunnel_module_with() {
+    load_common
+    source "$LIB_DIR/firewall.sh"
+    export TUN_DIR_CHAIN=TUN_DIR
+    export TUN_DIR_PREF_BASE=16384
+    export TUN_DIR_MARK_MASK=0x00ff0000
+    export TUN_DIR_MARK_SHIFT=16
+    export TUN_DIR_TUNNELS_JSON="$1"
+    source "$LIB_DIR/ipset.sh" --source-only
+    source "$LIB_DIR/tunnel.sh" --source-only
+}
+
+# A tunnel the platform does not list is not a configuration state: on Keenetic
+# platform_tunnels answers only "main" while RCI does not reply, and the
+# netfilter.d hook fires exactly during an NDM rebuild. Recording the hash there
+# would send every later apply down the up-to-date branch and leave the routing
+# torn down until the next rebuild - a silent fail-open. The fixture rt_tables
+# lists wgc1, wgc2, ovpnc1 and ovpnc2, so wgc9 is unknown here.
+@test "tunnel_apply: does not record a config whose only tunnel is unknown to the platform" {
+    load_tunnel_module_with '{"wgc9":{"clients":["192.168.1.5"]}}'
+    run tunnel_apply
+    assert_success
+    assert_output --partial "not a tunnel this platform knows"
+    assert_output --partial "not recorded as up-to-date"
+    [ ! -f "$TUN_DIR_HASH" ]
+}
+
+@test "tunnel_apply: retries an unknown tunnel on the next apply instead of reporting up-to-date" {
+    load_tunnel_module_with '{"wgc9":{"clients":["192.168.1.5"]}}'
+    run tunnel_apply
+    assert_success
+    # The chain exists as far as the mock is concerned; only a recorded hash
+    # could take the second apply down the up-to-date branch.
+    fw_chain_exists() { return 0; }
+    run tunnel_apply
+    assert_success
+    # Not the bare "up-to-date": the warning above carries that phrase itself.
+    refute_output --partial "Rules are applied and up-to-date"
+    assert_output --partial "not a tunnel this platform knows"
+}
+
+@test "tunnel_apply: applies the known tunnel and still does not record the hash when another is unknown" {
+    load_tunnel_module_with '{"wgc1":{"clients":["192.168.1.5"]},"wgc9":{"clients":["192.168.1.6"]}}'
+    : > /tmp/bats_ip_calls.log
+    run tunnel_apply
+    assert_success
+    grep -q 'ip rule add pref 16384 fwmark 0x10000/0xff0000 lookup wgc1' /tmp/bats_ip_calls.log
+    run cat "$TUN_DIR_TABLES"
+    assert_output "0 wgc1"
+    [ ! -f "$TUN_DIR_HASH" ]
+}
+
 @test "tunnel_stop: releases every recorded table and removes the state file" {
     load_tunnel_module
     run tunnel_apply

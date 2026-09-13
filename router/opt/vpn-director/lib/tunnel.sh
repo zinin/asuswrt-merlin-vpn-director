@@ -286,6 +286,7 @@ tunnel_apply() {
 
     local changes=0
     local warnings=0
+    local skipped_unknown=0
 
     # Check if tunnels config is empty. A leftover chain/jump/ip rule would
     # still force previously matched clients into the tunnel, so tear down.
@@ -387,6 +388,7 @@ tunnel_apply() {
         if ! _tunnel_table_allowed "$tunnel"; then
             log -l WARN "Tunnel '$tunnel' is not a tunnel this platform knows; skipping"
             warnings=1
+            skipped_unknown=1
             continue
         fi
 
@@ -527,9 +529,23 @@ tunnel_apply() {
         pos=$((pos + 1))
     done <<< "$lan_ifaces"
 
-    # Save hash and the applied tunnel table
+    # Save hash and the applied tunnel table. The hash is what makes the next
+    # apply take the up-to-date branch, so it is recorded only when every
+    # configured tunnel was actually applied. A tunnel the platform does not list
+    # is not a configuration state: on Keenetic platform_tunnels answers only
+    # "main" while RCI does not reply, and the netfilter.d hook fires exactly
+    # during an NDM rebuild, when it may well not. Recording the hash there would
+    # send every later apply down the up-to-date branch and never restore the
+    # routing until the next rebuild wipes the chain - a silent fail-open. On
+    # Merlin the only case is a typo in the tunnel id, which then warns on every
+    # apply instead of once.
     mkdir -p "$(dirname "$TUN_DIR_HASH")"
-    printf '%s\n' "$new_hash" > "$TUN_DIR_HASH"
+    if [[ $skipped_unknown -eq 0 ]]; then
+        printf '%s\n' "$new_hash" > "$TUN_DIR_HASH"
+    else
+        rm -f "$TUN_DIR_HASH"
+        log -l WARN "Tunnel Director: a configured tunnel is unknown to the platform (RCI down, or a typo in the id); this apply is not recorded as up-to-date and the next apply retries"
+    fi
     cp -f "$tables_tmp" "$TUN_DIR_TABLES"
 
     if [[ $changes -eq 0 ]]; then
