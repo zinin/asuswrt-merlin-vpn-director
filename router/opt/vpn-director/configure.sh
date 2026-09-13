@@ -557,17 +557,37 @@ step_generate_configs() {
     # Write to a temp file first: a '>' redirect truncates the live config
     # before jq runs, so a generator failure would take the jwt_secret with it.
     _vpd_cfg_tmp=$(mktemp "$VPD_DIR/vpn-director.json.XXXXXX")
+    # The wizard's in-memory tunnels are {clients, exclude} only. Copy
+    # gateway from the on-disk object for ids that still exist, so a
+    # hand-set Keenetic OpenVPN next hop survives a wizard save. Do not
+    # write "gateway": "" and do not invent the key on a newly created
+    # tunnel. `$existing[.key].gateway // empty` would drop new ids:
+    # empty as $gw skips the map item.
     if printf '%s' "$base_json" | jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
         --argjson servers "$xray_servers_json" \
         --argjson active "$xray_active_server_json" \
-        '.xray.clients = $clients |
+        '(.tunnel_director.tunnels // {}) as $existing |
+         .xray.clients = $clients |
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
          .xray.active_server = $active |
-         .tunnel_director.tunnels = $tunnels' \
+         .tunnel_director.tunnels = (
+             $tunnels
+             | to_entries
+             | map(
+                 (if ($existing[.key].gateway | type) == "string"
+                  then $existing[.key].gateway
+                  else "" end) as $gw
+                 | if (.value | has("gateway") | not) and ($gw != "")
+                   then .value += {gateway: $gw}
+                   else .
+                   end
+               )
+             | from_entries
+         )' \
         > "$_vpd_cfg_tmp"; then
         chmod 600 "$_vpd_cfg_tmp"
         mv -f "$_vpd_cfg_tmp" "$VPD_DIR/vpn-director.json"

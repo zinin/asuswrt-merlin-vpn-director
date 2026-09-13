@@ -155,3 +155,30 @@ load 'test_helper'
     [[ "$exclude" == *"ru"* ]]
     rm -f "$tmp_cfg"
 }
+
+# Spec 12: a tunnel gateway that is not a dotted IPv4 is dropped at load so
+# it never reaches ip route. The rest of the tunnel (and the rest of the
+# config) still loads; apply-time _tunnel_gateway is the belt.
+@test "config.sh: drops a non-IPv4 tunnel gateway and keeps a valid one" {
+    load_common
+    local tmp_cfg="$BATS_TEST_TMPDIR/vpn-director-gateway.json"
+    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.1" |
+        .tunnel_director.tunnels.ovpnc1 = {"clients":["192.168.1.5"],"exclude":["ru"],"gateway":"not-an-ip"}' \
+        "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1.gateway')" = "10.8.0.1" ]
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.ovpnc1 | has("gateway")')" = "false" ]
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.ovpnc1.clients[0]')" = "192.168.1.5" ]
+    grep -q "WARN.*invalid gateway 'not-an-ip'" "$LOG_FILE"
+}
+
+@test "config.sh: drops a gateway whose octet is above 255" {
+    local tmp_cfg="$BATS_TEST_TMPDIR/vpn-director-gateway-octet.json"
+    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.999"' \
+        "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1 | has("gateway")')" = "false" ]
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1.clients[0]')" = "192.168.50.0/24" ]
+}

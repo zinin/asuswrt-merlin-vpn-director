@@ -82,6 +82,38 @@ write_daemon_config() {
     assert_output '[["192.168.50.10"],["ru"],["wgc1"]]'
 }
 
+# C6: a hand-set gateway (Keenetic OpenVPN topology p2p) lives on the on-disk
+# tunnel object. The wizard rebuilds tunnels as {clients, exclude} only and
+# used to replace the whole object, dropping gateway on every save.
+@test "step_generate_configs: keeps an existing tunnel gateway" {
+    load_wizard
+    write_daemon_config
+    jq '.tunnel_director.tunnels.wgc1 = {"clients":["192.168.50.99"],"exclude":["de"],"gateway":"10.73.149.1"}' \
+        "$VPD_DIR/vpn-director.json" > "$VPD_DIR/vpn-director.json.new"
+    mv "$VPD_DIR/vpn-director.json.new" "$VPD_DIR/vpn-director.json"
+
+    run step_generate_configs
+
+    assert_success
+    run jq -r '.tunnel_director.tunnels.wgc1.gateway' "$VPD_DIR/vpn-director.json"
+    assert_output "10.73.149.1"
+    run jq -c '.tunnel_director.tunnels.wgc1.clients' "$VPD_DIR/vpn-director.json"
+    assert_output '["192.168.50.20"]'
+}
+
+# A tunnel the wizard just created has no on-disk gateway to copy. Writing
+# "gateway": "" would be worse than omitting the key.
+@test "step_generate_configs: a new tunnel has no gateway key" {
+    load_wizard
+    write_daemon_config
+
+    run step_generate_configs
+
+    assert_success
+    run jq -e '.tunnel_director.tunnels.wgc1 | has("gateway")' "$VPD_DIR/vpn-director.json"
+    assert_failure
+}
+
 @test "step_generate_configs: falls back to template defaults on a first run" {
     load_wizard
 

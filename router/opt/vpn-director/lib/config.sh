@@ -57,13 +57,48 @@ _cfg_arr_active() {
 # malformed (e.g. string-valued) clients through untouched so tunnel_apply can
 # validate and warn. Without the array guard, "string - $p" is a jq type error
 # that, under set -e, aborts sourcing this file.
-TUN_DIR_TUNNELS_JSON=$(jq --argjson p "$_PAUSED_CLIENTS_JSON" \
-    '(.tunnel_director.tunnels // {})
-     | to_entries
-     | map(if (.value | type) == "object" and ((.value.clients // []) | type) == "array"
-           then .value.clients = ((.value.clients // []) - $p)
+#
+# Spec 12: drop a tunnel.gateway that is not a dotted IPv4. Do not abort the
+# load; _tunnel_gateway is the apply-time belt for callers that skip this file.
+TUN_DIR_TUNNELS_JSON=$(jq --argjson p "$_PAUSED_CLIENTS_JSON" '
+    def ipv4:
+      type == "string"
+      and test("^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$")
+      and (split(".") | map(tonumber) | all(. <= 255));
+    (.tunnel_director.tunnels // {})
+    | to_entries
+    | map(
+        if (.value | type) == "object" then
+          (if (.value | has("gateway")) and (.value.gateway | ipv4 | not)
+           then .value |= del(.gateway)
            else . end)
-     | from_entries' "$VPD_CONFIG_FILE")
+          | if ((.value.clients // []) | type) == "array"
+            then .value.clients = ((.value.clients // []) - $p)
+            else .
+            end
+        else . end
+      )
+    | from_entries
+' "$VPD_CONFIG_FILE")
+
+if declare -F log >/dev/null 2>&1; then
+    while IFS=$'\t' read -r _tid _gw; do
+        [[ -n ${_tid:-} ]] || continue
+        log -l WARN "Tunnel '${_tid}': invalid gateway '${_gw}' ignored (expected an IPv4 address)"
+    done < <(jq -r '
+        def ipv4:
+          type == "string"
+          and test("^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$")
+          and (split(".") | map(tonumber) | all(. <= 255));
+        (.tunnel_director.tunnels // {})
+        | to_entries[]
+        | select((.value | type) == "object"
+                 and (.value | has("gateway"))
+                 and (.value.gateway | ipv4 | not))
+        | "\(.key)\t\(.value.gateway | tostring)"
+    ' "$VPD_CONFIG_FILE")
+    unset _tid _gw
+fi
 IPS_BDR_DIR=$(_cfg '.data_dir')
 
 ###################################################################################################
