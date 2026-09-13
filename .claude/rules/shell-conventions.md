@@ -6,7 +6,9 @@ paths: "**/*.sh, jffs/**/*"
 
 ## Script Structure
 
-- Shebang: `#!/usr/bin/env bash` with `set -euo pipefail`
+- Shebang: `#!/usr/bin/env bash` for libraries, which are only ever sourced. A script a
+  router executes starts `#!/bin/sh` and hands over to bash itself (see "No `/usr/bin/env`
+  on KeeneticOS" below). Both forms then `set -euo pipefail`
 - Debug mode: `DEBUG=1 ./script.sh` enables `set -x` with informative PS4
 - shellcheck annotations for intentional expansions/externals (SC2086, SC2155, SC2034)
 
@@ -231,14 +233,45 @@ have_cmd() {
 }
 ```
 
-Scripts with a `#!/usr/bin/env bash` shebang run under Entware's bash
-(`/opt/bin/bash`), where `command -v` works — this applies to `#!/bin/sh`
-scripts: the generated update script and the init scripts.
+Scripts that reach bash run under Entware's bash (`/opt/bin/bash`), where
+`command -v` works; the rule above is for what stays in `#!/bin/sh`: the
+generated update script, the init scripts and the NDM hooks. KeeneticOS's
+`/bin/sh` does have `command` (measured on 5.1.5), Asuswrt-Merlin's does not,
+so anything shipped to both platforms must assume it is missing.
 
-**Related**: `/bin/bash` on the router is a symlink to busybox. A login shell
-puts `/opt/bin` first in `PATH`, so `curl … | bash` resolves to the real bash
-5.x, but a non-interactive `ssh router 'bash script.sh'` does not — call
+**Related**: `/bin/bash` on the Merlin router is a symlink to busybox. A login
+shell puts `/opt/bin` first in `PATH`, so `curl … | bash` resolves to the real
+bash 5.x, but a non-interactive `ssh router 'bash script.sh'` does not — call
 `/opt/bin/bash` explicitly there.
+
+### No `/usr/bin/env` on KeeneticOS
+
+**Problem**: KeeneticOS has neither `/usr/bin/env` nor `/bin/env`, and its root
+filesystem is a read-only squashfs, so nothing can be added there. A script
+shipped with `#!/usr/bin/env bash` dies on rc 126, `bad interpreter` — by hand,
+from `S99vpn-director`, from an NDM hook, and from the Go daemons, which run
+the CLI through `exec.CommandContext` on its own path.
+
+**Solution**: every script a router executes starts as a POSIX shell and hands
+over to bash by absolute path, Entware's first:
+
+```sh
+#!/bin/sh
+if [ -z "${BASH_VERSION:-}" ]; then
+    for _vpd_bash in /opt/bin/bash /usr/bin/bash /bin/bash; do
+        [ -x "$_vpd_bash" ] && exec "$_vpd_bash" "$0" "$@"
+    done
+    echo "$0: bash not found; install it (Entware package \"bash\")" >&2
+    exit 1
+fi
+```
+
+`PATH` is deliberately not consulted: Merlin's `/bin/sh` has no `command`
+builtin and its `/bin/bash` is busybox, so both `command -v bash` and a bare
+`exec bash` would pick the wrong interpreter or fail. Sourcing the script from
+bash (`source install.sh --source-only` in the tests) skips the block, because
+`BASH_VERSION` is already set. `router/test/unit/entrypoints.bats` pins the
+block in every file that needs it.
 
 ### A deleted working directory breaks monit and every shell below it
 

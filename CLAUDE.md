@@ -109,7 +109,10 @@ cd server && go run ./cmd/webui --dev
 
 ## Shell Conventions
 
-- Shebang: `#!/usr/bin/env bash` with `set -euo pipefail`
+- Shebang: sourced libraries keep `#!/usr/bin/env bash`; a script a router executes
+  (`vpn-director.sh`, `configure.sh`, `import_server_list.sh`, `setup_telegram_bot.sh`,
+  `install.sh`) starts `#!/bin/sh` and hands over to bash by absolute path — KeeneticOS
+  has no `/usr/bin/env`. Both forms then `set -euo pipefail`
 - Debug: `DEBUG=1 ./script.sh` enables tracing with informative PS4
 - Conditionals: Use `[[ ]]` instead of `[ ]`
 - Logging: `log -l ERROR|WARN|INFO|DEBUG|TRACE "message"`
