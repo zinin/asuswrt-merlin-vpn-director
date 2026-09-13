@@ -351,6 +351,24 @@ EOF
 # _tproxy_setup_routing / _tproxy_teardown_routing - fwmark rule for TPROXY
 # ============================================================================
 
+# The routers' iproute2 takes no selectors on "ip rule show" (mocks/ip refuses
+# them the way the tool does), so a preference is filtered by the caller.
+rules_at_pref() {
+    ip rule show | grep "^$1:" || true
+}
+
+# The kernel refuses an exact duplicate through "ip rule add", but an older
+# version of this module left duplicates behind all the same - it added its
+# rule under a different table label, which the kernel accepted, and the copies
+# accumulated. Reproduce that state the way the kernel would hold it.
+duplicate_last_rule() {
+    local f="${BATS_IP_RULES_FILE:-/tmp/bats_test_ip_rules}" n="${1:-1}" line
+    line="$(tail -1 "$f")"
+    while (( n-- > 0 )); do
+        printf '%s\n' "$line" >> "$f"
+    done
+}
+
 # The kernel prints a routing table by its rt_tables name, so table 100 comes
 # back as "lookup wan0" on Asuswrt-Merlin. A check that looks for the number
 # never recognises its own rule and re-adds it on every apply.
@@ -360,7 +378,7 @@ EOF
     _tproxy_setup_routing
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_equal "$(grep -c 'fwmark 0x100/0x100' <<< "$output")" 1
 }
@@ -368,12 +386,11 @@ EOF
 @test "_tproxy_setup_routing: collapses duplicates left behind by an older version" {
     load_tproxy_module
     ip rule add pref 200 fwmark 0x100/0x100 table 100
-    ip rule add pref 200 fwmark 0x100/0x100 table 100
-    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    duplicate_last_rule 2
 
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_equal "$(grep -c 'fwmark 0x100/0x100' <<< "$output")" 1
 }
@@ -381,11 +398,11 @@ EOF
 @test "_tproxy_teardown_routing: removes every copy of the rule" {
     load_tproxy_module
     ip rule add pref 200 fwmark 0x100/0x100 table 100
-    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    duplicate_last_rule 1
 
     _tproxy_teardown_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     refute_output
 }
@@ -400,7 +417,7 @@ EOF
 
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_output --partial "lookup wan0"
     refute_output --partial "lookup wgc1"
@@ -412,7 +429,7 @@ EOF
 
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_output --partial "fwmark 0x100/0x100"
     refute_output --partial "0x1ff"
@@ -424,7 +441,7 @@ EOF
 
     _tproxy_teardown_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     refute_output
 }
@@ -440,7 +457,7 @@ EOF
     assert_success
     refute_output --partial "Removed stale ip rule"
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_output --partial "fwmark 0xffffd00 lookup 42"
     assert_output --partial "fwmark 0x100/0x100 lookup wan0"
 }
@@ -453,7 +470,7 @@ EOF
 
     _tproxy_teardown_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_output "200:	from all fwmark 0xffffd00 lookup 42"
 }
 

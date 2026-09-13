@@ -73,19 +73,28 @@ case "$1" in
     rule)
         case "$2" in
             show)
-                _parse_rule_args "${@:3}"
-                if [[ -n $_pref ]]; then
-                    # "ip rule show pref N" prints only the matching rules.
-                    grep "^$_pref:" "$RULES_FILE" 2>/dev/null || true
-                else
-                    printf '0:\tfrom all lookup local\n'
-                    cat "$RULES_FILE" 2>/dev/null || true
+                # iproute2 takes no selectors here: 4.4 (Entware's ip-full on
+                # KeeneticOS) answers with this message and exits 1. A caller
+                # that asks it to filter gets nothing and concludes its rule is
+                # missing, so the mock refuses the same way the tool does.
+                if [[ $# -gt 2 ]]; then
+                    echo '"ip rule show" does not take any arguments.' >&2
+                    exit 1
                 fi
+                printf '0:\tfrom all lookup local\n'
+                cat "$RULES_FILE" 2>/dev/null || true
                 ;;
             add)
                 _parse_rule_args "${@:3}"
-                _rule_line >> "$RULES_FILE"
-                printf '\n' >> "$RULES_FILE"
+                # The kernel refuses an exact duplicate (EEXIST). Under errexit
+                # that aborts the caller, which is how a re-apply that fails to
+                # recognise its own rule dies.
+                target=$(_rule_line)
+                if grep -qxF "$target" "$RULES_FILE" 2>/dev/null; then
+                    echo "RTNETLINK answers: File exists" >&2
+                    exit 2
+                fi
+                printf '%s\n' "$target" >> "$RULES_FILE"
                 ;;
             del)
                 _parse_rule_args "${@:3}"

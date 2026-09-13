@@ -238,7 +238,12 @@ _tproxy_setup_routing() {
             ip rule del pref "$XRAY_RULE_PREF" 2>/dev/null || true
         fi
         log -l WARN "Removed stale ip rule: pref $XRAY_RULE_PREF fwmark ${mark:-none} lookup ${table:-none}"
-    done <<< "$(ip rule show pref "$XRAY_RULE_PREF" 2>/dev/null || true)"
+    # "ip rule show pref N" is refused by iproute2 4.4 (Entware's ip-full on
+    # KeeneticOS answers '"ip rule show" does not take any arguments.'), so the
+    # preference is filtered here. Asking the tool would silently yield an empty
+    # list, and the rule below would be added a second time - which the kernel
+    # refuses with EEXIST, killing the apply under errexit.
+    done <<< "$(ip rule show 2>/dev/null | grep "^$XRAY_RULE_PREF:" || true)"
 
     if [[ $kept -eq 0 ]]; then
         ip rule add pref "$XRAY_RULE_PREF" fwmark "$want_mark" table "$XRAY_ROUTE_TABLE"
@@ -281,7 +286,12 @@ _tproxy_teardown_routing() {
         else
             ip rule del pref "$XRAY_RULE_PREF" table "$table" 2>/dev/null || true
         fi
-    done <<< "$(ip rule show pref "$XRAY_RULE_PREF" 2>/dev/null || true)"
+    # "ip rule show pref N" is refused by iproute2 4.4 (Entware's ip-full on
+    # KeeneticOS answers '"ip rule show" does not take any arguments.'), so the
+    # preference is filtered here. Asking the tool would silently yield an empty
+    # list, and the rule below would be added a second time - which the kernel
+    # refuses with EEXIST, killing the apply under errexit.
+    done <<< "$(ip rule show 2>/dev/null | grep "^$XRAY_RULE_PREF:" || true)"
 
     ip route del local default dev lo table "$XRAY_ROUTE_TABLE" 2>/dev/null || true
     log "Removed TPROXY routing configuration"
