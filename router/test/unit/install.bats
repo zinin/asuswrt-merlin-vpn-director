@@ -9,8 +9,14 @@ load_installer() {
     source "$PROJECT_ROOT/../install.sh" --source-only
     VPD_DIR="$BATS_TEST_TMPDIR/vpn-director"
     INIT_DIR="$BATS_TEST_TMPDIR/init.d"
+    # create_directories also mkdirs XRAY_CONFIG_DIR; /opt/etc is not writable here.
+    XRAY_CONFIG_DIR="$BATS_TEST_TMPDIR/xray"
     mkdir -p "$VPD_DIR" "$INIT_DIR"
     WEBUI_INIT="$INIT_DIR/S98vpn-director-webui"
+    # What download_scripts installs before the LAN facts are needed.
+    cp -r "$SCRIPTS_DIR/lib" "$VPD_DIR/lib"
+    PLATFORM=merlin
+    load_platform_lib
 }
 
 # fake_init writes a stand-in init script that records its arguments and exits
@@ -347,4 +353,165 @@ EOF
     assert_failure
     assert_output --partial "no file for platform merlin"
     refute_output --partial "Installed"
+}
+
+# ============================================================================
+# Platform detection and the Keenetic prerequisites
+# ============================================================================
+
+@test "detect_platform: keenetic, merlin, or a refusal" {
+    load_installer
+    local root="$BATS_TEST_TMPDIR/root"
+    mkdir -p "$root/opt/etc/ndm" "$root/bin"
+    printf '#!/bin/sh\n' > "$root/bin/ndmc"
+    chmod +x "$root/bin/ndmc"
+    VPD_PROBE_ROOT="$root" detect_platform
+    assert_equal "$PLATFORM" keenetic
+
+    root="$BATS_TEST_TMPDIR/root2"
+    mkdir -p "$root/jffs" "$root/bin"
+    printf '#!/bin/sh\n' > "$root/bin/nvram"
+    chmod +x "$root/bin/nvram"
+    VPD_PROBE_ROOT="$root" detect_platform
+    assert_equal "$PLATFORM" merlin
+
+    mkdir -p "$BATS_TEST_TMPDIR/empty"
+    VPD_PROBE_ROOT="$BATS_TEST_TMPDIR/empty" run detect_platform
+    assert_failure
+    assert_output --partial "Unsupported platform"
+}
+
+# fake_opkg <installed...> answers "opkg status <pkg>" for the named packages
+# and records every "opkg install".
+fake_opkg() {
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat > "$BATS_TEST_TMPDIR/bin/opkg" <<EOF
+#!/bin/bash
+installed=" $* "
+case "\$1" in
+    status)  [[ "\$installed" == *" \$2 "* ]] && echo "Status: install user installed"; exit 0 ;;
+    update)  exit 0 ;;
+    install) shift; echo "install \$*" >> "$BATS_TEST_TMPDIR/opkg.log"; exit 0 ;;
+esac
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/opkg"
+    export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+@test "check_keenetic_prerequisites: refuses without the TPROXY kernel module and names the component" {
+    load_installer
+    export VPD_MODULES_DIR="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPD_MODULES_DIR"
+    run check_keenetic_prerequisites
+    assert_failure
+    assert_output --partial "xt_TPROXY.ko not found"
+    assert_output --partial "Kernel modules for Netfilter"
+}
+
+@test "check_keenetic_prerequisites: passes when the module and every package are there" {
+    load_installer
+    export VPD_MODULES_DIR="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPD_MODULES_DIR"
+    : > "$VPD_MODULES_DIR/xt_TPROXY.ko"
+    fake_opkg $KEENETIC_PACKAGES
+    run check_keenetic_prerequisites
+    assert_success
+    assert_output --partial "Required Entware packages are installed"
+}
+
+@test "check_keenetic_prerequisites: without a terminal it prints the opkg command and exits 1" {
+    load_installer
+    export VPD_MODULES_DIR="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPD_MODULES_DIR"
+    : > "$VPD_MODULES_DIR/xt_TPROXY.ko"
+    fake_opkg bash curl jq iptables ipset ip-full
+    INSTALL_TTY="$BATS_TEST_TMPDIR/no-tty" run check_keenetic_prerequisites
+    assert_failure
+    assert_output --partial "opkg update && opkg install flock coreutils-nohup"
+    assert_output --partial " xray"
+    [ ! -e "$BATS_TEST_TMPDIR/opkg.log" ]
+}
+
+@test "check_keenetic_prerequisites: on a terminal installs the missing packages after a yes" {
+    load_installer
+    export VPD_MODULES_DIR="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPD_MODULES_DIR"
+    : > "$VPD_MODULES_DIR/xt_TPROXY.ko"
+    fake_opkg bash curl jq iptables ipset ip-full flock coreutils-nohup coreutils-base64 coreutils-sha256sum gawk procps-ng-pgrep procps-ng-pkill procps-ng-ps openssl-util
+    printf '\n' > "$BATS_TEST_TMPDIR/tty"   # Enter = the default, yes
+    INSTALL_TTY="$BATS_TEST_TMPDIR/tty" run check_keenetic_prerequisites
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/opkg.log"
+    assert_output "install cron xray"
+}
+
+@test "check_keenetic_prerequisites: a no on the terminal prints the command and exits 1" {
+    load_installer
+    export VPD_MODULES_DIR="$BATS_TEST_TMPDIR/modules"
+    mkdir -p "$VPD_MODULES_DIR"
+    : > "$VPD_MODULES_DIR/xt_TPROXY.ko"
+    fake_opkg bash
+    printf 'n\n' > "$BATS_TEST_TMPDIR/tty"
+    INSTALL_TTY="$BATS_TEST_TMPDIR/tty" run check_keenetic_prerequisites
+    assert_failure
+    assert_output --partial "opkg update && opkg install"
+    [ ! -e "$BATS_TEST_TMPDIR/opkg.log" ]
+}
+
+@test "release_arch: aarch64, armv7l and mips map to release asset suffixes" {
+    load_installer
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    for m in aarch64 armv7l mips x86_64; do
+        printf '#!/bin/bash\necho %s\n' "$m" > "$BATS_TEST_TMPDIR/bin/uname"
+        chmod +x "$BATS_TEST_TMPDIR/bin/uname"
+        PATH="$BATS_TEST_TMPDIR/bin:$PATH" run release_arch
+        case "$m" in
+            aarch64) assert_output arm64 ;;
+            armv7l)  assert_output arm ;;
+            mips)    assert_output mipsle ;;
+            x86_64)  assert_failure; refute_output ;;
+        esac
+    done
+}
+
+@test "create_directories: hook directories per platform, under INSTALL_ROOT" {
+    load_installer
+    INSTALL_ROOT="$BATS_TEST_TMPDIR/root"
+    PLATFORM=merlin run create_directories
+    assert_success
+    [ -d "$INSTALL_ROOT/jffs/scripts" ]
+    [ ! -d "$INSTALL_ROOT/opt/etc/ndm" ]
+
+    INSTALL_ROOT="$BATS_TEST_TMPDIR/root2"
+    PLATFORM=keenetic run create_directories
+    assert_success
+    [ -d "$INSTALL_ROOT/opt/etc/ndm/netfilter.d" ]
+    [ -d "$INSTALL_ROOT/opt/etc/ndm/wan.d" ]
+    [ -d "$INSTALL_ROOT/opt/etc/ndm/iflayerchanged.d" ]
+    [ ! -d "$INSTALL_ROOT/opt/etc/ndm/ifstatechanged.d" ]
+    [ -d "$INSTALL_ROOT/opt/etc/cron.d" ]
+    [ ! -d "$INSTALL_ROOT/jffs" ]
+}
+
+@test "lan_ip and lan_hostname: from the installed platform library, with defaults" {
+    load_installer
+    PLATFORM=merlin
+    load_platform_lib
+    run lan_ip
+    assert_output "192.168.50.1"
+    run lan_hostname
+    assert_output "RT-AX88U-1234"
+    NVRAM_NO_LAN_IP=1 run lan_ip
+    assert_output "192.168.1.1"
+}
+
+@test "print_next_steps: names the login per platform" {
+    load_installer
+    RELEASE_TAG=v1.0.0
+    WEBUI_URL="https://192.168.1.1:8444"
+    PLATFORM=keenetic run print_next_steps
+    assert_output --partial "root"
+    assert_output --partial "Entware password"
+    PLATFORM=merlin run print_next_steps
+    assert_output --partial "router admin username and password"
 }

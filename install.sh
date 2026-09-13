@@ -22,7 +22,7 @@ if [[ ${DEBUG:-0} == 1 ]]; then
 fi
 
 ###############################################################################
-# VPN Director Installer for Asuswrt-Merlin
+# VPN Director Installer for Asuswrt-Merlin and KeeneticOS
 # Downloads and installs scripts. Run configure.sh after for setup.
 ###############################################################################
 
@@ -34,20 +34,28 @@ NC='\033[0m' # No Color
 
 # Installation paths
 VPD_DIR="/opt/vpn-director"
-JFFS_HOOKS_DIR="/jffs/scripts"
 XRAY_CONFIG_DIR="/opt/etc/xray"
 GITHUB_REPO="zinin/vpn-director"
 INIT_DIR="/opt/etc/init.d"
 WEBUI_URL=""   # set by start_webui once the daemon answers; read by print_next_steps
 
-# Platform tag that selects files from router/files.manifest. Detection of
-# Keenetic lands together with its platform module; until then this installer
-# serves Asuswrt-Merlin only.
-PLATFORM="merlin"
+# Platform tag that selects files from router/files.manifest, set by
+# detect_platform with an inline copy of lib/platform.sh's rules: the library
+# is not installed yet when the installer starts.
+PLATFORM=""
 
 # Root the manifest files are installed under: "" on a router, a temporary
 # directory in tests.
 INSTALL_ROOT="${INSTALL_ROOT:-}"
+
+# Where a question to the user is read from when stdin is the script itself
+# (curl ... | bash); tests point it at a file.
+INSTALL_TTY="${INSTALL_TTY:-/dev/tty}"
+
+# Entware packages VPN Director needs on KeeneticOS (spec 6.6): the router's
+# busybox has no flock, nohup, pkill, openssl or gawk, its wget cannot do TLS,
+# and cron and xray are not there at all.
+KEENETIC_PACKAGES="bash curl jq iptables ipset ip-full flock coreutils-nohup coreutils-base64 coreutils-sha256sum gawk procps-ng-pgrep procps-ng-pkill procps-ng-ps openssl-util cron xray"
 
 ###############################################################################
 # Helper functions
@@ -106,15 +114,25 @@ resolve_release_tag() {
 }
 
 ###############################################################################
-# Environment check
+# Platform detection and environment check
 ###############################################################################
 
-check_environment() {
-    if [[ ! -d /jffs ]]; then
-        print_error "This script must be run on Asuswrt-Merlin router"
+# detect_platform - sets PLATFORM with the rules of lib/platform.sh
+#   (VPD_PROBE_ROOT prefixes the probed paths, for tests)
+detect_platform() {
+    local root="${VPD_PROBE_ROOT:-}"
+    if [[ -d "$root/opt/etc/ndm" ]] && [[ -x "$root/bin/ndmc" ]]; then
+        PLATFORM="keenetic"
+    elif [[ -d "$root/jffs" ]] && [[ -x "$root/bin/nvram" ]]; then
+        PLATFORM="merlin"
+    else
+        print_error "Unsupported platform: neither Asuswrt-Merlin nor KeeneticOS detected"
         exit 1
     fi
+    print_success "Platform: $PLATFORM"
+}
 
+check_environment() {
     # Check for Entware
     if [[ ! -d /opt/bin ]]; then
         print_error "Entware not found. Install Entware first."
@@ -132,6 +150,60 @@ check_environment() {
         print_info "Install with: opkg install curl"
         exit 1
     fi
+
+    if [[ $PLATFORM == keenetic ]]; then
+        check_keenetic_prerequisites
+    fi
+}
+
+# check_keenetic_prerequisites - the TPROXY kernel module and the Entware packages
+#   The module ships in the firmware component "Kernel modules for Netfilter";
+#   without it there is nothing to insmod and TPROXY cannot work, so stop
+#   before downloading anything. Missing packages are installed on request
+#   when a terminal can answer, else listed with the command and refused.
+check_keenetic_prerequisites() {
+    local modules_dir="${VPD_MODULES_DIR:-/lib/modules/$(uname -r)}"
+    if [[ ! -f "$modules_dir/xt_TPROXY.ko" ]]; then
+        print_error "xt_TPROXY.ko not found in $modules_dir"
+        print_info "Enable the firmware component \"Kernel modules for Netfilter\" (opkg-kmod-netfilter):"
+        print_info "  router web UI -> Management -> System settings -> Component options"
+        print_info "The router rebuilds its firmware and reboots; then run this installer again."
+        exit 1
+    fi
+
+    local pkg missing=""
+    # shellcheck disable=SC2086  # KEENETIC_PACKAGES is a space-separated list
+    for pkg in $KEENETIC_PACKAGES; do
+        if ! opkg status "$pkg" 2>/dev/null | grep -q '^Status: install'; then
+            missing="$missing $pkg"
+        fi
+    done
+    missing="${missing# }"
+    if [[ -z $missing ]]; then
+        print_success "Required Entware packages are installed"
+        return 0
+    fi
+
+    print_info "Missing Entware packages: $missing"
+    if [[ -r $INSTALL_TTY ]]; then
+        local answer=""
+        printf "Install them now with opkg? [Y/n] "
+        read -r answer < "$INSTALL_TTY" || answer=""
+        case "$answer" in
+            ""|y|Y|yes|YES)
+                # shellcheck disable=SC2086
+                if opkg update && opkg install $missing; then
+                    print_success "Installed: $missing"
+                    return 0
+                fi
+                print_error "opkg install failed"
+                exit 1
+                ;;
+        esac
+    fi
+    print_error "Install the missing packages first:"
+    print_info "  opkg update && opkg install $missing"
+    exit 1
 }
 
 ###############################################################################
@@ -141,13 +213,58 @@ check_environment() {
 create_directories() {
     print_info "Creating directories..."
 
-    mkdir -p "$VPD_DIR/lib"
-    mkdir -p "$VPD_DIR/data"
-    mkdir -p "$XRAY_CONFIG_DIR"
-    mkdir -p "$INIT_DIR"
-    mkdir -p "$JFFS_HOOKS_DIR"
+    mkdir -p "$VPD_DIR/lib" "$VPD_DIR/data" "$XRAY_CONFIG_DIR" "$INIT_DIR"
+    case "$PLATFORM" in
+        merlin)
+            mkdir -p "${INSTALL_ROOT}/jffs/scripts"
+            ;;
+        keenetic)
+            mkdir -p "${INSTALL_ROOT}/opt/etc/ndm/netfilter.d" "${INSTALL_ROOT}/opt/etc/ndm/wan.d" \
+                "${INSTALL_ROOT}/opt/etc/ndm/iflayerchanged.d" "${INSTALL_ROOT}/opt/etc/cron.d"
+            ;;
+    esac
 
     print_success "Directories created"
+}
+
+###############################################################################
+# Architecture and platform facts
+###############################################################################
+
+# release_arch - the release asset suffix for this CPU
+#   aarch64 -> arm64, armv7l -> arm, mips -> mipsle (every Keenetic MIPS model
+#   is little-endian). Prints nothing and returns 1 for anything else.
+release_arch() {
+    case "$(uname -m)" in
+        aarch64) printf 'arm64\n' ;;
+        armv7l)  printf 'arm\n' ;;
+        mips)    printf 'mipsle\n' ;;
+        *)       return 1 ;;
+    esac
+}
+
+# load_platform_lib - source the platform library download_scripts installed,
+#   so the LAN address and host name come from the contract and not from an
+#   inline nvram copy. Returns 1 when it is not there yet.
+load_platform_lib() {
+    [[ -f "$VPD_DIR/lib/platform.sh" ]] || return 1
+    export VPD_PLATFORM="$PLATFORM"
+    # shellcheck disable=SC1091
+    . "$VPD_DIR/lib/platform.sh"
+}
+
+# lan_ip / lan_hostname - the contract's answer, or a default the certificate
+#   and the printed URL can live with when the library or the router cannot say.
+lan_ip() {
+    local ip=""
+    ip="$(platform_lan_ip 2>/dev/null)" || ip=""
+    printf '%s\n' "${ip:-192.168.1.1}"
+}
+
+lan_hostname() {
+    local name=""
+    name="$(platform_hostname 2>/dev/null)" || name=""
+    printf '%s\n' "${name:-router}"
 }
 
 ###############################################################################
@@ -256,22 +373,16 @@ download_scripts() {
 download_telegram_bot() {
     print_info "Downloading telegram bot binary..."
 
-    local arch
-    arch=$(uname -m)
-    local bot_binary=""
+    local arch_suffix
+    if ! arch_suffix="$(release_arch)"; then
+        print_info "Architecture $(uname -m) not supported for telegram bot (optional component)"
+        return 0
+    fi
+    local bot_binary="telegram-bot-$arch_suffix"
     local release_url="$RELEASE_ASSET_URL"
     local bot_path="$VPD_DIR/telegram-bot"
     local tmp_path="${bot_path}.tmp"
     local was_running=false
-
-    case "$arch" in
-        aarch64) bot_binary="telegram-bot-arm64" ;;
-        armv7l)  bot_binary="telegram-bot-arm" ;;
-        *)
-            print_info "Architecture $arch not supported for telegram bot (optional component)"
-            return 0
-            ;;
-    esac
 
     # Download to temp file first
     if ! curl -fsSL "$release_url/$bot_binary" -o "$tmp_path"; then
@@ -311,21 +422,15 @@ download_telegram_bot() {
 download_webui() {
     print_info "Downloading Web UI binary..."
 
-    local arch
-    arch=$(uname -m)
-    local webui_binary=""
+    local arch_suffix
+    if ! arch_suffix="$(release_arch)"; then
+        print_info "Architecture $(uname -m) not supported for webui (optional component)"
+        return 0
+    fi
+    local webui_binary="webui-$arch_suffix"
     local webui_path="$VPD_DIR/webui"
     local tmp_path="${webui_path}.tmp"
     local was_running=false
-
-    case "$arch" in
-        aarch64) webui_binary="webui-arm64" ;;
-        armv7l)  webui_binary="webui-arm" ;;
-        *)
-            print_info "Architecture $arch not supported for webui (optional component)"
-            return 0
-            ;;
-    esac
 
     if ! curl -fsSL "$RELEASE_ASSET_URL/$webui_binary" -o "$tmp_path"; then
         print_info "Warning: Failed to download webui (optional component)"
@@ -371,15 +476,10 @@ generate_tls_cert() {
 
     mkdir -p "$cert_dir"
 
-    # `nvram get` exits 0 and prints nothing for an unset variable, so `|| echo`
-    # never fires: an empty value would leave subjectAltName with an empty IP,
-    # openssl would reject -addext and fall through to a certificate with no SAN.
     local lan_ip
-    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || true)
-    [[ -n "$lan_ip" ]] || lan_ip="192.168.1.1"
+    lan_ip=$(lan_ip)
     local hostname
-    hostname=$(nvram get lan_hostname 2>/dev/null || true)
-    [[ -n "$hostname" ]] || hostname="router"
+    hostname=$(lan_hostname)
 
     openssl req -x509 -newkey rsa:2048 \
         -keyout "$cert_dir/server.key" \
@@ -461,8 +561,7 @@ start_webui() {
         return 0
     fi
 
-    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || true)
-    [[ -n "$lan_ip" ]] || lan_ip="192.168.1.1"
+    lan_ip=$(lan_ip)
     local port=8444
     if [[ -f "$VPD_DIR/vpn-director.json" ]] && command -v jq >/dev/null 2>&1; then
         local p
@@ -492,7 +591,10 @@ print_next_steps() {
     if [[ -n "$WEBUI_URL" ]]; then
         printf "  4. Open the Web UI (already running):\n"
         printf "     ${GREEN}%s${NC}\n" "$WEBUI_URL"
-        printf "     Log in with the router admin username and password\n\n"
+        case "$PLATFORM" in
+            keenetic) printf "     Log in as root with the Entware password (set it with passwd over SSH)\n\n" ;;
+            *)        printf "     Log in with the router admin username and password\n\n" ;;
+        esac
     else
         printf "  4. Web UI is not running. Start it with:\n"
         printf "     ${GREEN}%s/S98vpn-director-webui start${NC}\n" "$INIT_DIR"
@@ -511,10 +613,12 @@ main() {
     print_header "VPN Director Installer"
     printf "This will install VPN Director scripts to your router.\n\n"
 
+    detect_platform
     check_environment
     resolve_release_tag
     create_directories
     download_scripts
+    load_platform_lib || print_info "Platform library not installed; using default LAN facts"
     download_telegram_bot
     download_webui
     generate_tls_cert
