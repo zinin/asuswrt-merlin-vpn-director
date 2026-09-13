@@ -223,7 +223,8 @@ func (s *Service) getShell() string {
 
 // SetPlatform tells the Service which platform's files to install. The
 // daemons call it with what they resolved at startup (--platform or
-// detection); step 2 of a self-update, which runs without flags, detects.
+// detection); step 2 of a self-update takes the platform step 1 passed it as
+// --platform, and detects only when that flag is absent.
 func (s *Service) SetPlatform(name string) { s.platform = name }
 
 // getPlatform returns the manifest tag of the platform this daemon runs on:

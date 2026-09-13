@@ -174,7 +174,7 @@ func (s *Service) runInstaller(ctx context.Context, installer string, opts RunOp
 		}
 	}}
 
-	cmd, err := startInstaller(ctx, installer, selfUpdateArgv(opts), stdout, stderr, s.getInstallerWaitDelay())
+	cmd, err := startInstaller(ctx, installer, selfUpdateArgv(opts, s.platform), stdout, stderr, s.getInstallerWaitDelay())
 	if err != nil {
 		return &HandoverError{Phase: PhaseStart, Err: err}
 	}

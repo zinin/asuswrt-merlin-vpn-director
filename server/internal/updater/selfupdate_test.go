@@ -15,10 +15,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zinin/vpn-director/server/internal/platform"
 )
 
 func TestParseSelfUpdateArgs_AcceptsTheInvocationStep1Builds(t *testing.T) {
-	argv := selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"})
+	argv := selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"}, "")
 	if argv[0] != SelfUpdateCommand {
 		t.Fatalf("argv[0] = %q, want %q", argv[0], SelfUpdateCommand)
 	}
@@ -33,10 +35,31 @@ func TestParseSelfUpdateArgs_AcceptsTheInvocationStep1Builds(t *testing.T) {
 
 // Telegram group chats have negative IDs; step 1 passes them through.
 func TestParseSelfUpdateArgs_AcceptsANegativeChatID(t *testing.T) {
-	argv := selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: -1001234567890, Initiator: "bot"})
+	argv := selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: -1001234567890, Initiator: "bot"}, "")
 	got, err := parseSelfUpdateArgs(argv[1:])
 	if err != nil || got.ChatID != -1001234567890 {
 		t.Fatalf("parsed %+v (%v), want chat id -1001234567890", got, err)
+	}
+}
+
+// --platform is the one flag a released step 1 may not have passed, so its
+// absence has to stay legal: step 2 then detects. A name no release knows is
+// refused instead, since step 1 shows the last stderr line as the reason.
+func TestParseSelfUpdateArgs_PlatformIsOptionalAndValidated(t *testing.T) {
+	opts := RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"}
+
+	got, err := parseSelfUpdateArgs(selfUpdateArgv(opts, "")[1:])
+	if err != nil || got.Platform != "" {
+		t.Fatalf("parsed %+v (%v), want an empty platform: step 2 detects then", got, err)
+	}
+
+	got, err = parseSelfUpdateArgs(selfUpdateArgv(opts, platform.Merlin)[1:])
+	if err != nil || got.Platform != platform.Merlin {
+		t.Fatalf("parsed %+v (%v), want platform %q", got, err, platform.Merlin)
+	}
+
+	if _, err := parseSelfUpdateArgs(selfUpdateArgv(opts, "plan9")[1:]); err == nil {
+		t.Error("parseSelfUpdateArgs() accepted an unknown --platform")
 	}
 }
 
@@ -88,12 +111,17 @@ func TestSelfUpdateArgv_EveryReleasedFormStillParses(t *testing.T) {
 		t.Fatal("testdata/selfupdate_argv.txt lists no released invocation")
 	}
 	// The file's header fixes the options every line encodes, so parsing one
-	// into the wrong fields fails here as surely as refusing it.
-	want := selfUpdateArgs{From: "v1.2.3", To: "v1.2.4", Initiator: "bot", ChatID: 42}
+	// into the wrong fields fails here as surely as refusing it. The platform
+	// is the header's "merlin" on the lines that carry the flag, and empty on
+	// the older ones, which leave step 2 to detect it.
 	for _, form := range forms {
 		if form[0] != SelfUpdateCommand {
 			t.Errorf("released form %q does not start with %q", strings.Join(form, " "), SelfUpdateCommand)
 			continue
+		}
+		want := selfUpdateArgs{From: "v1.2.3", To: "v1.2.4", Initiator: "bot", ChatID: 42}
+		if slices.Contains(form, "--platform") {
+			want.Platform = platform.Merlin
 		}
 		got, err := parseSelfUpdateArgs(form[1:])
 		if err != nil {
@@ -104,7 +132,8 @@ func TestSelfUpdateArgv_EveryReleasedFormStillParses(t *testing.T) {
 			t.Errorf("released form %q parses to %+v, want %+v", strings.Join(form, " "), got, want)
 		}
 	}
-	got := strings.Join(selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"}), " ")
+	opts := RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 42, Initiator: "bot"}
+	got := strings.Join(selfUpdateArgv(opts, platform.Merlin), " ")
 	if newest := strings.Join(forms[len(forms)-1], " "); got != newest {
 		t.Errorf("step 1 builds %q, but the newest released form is %q: append the new form as a line, never edit one", got, newest)
 	}
@@ -188,7 +217,7 @@ func newStep2Fixture(t *testing.T, onRequest func(path, lockFile string)) *step2
 // step2Args is what step 1 passes for an update from v1.2.3 to to, started
 // from the Web UI.
 func step2Args(to string) []string {
-	return selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: to, ChatID: 0, Initiator: "webui"})[1:]
+	return selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: to, ChatID: 0, Initiator: "webui"}, "")[1:]
 }
 
 // The assertion here is the test binary surviving the SIGTERM the update
@@ -221,6 +250,33 @@ func TestSelfUpdate_SurvivesStep1sSIGTERMOnceTheScriptHasStarted(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the update script never ran, so nothing sent the SIGTERM this test is about")
 		}
+	}
+}
+
+// The daemons resolve the platform at startup, from --platform or detection,
+// and step 2 must not decide it over again: on a router whose detection is
+// wrong - the reason --platform exists - it would install another firmware's
+// files. Step 1 passes what it resolved, and that beats the detection this
+// environment answers (merlin, pinned for the package in TestMain).
+func TestSelfUpdate_TakesThePlatformStep1PassedOverDetection(t *testing.T) {
+	if p, err := platform.Detect(); err != nil || p.Name != platform.Merlin {
+		t.Fatalf("detection answers %+v (%v), want %q - this test needs the two to differ", p, err, platform.Merlin)
+	}
+	f := newStep2Fixture(t, nil)
+	f.s.platform = "" // nothing has told this step 2 anything yet
+	args := selfUpdateArgv(RunOptions{OldVersion: "v1.2.3", NewVersion: "v1.2.4", ChatID: 0, Initiator: "webui"},
+		platform.Keenetic)[1:]
+
+	if err := f.s.selfUpdate(context.Background(), args, "v1.2.4", &bytes.Buffer{}); err != nil {
+		t.Fatalf("selfUpdate() error = %v", err)
+	}
+
+	got, err := f.s.getPlatform()
+	if err != nil {
+		t.Fatalf("getPlatform() error = %v", err)
+	}
+	if got != platform.Keenetic {
+		t.Errorf("getPlatform() = %q, want %q: the platform step 1 passed must win", got, platform.Keenetic)
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/zinin/vpn-director/server/internal/platform"
 )
 
 // The self-update handover.
@@ -68,18 +70,28 @@ type selfUpdateArgs struct {
 	To        string
 	Initiator string
 	ChatID    int64
+	Platform  string // empty when step 1 did not name one; step 2 then detects
 }
 
-// selfUpdateArgv is the invocation step 1 builds. Changing it means appending
-// the new form to testdata/selfupdate_argv.txt.
-func selfUpdateArgv(opts RunOptions) []string {
-	return []string{
+// selfUpdateArgv is the invocation step 1 builds. platformName is the platform
+// step 1 resolved (Service.platform, empty when nothing told it): passing it on
+// saves step 2 a detection that a daemon started with --platform has already
+// decided differently. Appending a flag is the compatible way to change this
+// argv - step 2 of every later release parses every line of
+// testdata/selfupdate_argv.txt - so changing it means appending the new form
+// there, never editing a line.
+func selfUpdateArgv(opts RunOptions, platformName string) []string {
+	argv := []string{
 		SelfUpdateCommand,
 		"--from", opts.OldVersion,
 		"--to", opts.NewVersion,
 		"--initiator", opts.Initiator,
 		"--chat-id", strconv.FormatInt(opts.ChatID, 10),
 	}
+	if platformName != "" {
+		argv = append(argv, "--platform", platformName)
+	}
+	return argv
 }
 
 // parseSelfUpdateArgs parses the arguments after SelfUpdateCommand. The values
@@ -92,6 +104,7 @@ func parseSelfUpdateArgs(args []string) (selfUpdateArgs, error) {
 	fs.StringVar(&a.To, "to", "", "version to install, the one compiled into this binary")
 	fs.StringVar(&a.Initiator, "initiator", "", "bot or webui")
 	fs.Int64Var(&a.ChatID, "chat-id", 0, "chat to report to, 0 for the Web UI")
+	fs.StringVar(&a.Platform, "platform", "", "platform step 1 resolved; detected when absent")
 	if err := fs.Parse(args); err != nil {
 		return a, err
 	}
@@ -106,6 +119,11 @@ func parseSelfUpdateArgs(args []string) (selfUpdateArgs, error) {
 	}
 	if a.Initiator != "bot" && a.Initiator != "webui" {
 		return a, fmt.Errorf("invalid --initiator %q", a.Initiator)
+	}
+	if a.Platform != "" {
+		if _, err := platform.ForName(a.Platform); err != nil {
+			return a, err
+		}
 	}
 	return a, nil
 }
@@ -133,6 +151,12 @@ func (s *Service) selfUpdate(ctx context.Context, args []string, version string,
 	}
 	if a.To != version {
 		return fmt.Errorf("this binary is %s, asked to install %s", version, a.To)
+	}
+	// Before DownloadRelease and the script generation, which both ask
+	// getPlatform: the platform step 1 resolved beats a detection here, which
+	// on a router started with --platform would answer something else.
+	if a.Platform != "" {
+		s.SetPlatform(a.Platform)
 	}
 	if err := s.requireParentLock(); err != nil {
 		return err

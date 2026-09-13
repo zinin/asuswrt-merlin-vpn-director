@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/zinin/vpn-director/server/internal/platform"
 )
 
 // fakeInstaller returns a shell script to serve as a release asset. Run as the
@@ -119,7 +121,9 @@ func TestHandover_RunsStep2OfTheNewVersionAndRelaysItsProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the webui's binary did not run: %v", err)
 	}
-	if got, want := strings.Join(strings.Fields(string(argv)), " "), strings.Join(selfUpdateArgv(validOpts()), " "); got != want {
+	// This service was never told a platform, so the argv is the one every
+	// released step 1 built before --platform existed.
+	if got, want := strings.Join(strings.Fields(string(argv)), " "), strings.Join(selfUpdateArgv(validOpts(), s.platform), " "); got != want {
 		t.Errorf("installer argv = %q, want %q", got, want)
 	}
 	if cwd, _ := os.ReadFile(filepath.Join(record, "cwd")); strings.TrimSpace(string(cwd)) != "/" {
@@ -138,6 +142,34 @@ func TestHandover_RunsStep2OfTheNewVersionAndRelaysItsProgress(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.getFilesDir(), "marker")); err != nil {
 		t.Error("a handover that succeeded removed files/ from under the update script")
+	}
+}
+
+// Step 2 would otherwise detect the platform over again, and a router whose
+// detection is wrong is exactly why the daemons take --platform. Step 1 hands
+// on what it resolved, as the last argument pair.
+func TestHandover_PassesItsPlatformToStep2(t *testing.T) {
+	record := t.TempDir()
+	s, release := newHandoverService(t, map[string]string{
+		"webui-arm64": fakeInstaller(record, "", 0),
+	})
+	s.SetPlatform(platform.Keenetic)
+	progress, _ := collect()
+
+	if err := s.Handover(context.Background(), release, validOpts(), progress); err != nil {
+		t.Fatalf("Handover() error = %v", err)
+	}
+
+	argv, err := os.ReadFile(filepath.Join(record, "argv"))
+	if err != nil {
+		t.Fatalf("the webui's binary did not run: %v", err)
+	}
+	got := strings.Join(strings.Fields(string(argv)), " ")
+	if want := strings.Join(selfUpdateArgv(validOpts(), platform.Keenetic), " "); got != want {
+		t.Errorf("installer argv = %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(got, "--platform "+platform.Keenetic) {
+		t.Errorf("installer argv = %q, want it to end in --platform %s", got, platform.Keenetic)
 	}
 }
 
