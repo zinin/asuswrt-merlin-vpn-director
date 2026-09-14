@@ -26,7 +26,15 @@ func writeUpdateLeftovers(t *testing.T, s *Service) (gone, kept []string) {
 	if err := os.MkdirAll(s.getFilesDir(), 0755); err != nil {
 		t.Fatalf("mkdir files dir: %v", err)
 	}
-	gone = []string{s.getInstallerFile(), s.getInstallerFile() + ".part", filepath.Join(s.getFilesDir(), "marker")}
+	// The last entry is what downloadFile stages the installer under for the
+	// whole HTTP round trip (os.CreateTemp beside installer.part); an owner
+	// killed mid-download never ran the deferred removal.
+	gone = []string{
+		s.getInstallerFile(),
+		s.getInstallerFile() + ".part",
+		filepath.Join(s.getFilesDir(), "marker"),
+		filepath.Join(s.getUpdateDir(), ".installer.part.part4215863503"),
+	}
 	kept = []string{filepath.Join(s.getUpdateDir(), "update.log"), filepath.Join(s.getUpdateDir(), "notify.json")}
 	for _, path := range append(append([]string(nil), gone...), kept...) {
 		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {

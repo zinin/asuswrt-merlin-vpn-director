@@ -298,6 +298,7 @@ func (s *Service) IsUpdateInProgress() bool {
 		// emptied.
 		os.Remove(s.getInstallerFile())
 		os.Remove(s.getInstallerFile() + ".part")
+		reapStaging(s.getInstallerFile() + ".part")
 		s.CleanFiles()
 		os.Remove(lockFile)
 		return false

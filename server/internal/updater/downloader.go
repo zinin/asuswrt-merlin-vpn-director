@@ -246,7 +246,7 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 	// that lost the update directory in that window would otherwise truncate the
 	// file of the retry that took it over. telegram-bot.md states the rule as
 	// the check being repeated before every file step 2 writes.
-	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".part")
+	tmp, err := os.CreateTemp(filepath.Dir(target), stagingPattern(target))
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
@@ -290,6 +290,22 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 	}
 
 	return nil
+}
+
+// stagingPattern is the os.CreateTemp pattern downloadFile stages target
+// under, in target's own directory.
+func stagingPattern(target string) string {
+	return "." + filepath.Base(target) + ".part"
+}
+
+// reapStaging removes what a downloadFile killed mid-copy left under
+// stagingPattern(target): its deferred removal never ran, and the stale-lock
+// reaper in IsUpdateInProgress otherwise knows only the published names.
+func reapStaging(target string) {
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(target), stagingPattern(target)+"*"))
+	for _, m := range matches {
+		os.Remove(m)
+	}
 }
 
 // linkOrCopy puts the file src at dst: a hard link when both sit on one
