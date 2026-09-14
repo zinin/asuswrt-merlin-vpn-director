@@ -92,6 +92,13 @@ Default: bits 16-23 (8 bits = 255 tunnels max)
 `tunnel_apply` writes both; `tunnel_stop` walks `TUN_DIR_TABLES` to release each tunnel's table
 through `platform_tunnel_table_release`, then removes both files.
 
+The two can be out of step in one direction: an apply that skipped a tunnel the platform does not
+list writes `TUN_DIR_TABLES` but deliberately no hash, so the next apply retries instead of
+reporting itself up-to-date. The cleanup that precedes a rebuild therefore keys off **either**
+file — keying it off the hash alone left those tables allocated while the next apply handed their
+indices to other tunnels, and on Keenetic table `2000+idx` then still held the previous tunnel's
+route.
+
 **Rebuild triggers**:
 - Config hash changed
 - Chain does not exist

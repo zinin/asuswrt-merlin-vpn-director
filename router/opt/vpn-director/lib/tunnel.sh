@@ -337,8 +337,15 @@ tunnel_apply() {
         return 1
     fi
 
-    # Stop existing rules if config changed
-    if [[ $old_hash != "$empty_hash" ]]; then
+    # Stop existing rules when there is any prior state to clean up. Both state
+    # files have to be consulted, not just the hash: an apply that skipped a
+    # tunnel unknown to the platform records TUN_DIR_TABLES but deliberately no
+    # hash, and keying the cleanup off the hash alone left those tables
+    # allocated while the next apply handed their indices to other tunnels - on
+    # Keenetic table 2000+idx kept the previous tunnel's route, so marked
+    # traffic left through the wrong tunnel while the log reported the fallback
+    # to main. tunnel_stop is what walks TUN_DIR_TABLES and releases them.
+    if [[ $old_hash != "$empty_hash" || -f $TUN_DIR_TABLES ]]; then
         # rebuild also fires with the hash unchanged - a missing chain, or a
         # missing TUN_DIR_TABLES - and that is not a configuration change.
         if [[ $new_hash != "$old_hash" ]]; then

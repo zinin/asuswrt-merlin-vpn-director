@@ -449,6 +449,27 @@ load_tunnel_module_with() {
     [ ! -f "$TUN_DIR_HASH" ]
 }
 
+# Recording the hash is skipped when a tunnel is unknown to the platform, but
+# TUN_DIR_TABLES is written all the same. The cleanup gate keyed off the hash
+# alone, so the next apply skipped tunnel_stop and never released the recorded
+# tables: on Keenetic table 2000+idx keeps the previous tunnel's route while the
+# index is handed to another tunnel, and marked traffic leaves through the wrong
+# tunnel while the log reports the fallback to main.
+@test "tunnel_apply: releases the recorded tables before reusing their indices when no hash was recorded" {
+    load_tunnel_module_with '{"wgc1":{"clients":["192.168.1.5"]},"wgc9":{"clients":["192.168.1.6"]}}'
+    run tunnel_apply
+    assert_success
+    [ ! -f "$TUN_DIR_HASH" ]
+    run cat "$TUN_DIR_TABLES"
+    assert_output "0 wgc1"
+
+    platform_tunnel_table_release() { echo "release $1 $2" >> "$BATS_TEST_TMPDIR/release.log"; }
+    TUN_DIR_TUNNELS_JSON='{"wgc2":{"clients":["192.168.1.5"]}}'
+    run tunnel_apply
+    assert_success
+    grep -q "release wgc1 0" "$BATS_TEST_TMPDIR/release.log"
+}
+
 @test "tunnel_stop: releases every recorded table and removes the state file" {
     load_tunnel_module
     run tunnel_apply
