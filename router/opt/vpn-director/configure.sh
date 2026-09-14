@@ -566,14 +566,16 @@ step_generate_configs() {
     # hand-set Keenetic OpenVPN next hop survives a wizard save. Do not
     # write "gateway": "" and do not invent the key on a newly created
     # tunnel. `$existing[.key].gateway // empty` would drop new ids:
-    # empty as $gw skips the map item.
+    # empty as $gw skips the map item. `//` replaces only null and false,
+    # so a tunnels value of the wrong type (an array, say) is mapped to {}
+    # by hand: indexing it by key would end the whole save with jq's rc 5.
     if printf '%s' "$base_json" | jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
         --argjson servers "$xray_servers_json" \
         --argjson active "$xray_active_server_json" \
-        '(.tunnel_director.tunnels // {}) as $existing |
+        '((.tunnel_director.tunnels? // {}) | if type == "object" then . else {} end) as $existing |
          .xray.clients = $clients |
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
