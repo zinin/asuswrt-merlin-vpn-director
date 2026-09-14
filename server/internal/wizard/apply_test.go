@@ -980,6 +980,50 @@ func TestApplier_Apply_RecordsNothingWhenXrayGenerationFails(t *testing.T) {
 // against the platform. A transient Platform() failure between picking the
 // tunnel and applying - the NDM-rebuild window on Keenetic - used to drop the
 // confirmed client from the save without a word and still report success.
+// On Keenetic `vpn-director.sh platform` answers "tunnels": [] with exit 0
+// while RCI does not reply (spec 13), so an RCI outage reaches the wizard as a
+// successful, empty answer - the same document a router with no tunnels
+// produces. A route outside xray and the config cannot be validated either
+// way, and it must be refused like a Platform() error, not dropped from the
+// save behind a "Done!".
+func TestApplier_Apply_RefusesToSaveWhenThePlatformListsNoTunnels(t *testing.T) {
+	manager := &trackingManager{}
+	sender := &trackingSender{}
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{{Name: "Server1", IPs: []string{"1.2.3.4"}}},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			DataDir: "/opt/vpn-director/data",
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: make(map[string]vpnconfig.TunnelConfig),
+			},
+		},
+	}
+	applier := NewApplier(manager, sender, configStore,
+		&mockVPNDirector{platform: vpnconfig.PlatformInfo{}}, &mockXrayGenerator{})
+
+	state := &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients: []ClientRoute{
+			{IP: "192.168.1.30", Route: "OpenVPN0"}, // picked while the platform listed it
+		},
+	}
+
+	err := applier.Apply(123, state)
+
+	if err == nil {
+		t.Fatal("Apply() error = nil, want a refusal to save a route an empty platform answer cannot validate")
+	}
+	if configStore.saveConfigCalled {
+		t.Error("Apply() saved the configuration, want the client kept out of a silent drop")
+	}
+	if !strings.Contains(strings.Join(sender.messages, "\n"), "platform info unavailable") {
+		t.Errorf("user was told %q, want the platform-unavailable message", sender.messages)
+	}
+}
+
 func TestApplier_Apply_RefusesToSaveWhenThePlatformCannotValidateARoute(t *testing.T) {
 	manager := &trackingManager{}
 	sender := &trackingSender{}
