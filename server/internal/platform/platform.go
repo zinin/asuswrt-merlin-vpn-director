@@ -68,7 +68,7 @@ func DetectAt(root string) (Platform, error) {
 
 // Resolve is what the daemons call at startup: the --platform flag when
 // given, Merlin in dev mode (a development machine is neither router), else
-// detection.
+// detection. Resolve only answers; the daemons publish the answer with Export.
 func Resolve(flagValue string, dev bool) (Platform, error) {
 	switch {
 	case flagValue != "":
@@ -78,6 +78,24 @@ func Resolve(flagValue string, dev bool) (Platform, error) {
 	default:
 		return Detect()
 	}
+}
+
+// Export publishes the resolved platform to every child process, and is what
+// each daemon calls right after Resolve. lib/platform.sh reads VPD_PLATFORM
+// before it probes anything, and the daemons run vpn-director.sh with the
+// environment they inherited: without this a --platform (or the dev default)
+// would hold for the Go side alone while the shell went on detecting - or
+// honoured a stale VPD_PLATFORM - and /api/platform, the route lists and every
+// apply would answer for the other firmware. One decision, seen everywhere.
+//
+// Kept out of Resolve deliberately: a Resolve that wrote the variable it also
+// reads would answer a later caller with its own earlier answer instead of
+// detecting.
+func (p Platform) Export() error {
+	if err := os.Setenv(EnvVar, p.Name); err != nil {
+		return fmt.Errorf("publish %s: %w", EnvVar, err)
+	}
+	return nil
 }
 
 func isDir(p string) bool {

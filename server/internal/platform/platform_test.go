@@ -139,3 +139,25 @@ func TestResolve(t *testing.T) {
 		t.Error("Resolve(amiga) accepted an unknown platform")
 	}
 }
+
+// lib/platform.sh takes VPD_PLATFORM as its first rule, and the daemons run
+// vpn-director.sh as a child process with the environment they inherited. A
+// --platform honoured only on the Go side left /api/platform and every routing
+// command on the other firmware's implementation.
+func TestExport_PublishesTheDecisionToChildProcesses(t *testing.T) {
+	t.Setenv(EnvVar, Merlin) // what the daemon inherited, and must not win
+
+	p, err := Resolve(Keenetic, false)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if p.Name != Keenetic {
+		t.Fatalf("Resolve() = %q, want %q", p.Name, Keenetic)
+	}
+	if err := p.Export(); err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if got := os.Getenv(EnvVar); got != Keenetic {
+		t.Errorf("%s = %q, want %q so the shell agrees with the daemon", EnvVar, got, Keenetic)
+	}
+}

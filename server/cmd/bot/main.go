@@ -52,6 +52,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	// Every shell this daemon runs takes the platform from the environment, so
+	// the answer above has to reach them: vpn-director.sh would otherwise keep
+	// detecting on its own, and a --platform would hold for the Go side alone.
+	if err := plat.Export(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	var p paths.Paths
 	var opts []bot.Option
