@@ -138,6 +138,13 @@ func TestNewPathClient_NoClientTimeout(t *testing.T) {
 	}
 }
 
+func TestProductionDialer_Timeout(t *testing.T) {
+	d := newProductionDialer(nil)
+	if d.Timeout != 30*time.Second {
+		t.Fatalf("Timeout=%s; DefaultTransport uses 30s", d.Timeout)
+	}
+}
+
 func TestSocksListening(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

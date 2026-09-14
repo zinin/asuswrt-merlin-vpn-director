@@ -45,6 +45,15 @@ type pathDialer struct {
 
 var productionDialer pathDialer
 
+// Matches http.DefaultTransport's net.Dialer.Timeout. NewPathClient overwrites
+// DialContext, so this must be set on the replacement dialer or a SYN-drop
+// hangs getUpdates until the kernel retry budget (~minutes).
+const productionDialTimeout = 30 * time.Second
+
+func newProductionDialer(control func(network, address string, c syscall.RawConn) error) *net.Dialer {
+	return &net.Dialer{Timeout: productionDialTimeout, Control: control}
+}
+
 // DialPath connects using p. The caller snapshots p; this function does not.
 func DialPath(ctx context.Context, p Path, network, addr string) (net.Conn, error) {
 	return productionDialer.dial(ctx, p, network, addr)
@@ -153,7 +162,7 @@ func (d *pathDialer) tunnelDNSDial(iface string) func(ctx context.Context, netwo
 		}
 		var lastErr error
 		for _, dns := range []string{"8.8.8.8:53", "1.1.1.1:53"} {
-			conn, err := (&net.Dialer{Control: control}).DialContext(ctx, network, dns)
+			conn, err := newProductionDialer(control).DialContext(ctx, network, dns)
 			if err == nil {
 				return conn, nil
 			}
@@ -188,7 +197,7 @@ func (d *pathDialer) doTCP(ctx context.Context, network, addr string, control fu
 	if d.tcpDial != nil {
 		return d.tcpDial(ctx, network, addr, control)
 	}
-	return (&net.Dialer{Control: control}).DialContext(ctx, network, addr)
+	return newProductionDialer(control).DialContext(ctx, network, addr)
 }
 
 func ipv4Literal(host string) net.IP {
