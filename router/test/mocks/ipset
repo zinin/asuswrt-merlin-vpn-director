@@ -4,19 +4,29 @@ echo "ipset $*" >> /tmp/bats_ipset_calls.log
 # Helper function to check if ipset exists
 ipset_name_exists() {
     case "$1" in
-        ru|us|ca|XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS|us_ca) return 0 ;;
+        ru|us|ca|bigset|XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS|us_ca) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-# Entries the fake kernel holds per set.
+# Entries the fake kernel holds per set. "bigset" is a country-sized set: its
+# member list is larger than a pipe buffer, which is what a real "ru" is on the
+# author's router (9657 entries, 148 KiB of listing).
 ipset_entry_count() {
     case "$1" in
         ru|us|ca) echo 1000 ;;
+        bigset) echo 10000 ;;
         XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS) echo 5 ;;
         us_ca) echo 2 ;;
         *) echo 0 ;;
     esac
+}
+
+# The members "ipset list <name>" prints under the header, one per line, the
+# way every kernel does. Only "ipset list <name> -t" omits them.
+ipset_print_members() {
+    awk -v n="$(ipset_entry_count "$1")" \
+        'BEGIN { for (i = 1; i <= n; i++) printf "10.%d.%d.0/24\n", int(i / 256), i % 256 }'
 }
 
 # Print the header of a set. KeeneticOS's 4.9 kernel reports set revision 6,
@@ -36,11 +46,17 @@ ipset_print_header() {
     fi
 }
 
-# Drop the terse flag: it selects header-only output, which is all this mock
-# ever prints.
+# The terse flag selects header-only output. Honour it rather than drop it: a
+# caller that asks for the whole listing gets the members too, and that is the
+# difference that decides whether a pipe fills up.
+terse=0
 args=""
 for a in "$@"; do
-    [ "$a" = "-t" ] || [ "$a" = "--terse" ] || args="$args $a"
+    if [ "$a" = "-t" ] || [ "$a" = "--terse" ]; then
+        terse=1
+    else
+        args="$args $a"
+    fi
 done
 # shellcheck disable=SC2086
 set -- $args
@@ -55,6 +71,7 @@ case "$1" in
                 echo "ru"
                 echo "us"
                 echo "ca"
+                echo "bigset"
                 exit 0
             elif ipset_name_exists "$name"; then
                 echo "$name"
@@ -65,12 +82,13 @@ case "$1" in
         else
             name="$2"
             case "$name" in
-                ru|us|ca|XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS)
+                ru|us|ca|bigset|XRAY_CLIENTS|XRAY_SERVERS|TPROXY_BYPASS)
                     ipset_print_header "$name" hash:net ;;
                 us_ca)
                     ipset_print_header "$name" list:set ;;
                 *) exit 1 ;;  # ipset doesn't exist
             esac
+            [ "$terse" = "1" ] || ipset_print_members "$name"
         fi
         ;;
     save)
