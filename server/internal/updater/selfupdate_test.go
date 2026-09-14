@@ -437,13 +437,17 @@ func TestSelfUpdate_StopsWritingOnceTheClaimIsGone(t *testing.T) {
 		lostAt    string   // the request served while the claim changes hands
 		wantFiles []string // what files/ holds once step 2 has stopped
 	}{
+		// The file served while the claim changes hands is not published
+		// either: it is staged beside its target and the claim is re-checked
+		// before the rename, so the retry that took the directory over keeps
+		// its own payload. Publishing it was the truncation the rule forbids.
 		"before the files the manifest lists": {
 			lostAt:    manifestPath,
-			wantFiles: []string{"files.manifest"},
+			wantFiles: nil,
 		},
 		"between the daemon binaries": {
 			lostAt:    "/assets/" + DaemonBot + "-",
-			wantFiles: []string{"files.manifest", "jffs", "opt", DaemonBot},
+			wantFiles: []string{"files.manifest", "jffs", "opt"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

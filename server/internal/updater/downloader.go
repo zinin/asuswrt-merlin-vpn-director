@@ -65,6 +65,9 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 			return err
 		}
 		if err := s.downloadScriptFile(ctx, release.TagName, file); err != nil {
+			if errors.Is(err, errClaimLost) {
+				return err
+			}
 			return fmt.Errorf("download %s: %w", file, err)
 		}
 	}
@@ -87,6 +90,9 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 // manifest cannot be installed.
 func (s *Service) fetchManifest(ctx context.Context, tag string) ([]ManifestEntry, error) {
 	if err := s.downloadScriptFile(ctx, tag, manifestPath); err != nil {
+		if errors.Is(err, errClaimLost) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("release %s has no files.manifest: %w", tag, err)
 	}
 	f, err := os.Open(filepath.Join(s.getFilesDir(), "files.manifest"))
@@ -174,6 +180,9 @@ func (s *Service) downloadBinaries(ctx context.Context, release *Release) error 
 			return fmt.Errorf("asset %s: %w", assetName, err)
 		}
 		if err := s.downloadFile(ctx, url, target); err != nil {
+			if errors.Is(err, errClaimLost) {
+				return err
+			}
 			return fmt.Errorf("download %s: %w", assetName, err)
 		}
 	}
@@ -232,25 +241,52 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	f, err := os.Create(target)
+	// Stage beside the target and publish with a rename: between the caller's
+	// claim check and this write sits the whole HTTP round trip, and a step 2
+	// that lost the update directory in that window would otherwise truncate the
+	// file of the retry that took it over. telegram-bot.md states the rule as
+	// the check being repeated before every file step 2 writes.
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".part")
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
+	tmpName := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}()
 
 	// Limit download size to prevent memory exhaustion. One byte past the limit,
 	// so an oversized body is detected by what was written rather than by probing
 	// the reader afterwards: a Read that returns (0, nil) is allowed to, and would
 	// have let a file truncated at exactly the limit pass as complete.
 	limitedReader := io.LimitReader(resp.Body, maxFileSize+1)
-	written, err := io.Copy(f, limitedReader)
+	written, err := io.Copy(tmp, limitedReader)
 	if err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 
 	if written > maxFileSize {
-		os.Remove(target)
 		return fmt.Errorf("file exceeds maximum size (%d MB)", maxFileSize/1024/1024)
+	}
+
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	// os.CreateTemp creates 0600; the published file keeps the 0644 os.Create
+	// produced under the daemons' umask, because the update script copies it to
+	// a destination that may not exist yet and cp would carry this mode over.
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	if err := s.requireClaim(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpName, target); err != nil {
+		return fmt.Errorf("publish file: %w", err)
 	}
 
 	return nil

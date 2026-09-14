@@ -848,3 +848,56 @@ func TestLinkOrCopy_CopiesToAnotherFilesystem(t *testing.T) {
 		t.Errorf("dst mode = %v, want it executable", info.Mode().Perm())
 	}
 }
+
+// The claim was checked before the request but the file was published with
+// os.Create only after the round trip, so a step 2 that lost the update
+// directory mid-transfer truncated the payload of the retry that took it over.
+// telegram-bot.md requires the check before every file step 2 writes.
+func TestDownloadScriptFile_LeavesTheTargetAloneWhenTheClaimIsLostMidTransfer(t *testing.T) {
+	var mu sync.Mutex
+	claimed := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Another daemon takes the update directory over while this body is in
+		// flight - the death of step 1's daemon the handover rule describes.
+		mu.Lock()
+		claimed = false
+		mu.Unlock()
+		w.Write([]byte("payload of the download that lost the directory"))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	target := filepath.Join(tempDir, "files", "opt/vpn-director/lib/common.sh")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte("the retry's payload"), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	s := &Service{
+		httpClient: &http.Client{},
+		rawBaseURL: server.URL,
+		updateDir:  tempDir,
+		checkClaim: func() error {
+			mu.Lock()
+			defer mu.Unlock()
+			if claimed {
+				return nil
+			}
+			return errClaimLost
+		},
+	}
+
+	err := s.downloadScriptFile(context.Background(), "v1.0.0", "router/opt/vpn-director/lib/common.sh")
+	if !errors.Is(err, errClaimLost) {
+		t.Fatalf("downloadScriptFile() error = %v, want errClaimLost", err)
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("ReadFile(target) error = %v", readErr)
+	}
+	if string(got) != "the retry's payload" {
+		t.Errorf("target = %q, want the retry's payload untouched", got)
+	}
+}
