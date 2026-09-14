@@ -96,3 +96,24 @@ export interface UpdateStatusResponse {
 /** GET /api/config returns the whole vpn-director.json with jwt_secret blanked;
  *  the Settings tab only ever re-serialises it. */
 export type ConfigResponse = Record<string, unknown>
+
+/** One firmware VPN client tunnel as `vpn-director.sh platform` lists it;
+ *  `id` is what a client's route names. */
+export interface PlatformTunnel {
+  id: string
+  iface: string
+  type: string
+  connected: boolean
+  description: string
+}
+
+/** GET /api/platform — the router's platform facts. Go marshals nil slices as
+ *  null, hence the nullable arrays. */
+export interface PlatformInfo {
+  platform: string
+  arch: string
+  password_file: string
+  lan_ifaces: string[] | null
+  wan_if: string
+  tunnels: PlatformTunnel[] | null
+}

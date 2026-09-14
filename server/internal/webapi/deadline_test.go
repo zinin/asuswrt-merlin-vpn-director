@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // deadlineRecorder is a ResponseRecorder that also accepts write deadlines,
@@ -189,6 +189,7 @@ func TestLongOpHandlers_ExtendWriteDeadline(t *testing.T) {
 	}{
 		{"status", "GET", "/api/status", "", handleStatus, statusDeadline},
 		{"external ip", "GET", "/api/ip", "", handleIP, ipDeadline},
+		{"platform", "GET", "/api/platform", "", handlePlatform, statusDeadline},
 		{"apply", "POST", "/api/apply", "", handleApply, applyDeadline},
 		{"restart", "POST", "/api/restart", "", handleRestart, applyDeadline},
 		{"stop", "POST", "/api/stop", "", handleStop, applyDeadline},

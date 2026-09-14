@@ -82,6 +82,76 @@ write_daemon_config() {
     assert_output '[["192.168.50.10"],["ru"],["wgc1"]]'
 }
 
+# C6: a hand-set gateway (Keenetic OpenVPN topology p2p) lives on the on-disk
+# tunnel object. The wizard rebuilds tunnels as {clients, exclude} only and
+# used to replace the whole object, dropping gateway on every save.
+@test "step_generate_configs: keeps an existing tunnel gateway" {
+    load_wizard
+    write_daemon_config
+    jq '.tunnel_director.tunnels.wgc1 = {"clients":["192.168.50.99"],"exclude":["de"],"gateway":"10.73.149.1"}' \
+        "$VPD_DIR/vpn-director.json" > "$VPD_DIR/vpn-director.json.new"
+    mv "$VPD_DIR/vpn-director.json.new" "$VPD_DIR/vpn-director.json"
+
+    run step_generate_configs
+
+    assert_success
+    run jq -r '.tunnel_director.tunnels.wgc1.gateway' "$VPD_DIR/vpn-director.json"
+    assert_output "10.73.149.1"
+    run jq -c '.tunnel_director.tunnels.wgc1.clients' "$VPD_DIR/vpn-director.json"
+    assert_output '["192.168.50.20"]'
+}
+
+# A string in place of the tunnel object is a shape tunnel_apply tolerates with a
+# WARN, so the gateway lookup must not error on it and fail the whole save.
+@test "step_generate_configs: survives a string in place of a tunnel object" {
+    load_wizard
+    write_daemon_config
+    jq '.tunnel_director.tunnels.wgc1 = "oops"' \
+        "$VPD_DIR/vpn-director.json" > "$VPD_DIR/vpn-director.json.new"
+    mv "$VPD_DIR/vpn-director.json.new" "$VPD_DIR/vpn-director.json"
+
+    run step_generate_configs
+
+    assert_success
+    run jq -c '[.tunnel_director.tunnels.wgc1.clients, .tunnel_director.tunnels.wgc1.exclude]' \
+        "$VPD_DIR/vpn-director.json"
+    assert_output '[["192.168.50.20"],["ru"]]'
+    run jq -e '.tunnel_director.tunnels.wgc1 | has("gateway")' "$VPD_DIR/vpn-director.json"
+    assert_failure
+}
+
+# `//` replaces only null and false, so an array (or a string, or a number) in
+# place of the tunnels object reached `$existing[.key]` and jq exited 5: the
+# whole save failed and the answers were lost, where master overwrote the bad
+# value. The daemons cannot load such a file at all, so the SSH wizard is the
+# repair path.
+@test "step_generate_configs: survives an array in place of the tunnels object" {
+    load_wizard
+    write_daemon_config
+    jq '.tunnel_director.tunnels = []' \
+        "$VPD_DIR/vpn-director.json" > "$VPD_DIR/vpn-director.json.new"
+    mv "$VPD_DIR/vpn-director.json.new" "$VPD_DIR/vpn-director.json"
+
+    run step_generate_configs
+
+    assert_success
+    run jq -c '.tunnel_director.tunnels.wgc1.clients' "$VPD_DIR/vpn-director.json"
+    assert_output '["192.168.50.20"]'
+}
+
+# A tunnel the wizard just created has no on-disk gateway to copy. Writing
+# "gateway": "" would be worse than omitting the key.
+@test "step_generate_configs: a new tunnel has no gateway key" {
+    load_wizard
+    write_daemon_config
+
+    run step_generate_configs
+
+    assert_success
+    run jq -e '.tunnel_director.tunnels.wgc1 | has("gateway")' "$VPD_DIR/vpn-director.json"
+    assert_failure
+}
+
 @test "step_generate_configs: falls back to template defaults on a first run" {
     load_wizard
 
@@ -216,4 +286,60 @@ write_daemon_config() {
     assert_success
     run jq -r '.xray.active_server | keys | join(",")' "$VPD_DIR/vpn-director.json"
     assert_output "address,name,port"
+}
+
+# ============================================================================
+# The tunnel prompt lists what the platform has (Merlin here: rt_tables fixture)
+# ============================================================================
+
+@test "wizard_tunnel_choices: one numbered line per platform tunnel, main excluded" {
+    load_wizard
+    run wizard_tunnel_choices
+    assert_success
+    assert_line --index 0 "  1) wgc1  Office WG (down)"
+    assert_line --index 1 "  2) wgc2 (down)"
+    assert_line --index 2 "  3) ovpnc1  Office OVPN (down)"
+    assert_line --index 3 "  4) ovpnc2 (down)"
+    [ "${#lines[@]}" -eq 4 ]
+}
+
+@test "wizard_tunnel_by_number: the id at that position, nothing for the rest" {
+    load_wizard
+    run wizard_tunnel_by_number 3
+    assert_output "ovpnc1"
+    run wizard_tunnel_by_number 9
+    refute_output
+    run wizard_tunnel_by_number x
+    refute_output
+    # 0 is not "the id at position 0": sed rejects line address 0 outright.
+    # It has to fail like any other bad input, and quietly - step 3 runs under
+    # "set -e", so a non-zero return here would take the whole wizard with it.
+    run wizard_tunnel_by_number 0
+    assert_success
+    refute_output
+}
+
+# The two helpers must filter the platform's list identically, or the number
+# the user reads off the menu picks a different tunnel than the one it names.
+@test "wizard_tunnel_by_number: numbers exactly the lines wizard_tunnel_choices does" {
+    load_wizard
+    platform_tunnels() { printf 'wgc1\n\nmain\novpnc1\n'; }
+    run wizard_tunnel_choices
+    assert_line --index 1 "  2) ovpnc1  Office OVPN (down)"
+    run wizard_tunnel_by_number 2
+    assert_output "ovpnc1"
+}
+
+# The prompt asks again on bad input. It must never abort: an aborted step 3
+# loses every answer the user gave in steps 1-3. Its own shell, because bats
+# clears errexit around "run" and the wizard's "set -e" is the whole point here.
+@test "step_configure_clients: a tunnel number off the list asks again, it does not abort" {
+    run bash -c '
+        set -euo pipefail
+        VPD_DIR="$SCRIPTS_DIR"
+        . "$VPD_DIR/configure.sh" --source-only
+        printf "192.168.50.10\n2\n0\ndone\n" | step_configure_clients
+    '
+    assert_success
+    assert_output --partial "Invalid tunnel number"
 }

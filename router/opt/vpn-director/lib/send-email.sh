@@ -1,4 +1,32 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# shellcheck shell=bash
+# KeeneticOS has no /usr/bin/env and mounts / read-only, so the usual
+# "#!/usr/bin/env bash" cannot start this script there. Begin as a POSIX shell
+# and hand over to bash by absolute path - Entware's first, a workstation's
+# after it. PATH is no help here: Asuswrt-Merlin's /bin/sh has no "command"
+# builtin (see .claude/rules/shell-conventions.md) and its /bin/bash is a
+# symlink to busybox rather than bash.
+
+# -----------------------------------------------------------------------------
+# Disable unneeded shellcheck warnings
+# -----------------------------------------------------------------------------
+# shellcheck disable=SC1090
+# shellcheck disable=SC2086
+# shellcheck disable=SC2154
+# These stay above the hand-over block: shellcheck reads a directive as
+# file-wide only while no command has run yet.
+
+if [ -z "${BASH_VERSION:-}" ]; then
+    for _vpd_bash in /opt/bin/bash /usr/bin/bash /bin/bash; do
+        # Asuswrt-Merlin's /bin/bash is busybox: a POSIX shell that never sets
+        # BASH_VERSION, so exec-ing it would re-run this block forever. Only a
+        # candidate that proves it is bash gets the script.
+        [ -x "$_vpd_bash" ] && "$_vpd_bash" -c '[ -n "$BASH_VERSION" ]' 2>/dev/null &&
+            exec "$_vpd_bash" "$0" "$@"
+    done
+    echo "$0: bash not found; install it (Entware package \"bash\")" >&2
+    exit 1
+fi
 
 ###############################################################################
 # send_email.sh - lightweight email notification helper for Asuswrt-Merlin
@@ -15,13 +43,6 @@
 ###############################################################################
 
 # -----------------------------------------------------------------------------
-# Disable unneeded shellcheck warnings
-# -----------------------------------------------------------------------------
-# shellcheck disable=SC1090
-# shellcheck disable=SC2086
-# shellcheck disable=SC2154
-
-# -----------------------------------------------------------------------------
 # Abort script on any error
 # -----------------------------------------------------------------------------
 set -euo pipefail
@@ -30,6 +51,14 @@ set -euo pipefail
 # 0a. Load utils
 ###############################################################################
 . /opt/vpn-director/lib/common.sh
+
+###############################################################################
+# 0a'. Platforms without amtm email have nothing to send
+###############################################################################
+if [[ "$(platform_email_supported)" != "1" ]]; then
+    log -l DEBUG "Email notifications are not supported on this platform; skipping"
+    exit 0
+fi
 
 ###############################################################################
 # 0b. Define constants
@@ -89,7 +118,7 @@ PASSWORD="$(/usr/sbin/openssl aes-256-cbc "$emailPwEnc" \
 ###############################################################################
 TMP_MAIL=$(tmp_file)
 
-FROM_NAME="ASUS $(nvram get model)"   # router name shown in "From:"
+FROM_NAME="ASUS $(platform_model || true)"   # router name shown in "From:"
 
 {
     printf 'From: "%s"<%s>\n'       "$FROM_NAME" "$FROM_ADDRESS"

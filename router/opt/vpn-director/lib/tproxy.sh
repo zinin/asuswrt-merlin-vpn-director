@@ -8,7 +8,9 @@
 #   Migrated from xray_tproxy.sh to provide independent, testable functions.
 #
 # Dependencies:
-#   - common.sh (log, tmp_file)
+#   - common.sh (log, tmp_file) and, through it, the platform contract
+#     (platform_load_module, platform_vpn_endpoints, platform_tproxy_extra_rules,
+#      platform_lan_ifaces)
 #   - firewall.sh (create_fw_chain, delete_fw_chain, ensure_fw_rule, sync_fw_rule, purge_fw_rules)
 #   - config.sh (XRAY_* variables)
 #   - ipset.sh (_is_valid_country_code)
@@ -25,6 +27,7 @@
 #   _tproxy_resolve_exclude_set()   - resolve exclusion ipset name (prefer _ext variant)
 #   _tproxy_exclude_sets [-q]       - validated, lower-cased XRAY_EXCLUDE_SETS on one line
 #   _tproxy_check_required_ipsets() - fail-safe check for required ipsets
+#   _tproxy_rule_is_ours()          - does an ip rule on our preference belong to us?
 #   _tproxy_setup_routing()         - setup routing table and ip rule
 #   _tproxy_table_label()           - the name the kernel prints for a table
 #   _tproxy_teardown_routing()      - remove routing table and ip rule
@@ -82,16 +85,14 @@ _tproxy_init() {
 }
 
 # -------------------------------------------------------------------------------------------------
-# _tproxy_check_module - check if xt_TPROXY kernel module is available
+# _tproxy_check_module - make sure the xt_TPROXY kernel module is loaded
 # -------------------------------------------------------------------------------------------------
-# Returns 0 if module is loaded or can be loaded, 1 otherwise.
+# Returns 0 if the platform loaded (or had loaded) the module, 1 otherwise.
 # -------------------------------------------------------------------------------------------------
 _tproxy_check_module() {
-    if ! lsmod | grep -q xt_TPROXY; then
-        modprobe xt_TPROXY 2>/dev/null || {
-            log -l ERROR "xt_TPROXY module not available"
-            return 1
-        }
+    if ! platform_load_module xt_TPROXY; then
+        log -l ERROR "xt_TPROXY module not available (KeeneticOS: install the \"Kernel modules for Netfilter\" firmware component)"
+        return 1
     fi
     return 0
 }
@@ -178,6 +179,26 @@ _tproxy_check_required_ipsets() {
 }
 
 # -------------------------------------------------------------------------------------------------
+# _tproxy_rule_is_ours <mark> <table> <want_table> - does an ip rule belong to this module?
+# -------------------------------------------------------------------------------------------------
+# Ours: the rule carries our mark value under any mask (an earlier
+# fwmark_mask), or our table under any mark (an earlier route_table). The
+# preference is not ownership: on KeeneticOS 5.1.5 pref 200 was free (a
+# user connection policy landed at prefs 102/103, table 4097, fwmark
+# 0xffffaab; built-in LTE backup stays at 100/101, 0xffffaaa, table 4096;
+# no tables in the 40s). Other firmware versions may still park policies
+# at 200, so a rule that is not ours is left alone. <mark> is what
+# "ip rule show" printed ("0x100/0x100", "0x100" or "").
+# -------------------------------------------------------------------------------------------------
+_tproxy_rule_is_ours() {
+    local mark="${1%%/*}" table="${2:-}" want_table="${3:-}"
+    if [[ $mark =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && (( mark == XRAY_FWMARK )); then
+        return 0
+    fi
+    [[ -n $table && $table == "$want_table" ]]
+}
+
+# -------------------------------------------------------------------------------------------------
 # _tproxy_setup_routing - setup routing table and ip rule for TPROXY
 # -------------------------------------------------------------------------------------------------
 _tproxy_setup_routing() {
@@ -194,13 +215,13 @@ _tproxy_setup_routing() {
     want_mark="$XRAY_FWMARK/$XRAY_FWMARK_MASK"
     want_table=$(_tproxy_table_label "$XRAY_ROUTE_TABLE")
 
-    # The preference belongs to this module, so every rule on it is ours to
-    # reconcile: keep one that carries the configured mark and table, drop the
-    # rest. That covers both the copies an older version added on every apply
-    # and a rule left over from an earlier route_table or fwmark_mask, which
-    # would otherwise be counted as ours and keep the new setting from ever
-    # being installed. Comparing what the kernel prints - not the table number -
-    # is the whole point; see _tproxy_table_label.
+    # Reconcile the rules on our preference: keep one that carries the
+    # configured mark and table, drop the other copies of ours - the ones an
+    # older version added on every apply, and a rule left over from an earlier
+    # route_table or fwmark_mask, which would otherwise count as ours and keep
+    # the new setting from ever being installed. Rules that are not ours stay
+    # (_tproxy_rule_is_ours). Comparing what the kernel prints - not the table
+    # number - is the whole point; see _tproxy_table_label.
     while IFS= read -r line; do
         [[ -n $line ]] || continue
         mark=$(printf '%s' "$line" | sed -n 's/.*fwmark \([^ ]*\).*/\1/p')
@@ -210,6 +231,7 @@ _tproxy_setup_routing() {
             kept=1
             continue
         fi
+        _tproxy_rule_is_ours "$mark" "$table" "$want_table" || continue
 
         if [[ -n $mark ]]; then
             ip rule del pref "$XRAY_RULE_PREF" fwmark "$mark" table "$table" 2>/dev/null || true
@@ -219,7 +241,12 @@ _tproxy_setup_routing() {
             ip rule del pref "$XRAY_RULE_PREF" 2>/dev/null || true
         fi
         log -l WARN "Removed stale ip rule: pref $XRAY_RULE_PREF fwmark ${mark:-none} lookup ${table:-none}"
-    done <<< "$(ip rule show pref "$XRAY_RULE_PREF" 2>/dev/null || true)"
+    # "ip rule show pref N" is refused by iproute2 4.4 (Entware's ip-full on
+    # KeeneticOS answers '"ip rule show" does not take any arguments.'), so the
+    # preference is filtered here. Asking the tool would silently yield an empty
+    # list, and the rule below would be added a second time - which the kernel
+    # refuses with EEXIST, killing the apply under errexit.
+    done <<< "$(ip rule show 2>/dev/null | grep "^$XRAY_RULE_PREF:" || true)"
 
     if [[ $kept -eq 0 ]]; then
         ip rule add pref "$XRAY_RULE_PREF" fwmark "$want_mark" table "$XRAY_ROUTE_TABLE"
@@ -244,16 +271,30 @@ _tproxy_table_label() {
 # _tproxy_teardown_routing - remove routing table and ip rule
 # -------------------------------------------------------------------------------------------------
 _tproxy_teardown_routing() {
-    # Delete by preference until the kernel says there is nothing left. By
-    # preference, not by the configured tuple: an older version left a copy
-    # behind on every apply, and a changed route_table or fwmark_mask leaves a
-    # rule that no longer matches the configuration but is still ours. The
-    # counter only guards against a delete that always succeeds, which would
-    # otherwise wedge stop.
-    local i=0
-    while [[ $i -lt 64 ]] && ip rule del pref "$XRAY_RULE_PREF" 2>/dev/null; do
-        i=$((i + 1))
-    done
+    local want_table line mark table
+    want_table=$(_tproxy_table_label "$XRAY_ROUTE_TABLE")
+
+    # Every rule on our preference that is ours (_tproxy_rule_is_ours): the
+    # copies an older version left on every apply, and rules from an earlier
+    # route_table or fwmark_mask. One delete per listed line - the kernel
+    # removes one rule per call, and a duplicate is listed once per copy.
+    # Rules of another owner at the same preference stay.
+    while IFS= read -r line; do
+        [[ -n $line ]] || continue
+        mark=$(printf '%s' "$line" | sed -n 's/.*fwmark \([^ ]*\).*/\1/p')
+        table=$(printf '%s' "$line" | sed -n 's/.*lookup \([^ ]*\).*/\1/p')
+        _tproxy_rule_is_ours "$mark" "$table" "$want_table" || continue
+        if [[ -n $mark ]]; then
+            ip rule del pref "$XRAY_RULE_PREF" fwmark "$mark" table "$table" 2>/dev/null || true
+        else
+            ip rule del pref "$XRAY_RULE_PREF" table "$table" 2>/dev/null || true
+        fi
+    # "ip rule show pref N" is refused by iproute2 4.4 (Entware's ip-full on
+    # KeeneticOS answers '"ip rule show" does not take any arguments.'), so the
+    # preference is filtered here. Asking the tool would silently yield an empty
+    # list, and the rule below would be added a second time - which the kernel
+    # refuses with EEXIST, killing the apply under errexit.
+    done <<< "$(ip rule show 2>/dev/null | grep "^$XRAY_RULE_PREF:" || true)"
 
     ip route del local default dev lo table "$XRAY_ROUTE_TABLE" 2>/dev/null || true
     log "Removed TPROXY routing configuration"
@@ -326,7 +367,7 @@ _tproxy_validate_ipv4_cidr() {
 # Merges three sources into the bypass ipset:
 #   1. Xray server IPs from config (xray.servers)
 #   2. User-defined exclude IPs from config (xray.exclude_ips)
-#   3. OpenVPN client endpoints from nvram (resolved on the fly)
+#   3. Firmware VPN client endpoints from platform_vpn_endpoints (resolved on the fly)
 # Always creates the ipset (even if empty) so iptables rules can reference it.
 # -------------------------------------------------------------------------------------------------
 _tproxy_setup_bypass_ipset() {
@@ -371,14 +412,13 @@ _tproxy_setup_bypass_ipset() {
         done
     fi
 
-    # Source 3: OpenVPN client endpoints from nvram (resolved on the fly)
-    local slot
-    for slot in 1 2 3 4 5; do
-        addr=$(nvram get "vpn_client${slot}_addr" 2>/dev/null) || addr=""
+    # Source 3: endpoints of the firmware's own VPN clients, so their traffic
+    # never enters the proxy (resolved on the fly)
+    while IFS= read -r addr; do
         [[ -n $addr ]] || continue
 
         resolved=$(resolve_ip -a -q "$addr" 2>/dev/null) || {
-            log -l WARN "Cannot resolve OpenVPN endpoint vpn_client${slot}_addr=$addr"
+            log -l WARN "Cannot resolve VPN endpoint $addr"
             continue
         }
 
@@ -386,7 +426,7 @@ _tproxy_setup_bypass_ipset() {
             [[ -n $ip ]] || continue
             ipset add "$XRAY_BYPASS_IPSET" "$ip" 2>/dev/null && ovpn_count=$((ovpn_count + 1)) || true
         done <<< "$resolved"
-    done
+    done < <(platform_vpn_endpoints || true)
 
     local total=$((xray_count + user_count + ovpn_count))
     log "Populated $XRAY_BYPASS_IPSET ipset: $xray_count xray, $user_count user, $ovpn_count openvpn = $total total"
@@ -398,6 +438,18 @@ _tproxy_setup_bypass_ipset() {
 _tproxy_setup_iptables() {
     local exclude_set resolved_set
     local -a exclude_sets_array
+
+    # The PREROUTING jumps below are what make this chain matter, so ask for the
+    # LAN interfaces before touching any firewall state. A platform that cannot
+    # name them would otherwise leave a fully populated chain with nothing
+    # jumping to it: every packet the proxy exists to carry goes direct, and the
+    # function still ends in "Applied TPROXY iptables rules".
+    local lan_ifaces
+    lan_ifaces="$(platform_lan_ifaces)" || lan_ifaces=""
+    if [[ -z $lan_ifaces ]]; then
+        log -l ERROR "Cannot determine the LAN interfaces; TPROXY rules not applied"
+        return 1
+    fi
 
     read -ra exclude_sets_array <<< "$(_tproxy_exclude_sets -q)"
 
@@ -460,9 +512,26 @@ _tproxy_setup_iptables() {
         -p udp -j TPROXY --on-port "$XRAY_TPROXY_PORT" \
         --tproxy-mark "$XRAY_FWMARK/$XRAY_FWMARK_MASK"
 
-    # Jump from PREROUTING to our chain (position 1 = before Tunnel Director)
-    sync_fw_rule -q mangle PREROUTING "-j $XRAY_CHAIN\$" \
-        "-i br0 -j $XRAY_CHAIN" 1
+    # Rules the platform needs outside our chain (Keenetic: mangle INPUT accept).
+    # The status is ours to report: this function runs under "if !", which turns
+    # errexit off for its whole body, and it ends in a log - so a failure here
+    # would otherwise be an apply that says "successfully" while the firmware
+    # drops the proxied traffic.
+    platform_tproxy_extra_rules apply "$XRAY_FWMARK/$XRAY_FWMARK_MASK" ||
+        log -l WARN "Failed to apply platform TPROXY rules; proxied traffic may be dropped"
+
+    # Jump from PREROUTING to our chain for every LAN interface, each at its own
+    # position (the first = before Tunnel Director). One shared position would
+    # make every interface displace the one before it, so sync_fw_rule would
+    # find each jump off its position and purge-and-re-insert all of them on
+    # every apply - and each rewrite is a window with no jump for that interface.
+    local lan_if pos=1
+    while IFS= read -r lan_if; do
+        [[ -n $lan_if ]] || continue
+        sync_fw_rule -q mangle PREROUTING "-i $lan_if -j $XRAY_CHAIN\$" \
+            "-i $lan_if -j $XRAY_CHAIN" "$pos"
+        pos=$((pos + 1))
+    done <<< "$lan_ifaces"
 
     log "Applied TPROXY iptables rules"
 }
@@ -471,6 +540,9 @@ _tproxy_setup_iptables() {
 # _tproxy_teardown_iptables - remove all iptables rules
 # -------------------------------------------------------------------------------------------------
 _tproxy_teardown_iptables() {
+    # Best effort: tproxy_stop calls this bare under errexit, so a platform whose
+    # cleanup fails must not abort the teardown before the jump and the chain go.
+    platform_tproxy_extra_rules stop "$XRAY_FWMARK/$XRAY_FWMARK_MASK" || true
     purge_fw_rules -q "mangle PREROUTING" "-j $XRAY_CHAIN\$"
     delete_fw_chain -q mangle "$XRAY_CHAIN"
 

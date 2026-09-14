@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/ssrf"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vless"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/ssrf"
+	"github.com/zinin/vpn-director/server/internal/vless"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // handleListServers returns a handler that lists all imported servers.

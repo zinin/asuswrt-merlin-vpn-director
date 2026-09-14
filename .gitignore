@@ -27,3 +27,10 @@ web/vite.config.d.ts
 web/tsconfig.tsbuildinfo
 web/tsconfig.node.tsbuildinfo
 server/cmd/webui/web/
+
+# Claude Code MCP config with credentials stays local
+.mcp.json
+
+# Playwright MCP browser-session artefacts
+.playwright-mcp/
+playwright-mcp.config.json

@@ -2,16 +2,19 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/zinin/vpn-director/server/internal/platform"
 )
 
 func TestDownloadFile_Success(t *testing.T) {
@@ -196,21 +199,64 @@ func TestDownloadRelease_CleansBeforeDownload(t *testing.T) {
 	}
 }
 
-// TestDownloadRelease_UsesTheInjectedRawHost is why rawBaseURL exists: before
-// it, downloadScriptFile always addressed the real raw.githubusercontent.com,
-// so the unit suite reached the network on every `go test` - a dependency CI
-// would inherit. It was not slow about it: the tag these tests ask for does not
-// exist, so the run took one 404 and stopped at the first of the nineteen
-// files. This test is the first to drive all nineteen through a server it
-// controls, which is what lets it assert the count.
-func TestDownloadRelease_UsesTheInjectedRawHost(t *testing.T) {
+const testManifestBody = "common router/opt/vpn-director/vpn-director.sh\n" +
+	"common router/opt/vpn-director/lib/common.sh\n" +
+	"merlin router/jffs/scripts/firewall-start\n" +
+	"keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh\n"
+
+// TestDownloadRelease_FetchesManifestThenPlatformFiles drives the whole
+// download through a server the test controls: the manifest comes first, then
+// every common and merlin file in manifest order, and nothing tagged keenetic.
+func TestDownloadRelease_FetchesManifestThenPlatformFiles(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/"+manifestPath) {
+			w.Write([]byte(testManifestBody))
+			return
+		}
 		w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	s := &Service{
+		httpClient: &http.Client{},
+		baseURL:    server.URL,
+		rawBaseURL: server.URL,
+		updateDir:  tempDir,
+		archSuffix: "arm64",
+		platform:   "merlin",
+	}
+
+	// No assets in the release, so downloadBinaries fails after the files.
+	_ = s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
+
+	mu.Lock()
+	defer mu.Unlock()
+	prefix := "/" + repoOwner + "/" + repoName + "/refs/tags/v1.0.0/"
+	want := []string{
+		prefix + manifestPath,
+		prefix + "router/opt/vpn-director/vpn-director.sh",
+		prefix + "router/opt/vpn-director/lib/common.sh",
+		prefix + "router/jffs/scripts/firewall-start",
+	}
+	if strings.Join(paths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("request paths:\n%s\nwant:\n%s", strings.Join(paths, "\n"), strings.Join(want, "\n"))
+	}
+	for _, f := range []string{"files/files.manifest", "files/opt/vpn-director/lib/common.sh", "files/jffs/scripts/firewall-start"} {
+		if _, err := os.Stat(filepath.Join(tempDir, f)); err != nil {
+			t.Errorf("%s not written: %v", f, err)
+		}
+	}
+}
+
+func TestDownloadRelease_FailsWithoutManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
@@ -221,18 +267,109 @@ func TestDownloadRelease_UsesTheInjectedRawHost(t *testing.T) {
 		updateDir:  t.TempDir(),
 		archSuffix: "arm64",
 	}
-
-	// No assets in the release, so downloadBinaries fails after the scripts.
-	_ = s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(paths) != len(scriptFiles) {
-		t.Fatalf("the test server saw %d requests, want %d - some file still goes to the real host", len(paths), len(scriptFiles))
+	err := s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
+	if err == nil || !strings.Contains(err.Error(), "files.manifest") {
+		t.Fatalf("DownloadRelease() error = %v, want one naming files.manifest", err)
 	}
-	want := "/" + repoOwner + "/" + repoName + "/refs/tags/v1.0.0/" + scriptFiles[0]
-	if paths[0] != want {
-		t.Errorf("first request path = %q, want %q", paths[0], want)
+}
+
+// TestDownloadRelease_RefusesAManifestWithNoFileForThePlatform closes the one
+// hole that a zero-entry selection would turn into a silent success: the
+// binaries get swapped while every script and init file stays at the old
+// version. downloadFile has no minimum-size check, so a zero-byte HTTP 200 is
+// a manifest as far as the parser is concerned. The releases below carry
+// working assets over TLS on purpose - without the guard downloadBinaries
+// fetches them both and DownloadRelease returns nil.
+func TestDownloadRelease_RefusesAManifestWithNoFileForThePlatform(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{name: "empty", body: ""},
+		{name: "comments only", body: "# VPN Director file manifest\n\n# nothing here yet\n"},
+		{name: "other platforms only", body: "keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var paths []string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				if strings.HasSuffix(r.URL.Path, "/"+manifestPath) {
+					w.Write([]byte(tt.body))
+					return
+				}
+				w.Write([]byte("content"))
+			}))
+			defer server.Close()
+
+			tempDir := t.TempDir()
+			s := &Service{
+				httpClient: server.Client(),
+				baseURL:    server.URL,
+				rawBaseURL: server.URL,
+				updateDir:  tempDir,
+				archSuffix: "arm64",
+				platform:   "merlin",
+			}
+
+			release := &Release{TagName: "v1.0.0"}
+			for _, d := range Daemons {
+				release.Assets = append(release.Assets, Asset{
+					Name:        d.Name + "-arm64",
+					DownloadURL: server.URL + "/" + d.Name + "-arm64",
+				})
+			}
+
+			err := s.DownloadRelease(context.Background(), release)
+			if err == nil {
+				t.Fatal("DownloadRelease() accepted a manifest that lists no file for this platform")
+			}
+			if !strings.Contains(err.Error(), "merlin") {
+				t.Errorf("error = %v, want it to name the platform", err)
+			}
+			for _, d := range Daemons {
+				if _, err := os.Stat(filepath.Join(tempDir, "files", d.Name)); !os.IsNotExist(err) {
+					t.Errorf("binary %s was downloaded on top of scripts that were not", d.Name)
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(paths) != 1 || !strings.HasSuffix(paths[0], "/"+manifestPath) {
+				t.Errorf("request paths = %v, want the manifest and nothing else", paths)
+			}
+		})
+	}
+}
+
+func TestGetPlatform(t *testing.T) {
+	if got, err := (&Service{platform: "keenetic"}).getPlatform(); err != nil || got != "keenetic" {
+		t.Errorf("injected: getPlatform() = %q, %v; want keenetic", got, err)
+	}
+	t.Setenv(platform.EnvVar, platform.Keenetic)
+	if got, err := (&Service{}).getPlatform(); err != nil || got != "keenetic" {
+		t.Errorf("detected: getPlatform() = %q, %v; want keenetic from %s", got, err, platform.EnvVar)
+	}
+	s := &Service{}
+	s.SetPlatform("merlin")
+	if got, _ := s.getPlatform(); got != "merlin" {
+		t.Errorf("SetPlatform: getPlatform() = %q, want merlin", got)
+	}
+	t.Setenv(platform.EnvVar, "")
+	t.Setenv("VPD_PROBE_ROOT", t.TempDir())
+	if _, err := (&Service{}).getPlatform(); err == nil {
+		t.Error("undetectable: getPlatform() guessed a platform instead of failing")
+	}
+}
+
+func TestDownloadRelease_RefusesWhenThePlatformIsUnknown(t *testing.T) {
+	t.Setenv(platform.EnvVar, "")
+	t.Setenv("VPD_PROBE_ROOT", t.TempDir())
+	s := &Service{updateDir: t.TempDir()}
+	err := s.DownloadRelease(context.Background(), &Release{TagName: "v1.0.0"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported platform") {
+		t.Fatalf("DownloadRelease() = %v, want the detection error", err)
 	}
 }
 
@@ -281,60 +418,6 @@ func TestDownloadScriptFile_PathTransformation(t *testing.T) {
 	}
 }
 
-func TestScriptFiles_ExistInRepo(t *testing.T) {
-	// The list is a copy of install.sh's downloads; a renamed or removed file
-	// silently breaks every future update, so pin it to the working tree.
-	for _, f := range scriptFiles {
-		path := filepath.Join("..", "..", "..", f)
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("scriptFiles entry %q not found in the repo: %v", f, err)
-		}
-	}
-}
-
-func TestScriptFiles_IncludesWebUIInitScript(t *testing.T) {
-	const want = "router/opt/etc/init.d/S98vpn-director-webui"
-	for _, f := range scriptFiles {
-		if f == want {
-			return
-		}
-	}
-	t.Errorf("scriptFiles must ship %s, otherwise an update leaves the old init script", want)
-}
-
-// TestScriptFiles_MatchInstallSh closes the last hole in the single-source-of-
-// truth claim. TestScriptFiles_ExistInRepo catches a file renamed in the tree;
-// nothing catches a file added to one of the two lists and not the other, and
-// the two lists are what decide whether an update leaves a stale script behind.
-func TestScriptFiles_MatchInstallSh(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "install.sh"))
-	if err != nil {
-		t.Fatalf("read install.sh: %v", err)
-	}
-
-	// Every path install.sh fetches appears as a router/... literal: eighteen
-	// in download_scripts' loop plus the xray template right after it. The
-	// trailing + excludes the bare "router/" of `target="/${script#router/}"`.
-	re := regexp.MustCompile(`router/[A-Za-z0-9._/-]+`)
-	inInstaller := make(map[string]bool)
-	for _, m := range re.FindAllString(string(data), -1) {
-		inInstaller[m] = true
-	}
-
-	inGo := make(map[string]bool, len(scriptFiles))
-	for _, f := range scriptFiles {
-		inGo[f] = true
-		if !inInstaller[f] {
-			t.Errorf("scriptFiles ships %q but install.sh does not download it: a fresh install would miss the file", f)
-		}
-	}
-	for f := range inInstaller {
-		if !inGo[f] {
-			t.Errorf("install.sh downloads %q but scriptFiles does not: an update would leave the old one in place", f)
-		}
-	}
-}
-
 func TestArchAssetSuffix(t *testing.T) {
 	tests := []struct {
 		goarch  string
@@ -343,6 +426,8 @@ func TestArchAssetSuffix(t *testing.T) {
 	}{
 		{goarch: "arm64", want: "arm64"},
 		{goarch: "arm", want: "arm"},
+		{goarch: "mipsle", want: "mipsle"},
+		{goarch: "mips", wantErr: true},
 		{goarch: "amd64", wantErr: true},
 		{goarch: "", wantErr: true},
 	}
@@ -484,5 +569,335 @@ func TestDownloadBinaries_RefusesAPlainHTTPAsset(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "https") {
 		t.Errorf("error = %v, want it to name the scheme requirement", err)
+	}
+}
+
+// Step 2 of a self-update is the new release's binary of its own daemon, so
+// the payload takes that binary from the running executable instead of
+// fetching the same bytes again: a hard link, which costs no tmpfs.
+func TestDownloadBinaries_TakesItsOwnBinaryFromTheRunningExecutable(t *testing.T) {
+	var mu sync.Mutex
+	var requested []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requested = append(requested, r.URL.Path)
+		mu.Unlock()
+		w.Write([]byte("binary of " + strings.TrimPrefix(r.URL.Path, "/")))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	self := filepath.Join(tempDir, "installer")
+	if err := os.WriteFile(self, []byte("the running webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{httpClient: server.Client(), updateDir: tempDir, archSuffix: "arm64",
+		daemon: DaemonWebUI, selfBinary: self}
+
+	release := &Release{TagName: "v1.0.0"}
+	for _, d := range Daemons {
+		release.Assets = append(release.Assets, Asset{
+			Name:        d.Name + "-arm64",
+			DownloadURL: server.URL + "/" + d.Name + "-arm64",
+		})
+	}
+
+	if err := s.downloadBinaries(context.Background(), release); err != nil {
+		t.Fatalf("downloadBinaries() error = %v", err)
+	}
+
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownInfo, err := os.Stat(filepath.Join(tempDir, "files", DaemonWebUI))
+	if err != nil {
+		t.Fatalf("no payload binary for %s: %v", DaemonWebUI, err)
+	}
+	if !os.SameFile(selfInfo, ownInfo) {
+		t.Errorf("files/%s is not a hard link to the running executable", DaemonWebUI)
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, "files", DaemonBot))
+	if err != nil || string(data) != "binary of "+DaemonBot+"-arm64" {
+		t.Errorf("files/%s = %q (%v), want the downloaded asset", DaemonBot, data, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range requested {
+		if strings.Contains(p, DaemonWebUI) {
+			t.Errorf("downloaded %s although the running executable is that binary", p)
+		}
+	}
+}
+
+// A hard link needs one filesystem; without one the binary is copied, and it
+// has to arrive executable.
+func TestCopyExecutable_CopiesContentAndTheExecutableBit(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+
+	if err := copyExecutable(src, dst); err != nil {
+		t.Fatalf("copyExecutable() error = %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil || string(data) != "binary" {
+		t.Fatalf("dst = %q (%v), want the source content", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0100 == 0 {
+		t.Errorf("dst mode = %v, want it executable", info.Mode().Perm())
+	}
+}
+
+// files/ survives a failed attempt, so step 2 can find its own binary already
+// there: a hard link to the executable it is running as. os.Link then fails
+// with "file exists", and a copy onto that destination opens it with O_TRUNC -
+// which empties the source along with it, because they are one file. The
+// payload binary would be zero bytes and the running daemon gone with it.
+func TestLinkOrCopy_KeepsTheSourceWhenTheDestinationIsAlreadyLinkedToIt(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "installer")
+	if err := os.WriteFile(src, []byte("the new webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "files", DaemonWebUI)
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(src, dst); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy() error = %v", err)
+	}
+
+	for _, path := range []string{src, dst} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != "the new webui" {
+			t.Errorf("%s = %q (%v), want the binary whole", filepath.Base(path), data, err)
+		}
+	}
+}
+
+// A destination left by an earlier attempt is replaced by the binary asked
+// for, and arrives with the mode a daemon needs rather than the one that file
+// happened to have.
+func TestLinkOrCopy_ReplacesAnExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "installer")
+	if err := os.WriteFile(src, []byte("the new webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(src, 0755); err != nil { // umask does not decide this
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "files", DaemonWebUI)
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("an older build"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dst, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy() error = %v", err)
+	}
+
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "the new webui" {
+		t.Errorf("dst = %q (%v), want the binary that was asked for", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Errorf("dst mode = %v, want 0755", info.Mode().Perm())
+	}
+}
+
+// O_CREATE leaves the mode of a file that is already there alone, so a
+// destination that exists has to be made executable explicitly.
+func TestCopyExecutable_MakesAnExistingDestinationExecutable(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+	if err := os.WriteFile(dst, []byte("an older build"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dst, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyExecutable(src, dst); err != nil {
+		t.Fatalf("copyExecutable() error = %v", err)
+	}
+
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "binary" {
+		t.Errorf("dst = %q (%v), want the source content", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Errorf("dst mode = %v, want 0755", info.Mode().Perm())
+	}
+}
+
+// A copy that fails leaves nothing behind under the name of a whole binary:
+// the update script would install it and the daemon would not start. The read
+// is what fails here; a Close that fails is removed the same way, and no test
+// in this suite can bring one about honestly.
+func TestCopyExecutable_LeavesNoPartialFileBehind(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.Mkdir(src, 0755); err != nil { // opens, but cannot be read
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "dst")
+
+	if err := copyExecutable(src, dst); err == nil {
+		t.Fatal("copyExecutable() reported a directory copied")
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Error("a failed copy left its destination behind")
+	}
+}
+
+// Step 2 is its own daemon's binary of the release it installs, so that asset
+// is one the release need not carry at all: a release that ships only the
+// other daemon's still installs.
+func TestDownloadBinaries_NeedsNoAssetForTheDaemonItIs(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("binary of " + strings.TrimPrefix(r.URL.Path, "/")))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	self := filepath.Join(tempDir, "installer")
+	if err := os.WriteFile(self, []byte("the running webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{httpClient: server.Client(), updateDir: tempDir, archSuffix: "arm64",
+		daemon: DaemonWebUI, selfBinary: self}
+	release := &Release{TagName: "v1.0.0", Assets: []Asset{
+		{Name: DaemonBot + "-arm64", DownloadURL: server.URL + "/" + DaemonBot + "-arm64"},
+	}}
+
+	if err := s.downloadBinaries(context.Background(), release); err != nil {
+		t.Fatalf("downloadBinaries() error = %v, want the missing asset to be the one step 2 is", err)
+	}
+
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownInfo, err := os.Stat(filepath.Join(tempDir, "files", DaemonWebUI))
+	if err != nil || !os.SameFile(selfInfo, ownInfo) {
+		t.Errorf("files/%s is not the running executable (%v)", DaemonWebUI, err)
+	}
+}
+
+// A hard link needs one filesystem. The installer and files/ share /tmp on a
+// router, so the copy is the path nothing exercises there - it needs a second
+// filesystem, and /dev/shm is the one a Linux box is likely to have.
+func TestLinkOrCopy_CopiesToAnotherFilesystem(t *testing.T) {
+	elsewhere, err := os.MkdirTemp("/dev/shm", "vpn-director-test-")
+	if err != nil {
+		t.Skipf("no second filesystem to copy from: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(elsewhere) })
+
+	dir := t.TempDir()
+	src := filepath.Join(elsewhere, "installer")
+	if err := os.WriteFile(src, []byte("the new webui"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(dir, "probe")
+	if err := os.Link(src, probe); !errors.Is(err, syscall.EXDEV) {
+		os.Remove(probe)
+		t.Skipf("/dev/shm and %s are one filesystem, so a link would not fall back: %v", dir, err)
+	}
+
+	dst := filepath.Join(dir, "files", DaemonWebUI)
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy() error = %v", err)
+	}
+
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "the new webui" {
+		t.Errorf("dst = %q (%v), want the source content", data, err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0100 == 0 {
+		t.Errorf("dst mode = %v, want it executable", info.Mode().Perm())
+	}
+}
+
+// The claim was checked before the request but the file was published with
+// os.Create only after the round trip, so a step 2 that lost the update
+// directory mid-transfer truncated the payload of the retry that took it over.
+// telegram-bot.md requires the check before every file step 2 writes.
+func TestDownloadScriptFile_LeavesTheTargetAloneWhenTheClaimIsLostMidTransfer(t *testing.T) {
+	var mu sync.Mutex
+	claimed := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Another daemon takes the update directory over while this body is in
+		// flight - the death of step 1's daemon the handover rule describes.
+		mu.Lock()
+		claimed = false
+		mu.Unlock()
+		w.Write([]byte("payload of the download that lost the directory"))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	target := filepath.Join(tempDir, "files", "opt/vpn-director/lib/common.sh")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(target, []byte("the retry's payload"), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	s := &Service{
+		httpClient: &http.Client{},
+		rawBaseURL: server.URL,
+		updateDir:  tempDir,
+		checkClaim: func() error {
+			mu.Lock()
+			defer mu.Unlock()
+			if claimed {
+				return nil
+			}
+			return errClaimLost
+		},
+	}
+
+	err := s.downloadScriptFile(context.Background(), "v1.0.0", "router/opt/vpn-director/lib/common.sh")
+	if !errors.Is(err, errClaimLost) {
+		t.Fatalf("downloadScriptFile() error = %v, want errClaimLost", err)
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("ReadFile(target) error = %v", readErr)
+	}
+	if string(got) != "the retry's payload" {
+		t.Errorf("target = %q, want the retry's payload untouched", got)
 	}
 }

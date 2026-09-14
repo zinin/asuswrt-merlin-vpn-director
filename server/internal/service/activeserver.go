@@ -2,7 +2,7 @@
 package service
 
 import (
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // GenerateAndRecordActiveServer writes config.json and the note of which

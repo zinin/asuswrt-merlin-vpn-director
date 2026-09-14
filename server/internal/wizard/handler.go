@@ -2,8 +2,8 @@ package wizard
 
 import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/telegram"
 )
 
 // Handler routes wizard callbacks and text input to step handlers
@@ -21,7 +21,7 @@ func NewHandler(
 	vpn service.VPNDirector,
 	xray service.XrayGenerator,
 ) *Handler {
-	deps := &StepDeps{Sender: sender, Config: config}
+	deps := &StepDeps{Sender: sender, Config: config, VPN: vpn}
 	manager := NewManager()
 
 	// Create step handlers with next callbacks

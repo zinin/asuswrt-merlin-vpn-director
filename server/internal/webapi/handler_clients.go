@@ -5,23 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
-
-// validRoutes is the set of allowed route names for client assignment.
-var validRoutes = map[string]bool{
-	"xray":   true,
-	"wgc1":   true,
-	"wgc2":   true,
-	"wgc3":   true,
-	"wgc4":   true,
-	"wgc5":   true,
-	"ovpnc1": true,
-	"ovpnc2": true,
-	"ovpnc3": true,
-	"ovpnc4": true,
-	"ovpnc5": true,
-}
 
 // handleListClients returns a handler that lists all VPN clients with their
 // route assignment and pause status.
@@ -68,9 +53,33 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "route is required")
 			return
 		}
-		if !validRoutes[req.Route] {
-			jsonError(w, http.StatusBadRequest, "invalid route: must be one of xray, wgc1-wgc5, ovpnc1-ovpnc5")
-			return
+		// A route is xray, a tunnel already in the config, or a tunnel this
+		// router has, asked of the platform now: the list is the firmware's
+		// (Merlin wgcN/ovpncN, Keenetic OpenVPN0, Wireguard1, ...) and a tunnel
+		// can appear or go at any time. A configured tunnel is accepted without
+		// the platform, as the bot and the wizard accept it: ClientsTab offers
+		// exactly those when the platform cannot be asked, and a 503 here made
+		// that fallback unusable. An empty list is not an answer either: on
+		// Keenetic `vpn-director.sh platform` prints "tunnels": [] and exits 0
+		// while RCI does not reply (spec 13).
+		if req.Route != "xray" {
+			cfg, err := deps.Config.LoadVPNConfig()
+			if err != nil {
+				jsonError(w, http.StatusInternalServerError, "failed to load configuration")
+				return
+			}
+			if _, configured := cfg.TunnelDirector.Tunnels[req.Route]; !configured {
+				extendWriteDeadline(w, statusDeadline)
+				info, err := deps.VPN.Platform()
+				if err != nil || len(info.Tunnels) == 0 {
+					jsonError(w, http.StatusServiceUnavailable, "platform info unavailable")
+					return
+				}
+				if !info.HasTunnel(req.Route) {
+					jsonError(w, http.StatusBadRequest, "invalid route: must be xray or a tunnel this router has")
+					return
+				}
+			}
 		}
 
 		unlock, ok := lockLongOp(w, r, deps, applyDeadline)

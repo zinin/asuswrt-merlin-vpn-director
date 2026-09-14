@@ -13,14 +13,15 @@ import (
 
 	"errors"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/bot"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/chatstore"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/config"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/devmode"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/logging"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/paths"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updatechecker"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/bot"
+	"github.com/zinin/vpn-director/server/internal/chatstore"
+	"github.com/zinin/vpn-director/server/internal/config"
+	"github.com/zinin/vpn-director/server/internal/devmode"
+	"github.com/zinin/vpn-director/server/internal/logging"
+	"github.com/zinin/vpn-director/server/internal/paths"
+	"github.com/zinin/vpn-director/server/internal/platform"
+	"github.com/zinin/vpn-director/server/internal/updatechecker"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 var (
@@ -35,8 +36,29 @@ func versionString() string {
 }
 
 func main() {
+	// Step 2 of a self-update (internal/updater/selfupdate.go): the version
+	// being replaced runs this binary with these arguments before installing
+	// it. Nothing a daemon does at startup may run first.
+	if len(os.Args) > 1 && os.Args[1] == updater.SelfUpdateCommand {
+		os.Exit(updater.RunSelfUpdate(os.Args[2:], updater.DaemonBot, Version, os.Stdout, os.Stderr))
+	}
+
 	devFlag := flag.Bool("dev", false, "Run in development mode (local testing)")
+	platformFlag := flag.String("platform", "", "platform this router runs (merlin|keenetic); detected when empty")
 	flag.Parse()
+
+	plat, err := platform.Resolve(*platformFlag, *devFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	// Every shell this daemon runs takes the platform from the environment, so
+	// the answer above has to reach them: vpn-director.sh would otherwise keep
+	// detecting on its own, and a --platform would hold for the Go side alone.
+	if err := plat.Export(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	var p paths.Paths
 	var opts []bot.Option
@@ -63,7 +85,9 @@ func main() {
 	}
 
 	// Always add updater service
-	opts = append(opts, bot.WithUpdater(updater.New()))
+	upd := updater.NewForDaemon(updater.DaemonBot)
+	upd.SetPlatform(plat.Name)
+	opts = append(opts, bot.WithUpdater(upd))
 
 	// Initialize logger BEFORE config load (default INFO level)
 	slogger, logger, err := logging.NewSlogLogger(p.BotLogPath)
@@ -167,7 +191,7 @@ func main() {
 		go checker.Run(ctx, cfg.UpdateCheckInterval)
 	}
 
-	slog.Info("Telegram Bot started", "version", versionString())
+	slog.Info("Telegram Bot started", "version", versionString(), "platform", plat.Name)
 	b.Run(ctx)
 	slog.Info("Bot stopped")
 }

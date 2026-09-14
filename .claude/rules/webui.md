@@ -46,9 +46,10 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 | POST | `/api/ipsets/update` | `vpn-director.sh update` (`IPSET_FORCE_UPDATE=1`) |
 | GET | `/api/ip` | External IP |
 | GET | `/api/version` | Build version and commit |
+| GET | `/api/platform` | `vpn-director.sh platform`: firmware, password file, LAN/WAN interfaces, tunnels; 503 when the script cannot answer |
 | GET | `/api/servers` | Xray server list plus `active`, the recorded server |
 | POST | `/api/servers/active`, `/api/servers/import` | Select the active server, import a subscription |
-| GET/POST/DELETE | `/api/clients` | LAN clients |
+| GET/POST/DELETE | `/api/clients` | LAN clients; a POST route must be xray, a tunnel already in the config, or a tunnel `/api/platform` lists; 503 when the platform cannot answer for a route outside the config |
 | POST | `/api/clients/pause`, `/api/clients/resume` | Pause and resume a client |
 | GET/POST | `/api/excludes/sets` | Country exclusion sets |
 | GET/POST/DELETE | `/api/excludes/ips` | Excluded IPs and CIDRs |
@@ -56,7 +57,7 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 | GET | `/api/config` | `vpn-director.json` with `jwt_secret` blanked |
 | GET | `/api/update/check` | Latest release; `?force=1` pierces the 30-minute cache |
 | POST | `/api/update` | Starts the unified update, answers 202 |
-| GET | `/api/update/status` | Whether an update script is running |
+| GET | `/api/update/status` | Whether an update is running |
 
 `xray.active_server` is the only record of which server is running.
 `config.json` carries just the outbound, and a subscription routinely puts many
@@ -152,17 +153,21 @@ binary's bundle names are picked up right after an update.
 ## Update flow
 
 `internal/updateflow` is shared with the bot; the Web UI handlers are adapters
-over it. See `telegram-bot.md` for the script and the daemon table. Points that
-belong to the Web UI half:
+over it. See `telegram-bot.md` for the handover's two steps, the script and the
+daemon table. Points that belong to the Web UI half:
 
 - Both GitHub-facing routes extend the write deadline twice — once for the API
   call, once after it returns — because the flow serializes its callers on one
   mutex and a queued caller could otherwise consume the whole deadline.
+- The handover runs in the goroutine behind the 202. While step 2 downloads,
+  `/api/update/status` reports the update running, because the lock names the
+  live daemon that started it, and step 1 gives step 2 at most 15 minutes,
+  inside the page's twenty-minute wait.
 - The front end polls `/api/version` every 3 seconds with `skipAuthRedirect`,
   so the 401s and connection errors of a restarting server do not bounce the
   user to the login page. It reloads as soon as the new version answers. Five
   minutes is the restart window; past it the loop continues only while
-  `/api/update/status` still reports the script running, up to twenty minutes.
+  `/api/update/status` still reports an update running, up to twenty minutes.
   Both requests carry their own 8-second timeout: the loop awaits the status
   call, so a hung connection would otherwise keep it from reaching that limit.
   `/api/update/status` also lets a reloaded page rejoin an update it did not
@@ -184,7 +189,10 @@ is no signature, no checksum and no pinning. That is the same model
 assumed. What the code does enforce: an asset URL must be `https`, every string
 reaching the generated script passes a strict allow-list, downloads are capped
 at 50 MB, and `files/` is wiped before every attempt so a partial download
-cannot be executed later.
+cannot be executed later. Since the self-update handover the new release's
+daemon binary also runs as root before it is installed: step 1 executes it as
+the installer (`internal/updater/handover.go`). It is the binary the update
+installs and starts anyway, so the trust does not change.
 
 ## Known limits
 

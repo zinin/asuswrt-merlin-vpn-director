@@ -59,11 +59,15 @@ TUN_DIRECTOR_DIR="/tmp/tunnel_director"
 # State files
 TUN_DIR_HASH="$TUN_DIRECTOR_DIR/tun_dir_rules.sha256"
 
+# Applied tunnels as "<idx> <id>" lines; tunnel.sh re-ensures their routes on
+# every apply and releases their tables on stop.
+TUN_DIR_TABLES="$TUN_DIRECTOR_DIR/tun_dir_tables"
+
 # Ensure directories exist
 mkdir -p "$IPS_BUILDER_DIR" "$TUN_DIRECTOR_DIR"
 
 # Export for use by other modules
-export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_HASH
+export IPS_BUILDER_DIR TUN_DIRECTOR_DIR TUN_DIR_HASH TUN_DIR_TABLES
 
 ###################################################################################################
 # Constants (defined before --source-only for testability)
@@ -97,10 +101,25 @@ IPDENY_DIRECT_URL='https://www.ipdeny.com/ipblocks/data/aggregated'
 # _ipset_boot_wait - defer execution if system just booted
 # -------------------------------------------------------------------------------------------------
 # Uses MIN_BOOT_TIME and BOOT_WAIT_DELAY from config.sh
-# If uptime < MIN_BOOT_TIME, sleep for BOOT_WAIT_DELAY seconds
+# If uptime < MIN_BOOT_TIME, sleep for BOOT_WAIT_DELAY seconds - at most once
+# per boot. On Keenetic every NDM hook of the boot burst runs `--wait apply`
+# (120 s), and a 60 s sleep under the lock by each successive holder pushed the
+# third and later waiters past their budget: `Timed out waiting for lock` at
+# every boot. The network only has to be waited for once, so the first instance
+# that sleeps records the boot id in a marker and the ones behind it skip the
+# sleep. The lock is still taken before this runs, so the semantics for
+# stop/restart are unchanged.
+#
+# The marker counts only while its content equals the current boot id: a /tmp
+# that survived a reboot, or a truncated marker, must never suppress the wait.
+# A boot id that cannot be read leaves the id empty, which no marker matches -
+# the safe direction is to sleep. The marker is written after the sleep, so a
+# sleeper that was killed does not mark the wait as done.
+#
+# Test seams: VPD_PROC_UPTIME, VPD_BOOT_ID_FILE, VPD_BOOT_WAIT_MARKER.
 # -------------------------------------------------------------------------------------------------
 _ipset_boot_wait() {
-    local uptime_secs min_time wait_delay
+    local uptime_secs min_time wait_delay marker boot_id
 
     # Get config values (default to sensible values if not set)
     min_time="${MIN_BOOT_TIME:-120}"
@@ -110,12 +129,22 @@ _ipset_boot_wait() {
     [[ $wait_delay -eq 0 ]] && return 0
 
     # Get current uptime in seconds
-    uptime_secs=$(awk '{ print int($1) }' /proc/uptime)
+    uptime_secs=$(awk '{ print int($1) }' "${VPD_PROC_UPTIME:-/proc/uptime}")
 
-    if [[ $uptime_secs -lt $min_time ]]; then
-        log "Uptime ${uptime_secs}s < ${min_time}s, sleeping ${wait_delay}s..."
-        sleep "$wait_delay"
+    [[ $uptime_secs -lt $min_time ]] || return 0
+
+    marker="${VPD_BOOT_WAIT_MARKER:-$IPS_BUILDER_DIR/boot_wait_done}"
+    boot_id="$(cat "${VPD_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null || true)"
+
+    if [[ -n $boot_id && "$(cat "$marker" 2>/dev/null || true)" == "$boot_id" ]]; then
+        log "Uptime ${uptime_secs}s < ${min_time}s, but an earlier instance already waited this boot; not sleeping again"
+        return 0
     fi
+
+    log "Uptime ${uptime_secs}s < ${min_time}s, sleeping ${wait_delay}s..."
+    sleep "$wait_delay"
+    mkdir -p "$(dirname "$marker")" 2>/dev/null || true
+    printf '%s\n' "$boot_id" > "$marker" 2>/dev/null || true
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -254,8 +283,17 @@ _ipset_exists() {
 # _ipset_count - get number of entries in an ipset
 # -------------------------------------------------------------------------------------------------
 _ipset_count() {
-    ipset list "$1" 2>/dev/null |
-        awk '/Number of entries:/ { print $4; exit }' || true
+    local name="$1" cnt
+    # "Number of entries:" appears only on kernels whose set revision reports
+    # it. KeeneticOS's 4.9 kernel prints a header with just "Size in memory:",
+    # so the probe comes back empty - and an empty count reads as zero in
+    # "[[ $cnt -eq 0 ]]", which reported every freshly built set as empty.
+    # The dump is the portable answer: one "add" line per entry, everywhere.
+    cnt=$(ipset list "$name" -t 2>/dev/null | awk '/Number of entries:/ { print $4; exit }' || true)
+    if [[ -z $cnt ]]; then
+        cnt=$(ipset save "$name" 2>/dev/null | grep -c '^add ' || true)
+    fi
+    printf '%s\n' "${cnt:-0}"
 }
 
 ###################################################################################################
@@ -564,7 +602,9 @@ ipset_status() {
             continue
         fi
         type=$(printf '%s\n' "$info" | awk '/^Type:/ { print $2 }')
-        entries=$(printf '%s\n' "$info" | awk '/Number of entries:/ { print $4 }')
+        entries=$(printf '%s\n' "$info" | awk '/Number of entries:/ { print $4; exit }')
+        # Same kernels as in _ipset_count: no count in the header.
+        [[ -n $entries ]] || entries=$(_ipset_count "$name")
         printf '%-24s %10s %s\n' "$name" "${entries:-0}" "${type:-unknown}"
     done <<< "$ipsets"
 

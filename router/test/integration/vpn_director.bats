@@ -3,6 +3,10 @@
 # test/integration/vpn_director.bats
 # Integration tests for vpn-director.sh CLI
 
+# The platform tests below pass a flag to `run`, which bats only guarantees
+# from 1.5.0; without this the suite prints a BW02 warning for each of them.
+bats_require_minimum_version 1.5.0
+
 load '../test_helper'
 
 setup() {
@@ -10,6 +14,10 @@ setup() {
     export VPD_CONFIG_FILE="$TEST_ROOT/fixtures/vpn-director.json"
     export LOG_FILE="/tmp/bats_test_vpn_director.log"
     export TEST_MODE=1
+    # This setup() overrides the helper's, so the fixture path it exports has to
+    # be repeated here: without it platform_tunnels reads the real
+    # /etc/iproute2/rt_tables, which the machine running the suite need not have.
+    export RT_TABLES_FILE="$TEST_ROOT/fixtures/rt_tables"
     : > "$LOG_FILE"
 }
 
@@ -302,4 +310,122 @@ setup() {
     run "$SCRIPTS_DIR/vpn-director.sh" --help
     assert_success
     assert_output --partial "--wait"
+}
+
+# ============================================================================
+# platform subcommand
+# ============================================================================
+
+# log() writes to stderr, which bats folds into $output unless the streams are
+# kept apart. --separate-stderr leaves $output as stdout alone, so a WARN about
+# one tunnel could never break jq's parse of the document.
+
+@test "vpn-director: platform prints the platform facts as JSON" {
+    run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    [ "${#lines[@]}" -eq 1 ]
+    echo "$output" | jq -e '.platform == "merlin"' >/dev/null
+    echo "$output" | jq -e '.password_file == "/etc/shadow"' >/dev/null
+    echo "$output" | jq -e '.lan_ifaces == ["br0"]' >/dev/null
+    echo "$output" | jq -e '.wan_if == "eth0"' >/dev/null
+    echo "$output" | jq -e '.arch | length > 0' >/dev/null
+}
+
+@test "vpn-director: platform lists every tunnel except main" {
+    run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    [ "${#lines[@]}" -eq 1 ]
+    echo "$output" | jq -e '[.tunnels[].id] == ["wgc1","wgc2","ovpnc1","ovpnc2"]' >/dev/null
+    echo "$output" | jq -e '.tunnels[0] == {id:"wgc1", iface:"wgc1", type:"wireguard", connected:false, description:"Office WG"}' >/dev/null
+    echo "$output" | jq -e '.tunnels[2] == {id:"ovpnc1", iface:"tun11", type:"openvpn", connected:false, description:"Office OVPN"}' >/dev/null
+}
+
+@test "vpn-director: platform reports wan_if as empty when the platform has no answer" {
+    mkdir -p "$BATS_TEST_TMPDIR/mock"
+    printf '#!/bin/bash\necho ""\n' > "$BATS_TEST_TMPDIR/mock/nvram"
+    chmod +x "$BATS_TEST_TMPDIR/mock/nvram"
+    PATH="$BATS_TEST_TMPDIR/mock:$PATH" run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    echo "$output" | jq -e '.wan_if == ""' >/dev/null
+}
+
+@test "vpn-director: platform on Keenetic lists NDM's tunnels with their Linux interfaces" {
+    VPD_PLATFORM=keenetic PATH="$TEST_ROOT/mocks/keenetic:$PATH" \
+        run --separate-stderr "$SCRIPTS_DIR/vpn-director.sh" platform
+    assert_success
+    # One line: the daemons read the last line of the combined output (C10).
+    [ "${#lines[@]}" -eq 1 ]
+    echo "$output" | jq -e '.platform == "keenetic"' >/dev/null
+    echo "$output" | jq -e '.password_file == "/opt/etc/passwd"' >/dev/null
+    echo "$output" | jq -e '.lan_ifaces == ["br0"]' >/dev/null
+    echo "$output" | jq -e '.wan_if == "eth2.4"' >/dev/null
+    echo "$output" | jq -e '[.tunnels[].id] == ["OpenVPN0","OpenVPN2","Wireguard1"]' >/dev/null
+    echo "$output" | jq -e '.tunnels[0] == {id:"OpenVPN0", iface:"ovpn_br0", type:"openvpn", connected:true, description:"office-ovpn"}' >/dev/null
+    echo "$output" | jq -e '.tunnels[1] == {id:"OpenVPN2", iface:"ovpn_br2", type:"openvpn", connected:false, description:"spare-ovpn"}' >/dev/null
+    echo "$output" | jq -e '.tunnels[2] == {id:"Wireguard1", iface:"nwg1", type:"wireguard", connected:true, description:"wg-home"}' >/dev/null
+}
+
+# ============================================================================
+# cron subcommand
+# ============================================================================
+
+@test "vpn-director: cron install schedules the daily update through the platform" {
+    : > /tmp/bats_cru_calls.log
+    run "$SCRIPTS_DIR/vpn-director.sh" cron install
+    assert_success
+    # The CLI resolves its own directory with pwd; SCRIPTS_DIR still contains "test/.."
+    local vpd_dir
+    vpd_dir="$(cd "$SCRIPTS_DIR" && pwd)"
+    grep -qF "cru a vpn_director_update 0 3 * * * $vpd_dir/vpn-director.sh update" /tmp/bats_cru_calls.log
+    # The job name of the versions before the unified CLI: dropped on every
+    # install, or a router upgraded from one of them keeps two jobs.
+    grep -qF "cru d update_ipsets" /tmp/bats_cru_calls.log
+}
+
+# cmd_cron called platform_cron_add bare under errexit: on a platform whose
+# cron is not there the CLI died with the function's exit status and no
+# output at all, leaving nothing to act on.
+@test "vpn-director: cron install reports a platform cron that failed" {
+    : > /tmp/bats_cru_calls.log
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    printf '#!/bin/bash\nexit 1\n' > "$BATS_TEST_TMPDIR/bin/cru"
+    chmod +x "$BATS_TEST_TMPDIR/bin/cru"
+    PATH="$BATS_TEST_TMPDIR/bin:$PATH" run "$SCRIPTS_DIR/vpn-director.sh" cron install
+    assert_failure
+    assert_output --partial "Failed to schedule the daily ipset update"
+    # Merlin requires nothing: no Entware advice on a router that has no opkg.
+    refute_output --partial "opkg"
+}
+
+# The other half of the same seam: what the platform requires is the platform's
+# answer, and cmd_cron is what logs it.
+@test "vpn-director: cron install on Keenetic names the missing cron package" {
+    VPD_PLATFORM=keenetic PATH="$TEST_ROOT/mocks/keenetic:$PATH" \
+        VPD_CRON_D="$BATS_TEST_TMPDIR/cron.d" \
+        VPD_CRON_INIT="$BATS_TEST_TMPDIR/no-such-S10cron" \
+        run "$SCRIPTS_DIR/vpn-director.sh" cron install
+    assert_failure
+    assert_output --partial "Failed to schedule the daily ipset update"
+    assert_output --partial "opkg install cron"
+    [ -f "$BATS_TEST_TMPDIR/cron.d/vpn_director_update" ]
+}
+
+@test "vpn-director: cron remove drops the job" {
+    : > /tmp/bats_cru_calls.log
+    run "$SCRIPTS_DIR/vpn-director.sh" cron remove
+    assert_success
+    grep -qF "cru d vpn_director_update" /tmp/bats_cru_calls.log
+    grep -qF "cru d update_ipsets" /tmp/bats_cru_calls.log
+}
+
+@test "vpn-director: cron without install|remove fails with usage" {
+    run "$SCRIPTS_DIR/vpn-director.sh" cron
+    assert_failure
+    assert_output --partial "cron install|remove"
+}
+
+@test "vpn-director: help lists platform and cron" {
+    run "$SCRIPTS_DIR/vpn-director.sh" --help
+    assert_output --partial "platform"
+    assert_output --partial "cron install|remove"
 }

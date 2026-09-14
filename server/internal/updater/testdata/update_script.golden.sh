@@ -4,6 +4,10 @@
 
 set -e
 
+# pgrep, pkill and flock are Entware's; a daemon started by hand may lack /opt/bin -
+# the same PATH the init scripts and hooks set.
+PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 CHAT_ID=42
 INITIATOR="bot"
 OLD_VERSION="v1.2.0"
@@ -18,6 +22,11 @@ INIT_DIR="/opt/etc/init.d"
 # Daemon table: "name|binary|init script" entries separated by spaces. The
 # loops below rely on word splitting, so no field may contain a space.
 DAEMONS="telegram-bot|/opt/vpn-director/telegram-bot|S98telegram-bot webui|/opt/vpn-director/webui|S98vpn-director-webui"
+
+# File table: "src|dst|mode" entries separated by spaces, src relative to
+# FILES_DIR, mode "x" for executable or "-" for data. Word splitting again, so
+# no field may contain a space; the manifest parser guarantees that.
+FILES="opt/vpn-director/vpn-director.sh|/opt/vpn-director/vpn-director.sh|x opt/vpn-director/lib/common.sh|/opt/vpn-director/lib/common.sh|x opt/vpn-director/vpn-director.json.template|/opt/vpn-director/vpn-director.json.template|- opt/etc/init.d/S99vpn-director|/opt/etc/init.d/S99vpn-director|x opt/etc/init.d/S98telegram-bot|/opt/etc/init.d/S98telegram-bot|x opt/etc/init.d/S98vpn-director-webui|/opt/etc/init.d/S98vpn-director-webui|x jffs/scripts/firewall-start|/jffs/scripts/firewall-start|x"
 
 # Init scripts of the daemons that were running when the update started. The
 # EXIT trap reads it, so it must exist before anything can fail.
@@ -234,23 +243,23 @@ done
 
 # 4. Copy files - NO || true, fail on error
 log "Copying files"
-cp -f "$FILES_DIR/opt/vpn-director/"*.sh /opt/vpn-director/
-cp -f "$FILES_DIR/opt/vpn-director/lib/"*.sh /opt/vpn-director/lib/
-cp -f "$FILES_DIR/opt/vpn-director/"*.template /opt/vpn-director/
-cp -f "$FILES_DIR/opt/etc/xray/"*.template /opt/etc/xray/
-cp -f "$FILES_DIR/opt/etc/init.d/"* "$INIT_DIR/"
-cp -f "$FILES_DIR/jffs/scripts/"* /jffs/scripts/
+for entry in $FILES; do
+    src="${entry%%|*}"
+    rest="${entry#*|}"
+    dst="${rest%%|*}"
+    mode="${rest#*|}"
+    mkdir -p "$(dirname "$dst")"
+    cp -f "$FILES_DIR/$src" "$dst"
+    if [ "$mode" = "x" ]; then
+        chmod +x "$dst"
+    fi
+done
 for entry in $DAEMONS; do
     rest="${entry#*|}"
     cp -f "$FILES_DIR/${entry%%|*}" "${rest%%|*}"
 done
 
-# 5. Set permissions
-chmod +x /opt/vpn-director/*.sh
-chmod +x /opt/vpn-director/lib/*.sh
-chmod +x /jffs/scripts/firewall-start
-chmod +x /jffs/scripts/wan-event
-chmod +x "$INIT_DIR/S99vpn-director"
+# 5. Set permissions of the daemon binaries (script files got theirs above)
 for entry in $DAEMONS; do
     rest="${entry#*|}"
     chmod +x "$INIT_DIR/${entry##*|}"

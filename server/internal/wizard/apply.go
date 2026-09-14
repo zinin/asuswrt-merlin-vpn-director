@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // StateClearer is the interface for clearing wizard state
@@ -76,10 +76,42 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		excl = []string{"ru"}
 	}
 
-	// Build valid routes set for validation
-	validRoutes := make(map[string]bool)
-	for _, r := range RouteOptions {
-		validRoutes[r] = true
+	// A route is valid if it is xray, a tunnel the platform lists, or one
+	// already in the loaded config (so a tunnel the firmware dropped still
+	// gets rewritten rather than silently dropped from the wizard apply).
+	validRoutes := map[string]bool{"xray": true}
+	if loaded, err := a.config.LoadVPNConfig(); err == nil && loaded != nil {
+		for id := range loaded.TunnelDirector.Tunnels {
+			validRoutes[id] = true
+		}
+	}
+	platformOK := false
+	if info, err := a.vpn.Platform(); err == nil {
+		for _, t := range info.Tunnels {
+			validRoutes[t.ID] = true
+		}
+		// An empty list is not an answer: on Keenetic `vpn-director.sh
+		// platform` prints "tunnels": [] and exits 0 while RCI does not reply
+		// (spec 13), so a router with no tunnels and an RCI outage arrive
+		// here as the same document.
+		platformOK = len(info.Tunnels) > 0
+	}
+
+	// A route that is neither xray nor already in the config can only be
+	// checked against the platform. With the platform silent, or listing no
+	// tunnel at all, the loop below
+	// would drop that client from the save without a word and the wizard would
+	// still report success - and a transient RCI failure between picking the
+	// tunnel and applying is exactly the NDM-rebuild window. Refuse the save
+	// instead, so a confirmed VPN assignment is never lost quietly. A route the
+	// platform does answer about and does not know stays a skip below.
+	if !platformOK {
+		for _, c := range clients {
+			if !validRoutes[c.Route] {
+				a.sender.SendPlain(chatID, "platform info unavailable, try again")
+				return fmt.Errorf("platform info unavailable: cannot validate route %q for %s", c.Route, c.IP)
+			}
+		}
 	}
 
 	// Build new configuration
@@ -133,6 +165,12 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 		vpnCfg.Xray.ExcludeSets = excl
 		vpnCfg.Xray.ExcludeIPs = excludeIPs
 		vpnCfg.Xray.Servers = serverIPs
+		for name, tunnel := range tunnels {
+			if existing, ok := vpnCfg.TunnelDirector.Tunnels[name]; ok {
+				tunnel.Gateway = existing.Gateway
+				tunnels[name] = tunnel
+			}
+		}
 		vpnCfg.TunnelDirector.Tunnels = tunnels
 		// The wizard stores addresses as entered, so a client the old wizard
 		// wrote as 1.2.3.4/32 comes back as 1.2.3.4. paused_clients is matched

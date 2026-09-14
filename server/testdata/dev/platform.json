@@ -1,0 +1,11 @@
+{
+  "platform": "merlin",
+  "arch": "x86_64",
+  "password_file": "testdata/dev/shadow",
+  "lan_ifaces": ["br0"],
+  "wan_if": "eth0",
+  "tunnels": [
+    {"id": "wgc1", "iface": "wgc1", "type": "wireguard", "connected": true, "description": "Office WG"},
+    {"id": "ovpnc1", "iface": "tun11", "type": "openvpn", "connected": false, "description": "Office OVPN"}
+  ]
+}

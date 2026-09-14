@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,36 +22,21 @@ const (
 	maxFileSize     = 50 * 1024 * 1024 // 50MB
 )
 
-// scriptFiles lists all files to download from the repository.
-// NOTE: Keep in sync with install.sh file list.
-// See: download_scripts() in install.sh - the loop over the same paths, plus
-// the xray config template it fetches right after it.
-var scriptFiles = []string{
-	"router/opt/vpn-director/vpn-director.sh",
-	"router/opt/vpn-director/configure.sh",
-	"router/opt/vpn-director/import_server_list.sh",
-	"router/opt/vpn-director/setup_telegram_bot.sh",
-	"router/opt/vpn-director/vpn-director.json.template",
-	"router/opt/vpn-director/lib/common.sh",
-	"router/opt/vpn-director/lib/firewall.sh",
-	"router/opt/vpn-director/lib/config.sh",
-	"router/opt/vpn-director/lib/ipset.sh",
-	"router/opt/vpn-director/lib/tunnel.sh",
-	"router/opt/vpn-director/lib/tproxy.sh",
-	"router/opt/vpn-director/lib/xrayconf.sh",
-	"router/opt/vpn-director/lib/send-email.sh",
-	"router/opt/etc/xray/config.json.template",
-	"router/opt/etc/init.d/S99vpn-director",
-	"router/opt/etc/init.d/S98telegram-bot",
-	"router/opt/etc/init.d/S98vpn-director-webui",
-	"router/jffs/scripts/firewall-start",
-	"router/jffs/scripts/wan-event",
-}
-
-// DownloadRelease downloads all files for the given release.
-// Cleans files/ directory before starting.
+// DownloadRelease downloads the release manifest, then every file it lists
+// for this platform, then the daemon binaries. Cleans files/ before starting.
 func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
+	tag, err := s.getPlatform()
+	if err != nil {
+		return err
+	}
+
 	filesDir := s.getFilesDir()
+
+	// Before the first and most destructive write of all, as before every
+	// one that follows.
+	if err := s.requireClaim(); err != nil {
+		return err
+	}
 
 	// Clean before download to ensure fresh state
 	os.RemoveAll(filesDir)
@@ -60,19 +46,61 @@ func (s *Service) DownloadRelease(ctx context.Context, release *Release) error {
 		return fmt.Errorf("create files directory: %w", err)
 	}
 
-	// Download scripts
-	for _, file := range scriptFiles {
+	entries, err := s.fetchManifest(ctx, release.TagName)
+	if err != nil {
+		return err
+	}
+
+	// A selection of nothing would swap the daemon binaries and refresh no
+	// script and no init file - worse than no update, and silent, because
+	// downloadFile accepts a zero-byte HTTP 200 as a manifest. install.sh
+	// refuses the same state on its side.
+	files := manifestFilesFor(entries, tag)
+	if len(files) == 0 {
+		return fmt.Errorf("release %s: files.manifest lists no file for platform %s", release.TagName, tag)
+	}
+
+	for _, file := range files {
+		if err := s.requireClaim(); err != nil {
+			return err
+		}
 		if err := s.downloadScriptFile(ctx, release.TagName, file); err != nil {
+			if errors.Is(err, errClaimLost) {
+				return err
+			}
 			return fmt.Errorf("download %s: %w", file, err)
 		}
 	}
 
 	// Download daemon binaries
 	if err := s.downloadBinaries(ctx, release); err != nil {
+		if errors.Is(err, errClaimLost) {
+			// Not a download failure, and worded the same wherever in the
+			// download the claim went: pass it on as it stands.
+			return err
+		}
 		return fmt.Errorf("download binaries: %w", err)
 	}
 
 	return nil
+}
+
+// fetchManifest downloads router/files.manifest of the release into files/
+// (the update script reads it from there) and parses it. A release without a
+// manifest cannot be installed.
+func (s *Service) fetchManifest(ctx context.Context, tag string) ([]ManifestEntry, error) {
+	if err := s.downloadScriptFile(ctx, tag, manifestPath); err != nil {
+		if errors.Is(err, errClaimLost) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("release %s has no files.manifest: %w", tag, err)
+	}
+	f, err := os.Open(filepath.Join(s.getFilesDir(), "files.manifest"))
+	if err != nil {
+		return nil, fmt.Errorf("open downloaded files.manifest: %w", err)
+	}
+	defer f.Close()
+	return parseManifest(f)
 }
 
 // getRawBaseURL returns the host that serves repository files at a tag. Tests
@@ -89,7 +117,7 @@ func (s *Service) downloadScriptFile(ctx context.Context, tag, file string) erro
 	url := s.getRawBaseURL() + fmt.Sprintf(repoRawPath, repoOwner, repoName, tag, file)
 
 	// Target: "router/opt/vpn-director/lib/common.sh" → "files/opt/vpn-director/lib/common.sh"
-	target := filepath.Join(s.getFilesDir(), strings.TrimPrefix(file, "router"))
+	target := filepath.Join(s.getFilesDir(), strings.TrimPrefix(file, "router/"))
 
 	return s.downloadFile(ctx, url, target)
 }
@@ -101,6 +129,9 @@ func archAssetSuffix(goarch string) (string, error) {
 		return "arm64", nil
 	case "arm":
 		return "arm", nil
+	case "mipsle":
+		// Keenetic MIPS models, all little-endian; built with GOMIPS=softfloat.
+		return "mipsle", nil
 	default:
 		return "", fmt.Errorf("unsupported architecture: %s", goarch)
 	}
@@ -114,9 +145,13 @@ func (s *Service) getArchSuffix() (string, error) {
 	return archAssetSuffix(runtime.GOARCH)
 }
 
-// downloadBinaries downloads one binary per daemon into files/<name>.
-// A release missing any of them is a download error: installing a new bot
-// next to an old Web UI leaves two halves of different versions on the router.
+// downloadBinaries puts one binary per daemon into files/<name>, downloaded
+// from the release assets - except its own daemon's, which step 2 of a
+// self-update already is: with selfBinary set, that one is hard-linked from
+// this executable, or copied when a link is not possible.
+// A release missing one of the binaries it does download is a download error:
+// installing a new bot next to an old Web UI leaves two halves of different
+// versions on the router.
 func (s *Service) downloadBinaries(ctx context.Context, release *Release) error {
 	suffix, err := s.getArchSuffix()
 	if err != nil {
@@ -124,6 +159,18 @@ func (s *Service) downloadBinaries(ctx context.Context, release *Release) error 
 	}
 
 	for _, d := range Daemons {
+		if err := s.requireClaim(); err != nil {
+			return err
+		}
+		target := filepath.Join(s.getFilesDir(), d.Name)
+		// Step 2 of a self-update is this daemon's binary of the release it
+		// installs; fetching that asset again would download the same bytes.
+		if s.selfBinary != "" && d.Name == s.daemon {
+			if err := linkOrCopy(s.selfBinary, target); err != nil {
+				return fmt.Errorf("take %s from %s: %w", d.Name, s.selfBinary, err)
+			}
+			continue
+		}
 		assetName := d.Name + "-" + suffix
 		url := assetURL(release, assetName)
 		if url == "" {
@@ -132,8 +179,10 @@ func (s *Service) downloadBinaries(ctx context.Context, release *Release) error 
 		if err := requireHTTPS(url); err != nil {
 			return fmt.Errorf("asset %s: %w", assetName, err)
 		}
-		target := filepath.Join(s.getFilesDir(), d.Name)
 		if err := s.downloadFile(ctx, url, target); err != nil {
+			if errors.Is(err, errClaimLost) {
+				return err
+			}
 			return fmt.Errorf("download %s: %w", assetName, err)
 		}
 	}
@@ -192,28 +241,131 @@ func (s *Service) downloadFile(ctx context.Context, url, target string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	f, err := os.Create(target)
+	// Stage beside the target and publish with a rename: between the caller's
+	// claim check and this write sits the whole HTTP round trip, and a step 2
+	// that lost the update directory in that window would otherwise truncate the
+	// file of the retry that took it over. telegram-bot.md states the rule as
+	// the check being repeated before every file step 2 writes.
+	tmp, err := os.CreateTemp(filepath.Dir(target), stagingPattern(target))
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
+	tmpName := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}()
 
-	// Limit download size to prevent memory exhaustion
-	limitedReader := io.LimitReader(resp.Body, maxFileSize)
-	written, err := io.Copy(f, limitedReader)
+	// Limit download size to prevent memory exhaustion. One byte past the limit,
+	// so an oversized body is detected by what was written rather than by probing
+	// the reader afterwards: a Read that returns (0, nil) is allowed to, and would
+	// have let a file truncated at exactly the limit pass as complete.
+	limitedReader := io.LimitReader(resp.Body, maxFileSize+1)
+	written, err := io.Copy(tmp, limitedReader)
 	if err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 
-	// Check if we hit the limit (file was truncated)
-	if written == maxFileSize {
-		// Try to read one more byte - if successful, file was too large
-		buf := make([]byte, 1)
-		if n, _ := resp.Body.Read(buf); n > 0 {
-			os.Remove(target)
-			return fmt.Errorf("file exceeds maximum size (%d MB)", maxFileSize/1024/1024)
-		}
+	if written > maxFileSize {
+		return fmt.Errorf("file exceeds maximum size (%d MB)", maxFileSize/1024/1024)
 	}
 
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	// os.CreateTemp creates 0600; the published file keeps the 0644 os.Create
+	// produced under the daemons' umask, because the update script copies it to
+	// a destination that may not exist yet and cp would carry this mode over.
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	if err := s.requireClaim(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpName, target); err != nil {
+		return fmt.Errorf("publish file: %w", err)
+	}
+
+	return nil
+}
+
+// stagingPattern is the os.CreateTemp pattern downloadFile stages target
+// under, in target's own directory.
+func stagingPattern(target string) string {
+	return "." + filepath.Base(target) + ".part"
+}
+
+// reapStaging removes what a downloadFile killed mid-copy left under
+// stagingPattern(target): its deferred removal never ran, and the stale-lock
+// reaper in IsUpdateInProgress otherwise knows only the published names.
+func reapStaging(target string) {
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(target), stagingPattern(target)+"*"))
+	for _, m := range matches {
+		os.Remove(m)
+	}
+}
+
+// linkOrCopy puts the file src at dst: a hard link when both sit on one
+// filesystem, as the installer and files/ do in /tmp, else a copy.
+func linkOrCopy(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+	err := os.Link(src, dst)
+	if errors.Is(err, os.ErrExist) {
+		// A destination left by an earlier attempt may be a hard link to src
+		// itself - to the binary this process is running as. Copying onto it
+		// would open src with O_TRUNC under another name and empty it. Take
+		// it away and link afresh.
+		if err := os.Remove(dst); err != nil {
+			return err
+		}
+		err = os.Link(src, dst)
+	}
+	if err == nil {
+		return nil
+	}
+	// Another filesystem, typically: fall back to a copy, and say what the
+	// link refused if that fails too.
+	if copyErr := copyExecutable(src, dst); copyErr != nil {
+		return fmt.Errorf("link: %v; copy: %w", err, copyErr)
+	}
+	return nil
+}
+
+// copyExecutable copies src to dst, which ends up executable whether or not
+// it was there before, or does not end up there at all.
+func copyExecutable(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+	if err != nil {
+		return err
+	}
+	// O_CREATE leaves the mode of a file that is already there alone, and the
+	// update script installs this one as a daemon it then starts.
+	if err := out.Chmod(0755); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		// Whatever reached the disk is half a binary under the name of a
+		// whole one: the script would install it and the daemon would not
+		// start.
+		os.Remove(dst)
+		return err
+	}
 	return nil
 }

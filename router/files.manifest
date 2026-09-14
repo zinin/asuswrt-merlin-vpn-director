@@ -1,0 +1,36 @@
+# VPN Director file manifest: one file per line, "<tag> <repo path>".
+# Tags: common (every platform), merlin (Asuswrt-Merlin), keenetic (KeeneticOS).
+# Install destination is "/" plus the path without the "router/" prefix.
+# Files are installed executable unless they end in .template, .json or .manifest.
+# install.sh and the Go updater both read this file; there is no other list.
+# Step 1 of every released daemon gives step 2 fifteen minutes for the whole
+# download (defaultHandoverTimeout in server/internal/updater/handover.go,
+# frozen on every router that carries that release; contract item 6 in
+# selfupdate.go). The two daemon binaries and the uplink dominate that budget:
+# keep this list to small scripts, and treat anything large as a decision
+# against it.
+common   router/opt/vpn-director/vpn-director.sh
+common   router/opt/vpn-director/configure.sh
+common   router/opt/vpn-director/import_server_list.sh
+common   router/opt/vpn-director/setup_telegram_bot.sh
+common   router/opt/vpn-director/vpn-director.json.template
+common   router/opt/vpn-director/lib/common.sh
+common   router/opt/vpn-director/lib/platform.sh
+merlin   router/opt/vpn-director/lib/platform/merlin.sh
+keenetic router/opt/vpn-director/lib/platform/keenetic.sh
+common   router/opt/vpn-director/lib/firewall.sh
+common   router/opt/vpn-director/lib/config.sh
+common   router/opt/vpn-director/lib/ipset.sh
+common   router/opt/vpn-director/lib/tunnel.sh
+common   router/opt/vpn-director/lib/tproxy.sh
+common   router/opt/vpn-director/lib/xrayconf.sh
+common   router/opt/vpn-director/lib/send-email.sh
+common   router/opt/etc/xray/config.json.template
+common   router/opt/etc/init.d/S99vpn-director
+common   router/opt/etc/init.d/S98telegram-bot
+common   router/opt/etc/init.d/S98vpn-director-webui
+merlin   router/jffs/scripts/firewall-start
+merlin   router/jffs/scripts/wan-event
+keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh
+keenetic router/opt/etc/ndm/wan.d/50-vpn-director.sh
+keenetic router/opt/etc/ndm/iflayerchanged.d/50-vpn-director.sh

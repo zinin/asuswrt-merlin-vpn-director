@@ -18,10 +18,37 @@ func TestIsUpdateInProgress_NoLockFile(t *testing.T) {
 	}
 }
 
+// writeUpdateLeftovers fills the update directory the way an attempt in flight
+// leaves it: the installer step 1 downloads, a half-written one, the payload,
+// and the two files a later report is made of.
+func writeUpdateLeftovers(t *testing.T, s *Service) (gone, kept []string) {
+	t.Helper()
+	if err := os.MkdirAll(s.getFilesDir(), 0755); err != nil {
+		t.Fatalf("mkdir files dir: %v", err)
+	}
+	// The last entry is what downloadFile stages the installer under for the
+	// whole HTTP round trip (os.CreateTemp beside installer.part); an owner
+	// killed mid-download never ran the deferred removal.
+	gone = []string{
+		s.getInstallerFile(),
+		s.getInstallerFile() + ".part",
+		filepath.Join(s.getFilesDir(), "marker"),
+		filepath.Join(s.getUpdateDir(), ".installer.part.part4215863503"),
+	}
+	kept = []string{filepath.Join(s.getUpdateDir(), "update.log"), filepath.Join(s.getUpdateDir(), "notify.json")}
+	for _, path := range append(append([]string(nil), gone...), kept...) {
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	return gone, kept
+}
+
 func TestIsUpdateInProgress_ValidLock(t *testing.T) {
 	tempDir := t.TempDir()
 	lockFile := filepath.Join(tempDir, "lock")
-	s := &Service{lockFile: lockFile}
+	s := &Service{lockFile: lockFile, updateDir: tempDir}
+	gone, kept := writeUpdateLeftovers(t, s)
 
 	// Create lock with current PID (which is alive)
 	pid := os.Getpid()
@@ -31,6 +58,14 @@ func TestIsUpdateInProgress_ValidLock(t *testing.T) {
 
 	if !s.IsUpdateInProgress() {
 		t.Error("IsUpdateInProgress() = false, want true (valid lock with alive process)")
+	}
+
+	// The owner is alive and still downloading: nothing of its is anyone
+	// else's to remove.
+	for _, path := range append(append([]string(nil), gone...), kept...) {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s was removed from under a live update: %v", filepath.Base(path), err)
+		}
 	}
 }
 
@@ -57,7 +92,8 @@ func TestIsUpdateInProgress_StaleLock_InvalidPID(t *testing.T) {
 func TestIsUpdateInProgress_StaleLock_DeadProcess(t *testing.T) {
 	tempDir := t.TempDir()
 	lockFile := filepath.Join(tempDir, "lock")
-	s := &Service{lockFile: lockFile}
+	s := &Service{lockFile: lockFile, updateDir: tempDir}
+	gone, kept := writeUpdateLeftovers(t, s)
 
 	// Create lock with a PID that almost certainly doesn't exist
 	// Use a very high PID that's unlikely to be in use
@@ -72,6 +108,19 @@ func TestIsUpdateInProgress_StaleLock_DeadProcess(t *testing.T) {
 	// Lock file should be removed
 	if _, err := os.Stat(lockFile); !os.IsNotExist(err) {
 		t.Error("Stale lock file was not removed")
+	}
+
+	// The owner is dead and never ran its own cleanup, so its payload is
+	// reaped here; update.log and notify.json are what a later report reads.
+	for _, path := range gone {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s was left behind by a dead owner's cleanup", filepath.Base(path))
+		}
+	}
+	for _, path := range kept {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s must survive the stale-lock cleanup: %v", filepath.Base(path), err)
+		}
 	}
 }
 
@@ -269,6 +318,12 @@ func TestGetters_Defaults(t *testing.T) {
 	if got := s.getScriptFile(); got != ScriptFile {
 		t.Errorf("getScriptFile() = %q, want %q", got, ScriptFile)
 	}
+	if got := s.getInstallerFile(); got != InstallerFile {
+		t.Errorf("getInstallerFile() = %q, want %q", got, InstallerFile)
+	}
+	if got := s.getHandoverTimeout(); got != defaultHandoverTimeout {
+		t.Errorf("getHandoverTimeout() = %v, want %v", got, defaultHandoverTimeout)
+	}
 }
 
 func TestGetters_Custom(t *testing.T) {
@@ -289,6 +344,9 @@ func TestGetters_Custom(t *testing.T) {
 	}
 	if got := s.getScriptFile(); got != "/custom/script.sh" {
 		t.Errorf("getScriptFile() = %q, want %q", got, "/custom/script.sh")
+	}
+	if got := s.getInstallerFile(); got != "/custom/update/installer" {
+		t.Errorf("getInstallerFile() = %q, want %q", got, "/custom/update/installer")
 	}
 }
 
@@ -352,5 +410,54 @@ func TestCreateLockAt_ClaimsTheDirectoryForTheCallingProcess(t *testing.T) {
 	}
 	if err := CreateLockAt(lockFile); err != nil {
 		t.Errorf("CreateLockAt() after a release error = %v, want the directory free again", err)
+	}
+}
+
+// Step 1 of a self-update prefers the release asset of the daemon it runs in,
+// and step 2 takes that daemon's payload binary from itself. Both key on these
+// names, so they must be the names the daemon table ships under.
+func TestDaemonConstants_NameEntriesOfTheTable(t *testing.T) {
+	for _, name := range []string{DaemonBot, DaemonWebUI} {
+		found := false
+		for _, d := range Daemons {
+			if d.Name == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no Daemons entry named %q", name)
+		}
+	}
+}
+
+func TestNewForDaemon_RemembersTheDaemon(t *testing.T) {
+	if got := NewForDaemon(DaemonWebUI).daemon; got != DaemonWebUI {
+		t.Errorf("NewForDaemon(webui).daemon = %q", got)
+	}
+	if got := New().daemon; got != "" {
+		t.Errorf("New().daemon = %q, want none", got)
+	}
+}
+
+func TestLockNamesPID(t *testing.T) {
+	lockFile := filepath.Join(t.TempDir(), "lock")
+	s := &Service{lockFile: lockFile}
+
+	if s.lockNamesPID(4242) {
+		t.Error("lockNamesPID() = true without a lock file")
+	}
+	for content, want := range map[string]bool{
+		"4242":   true,
+		"4242\n": true, // the update script republishes its PID with printf '%s\n'
+		"4243":   false,
+		"":       false,
+		"junk":   false,
+	} {
+		if err := os.WriteFile(lockFile, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if got := s.lockNamesPID(4242); got != want {
+			t.Errorf("lock %q: lockNamesPID(4242) = %v, want %v", content, got, want)
+		}
 	}
 }

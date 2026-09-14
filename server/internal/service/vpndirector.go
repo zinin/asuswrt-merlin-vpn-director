@@ -3,11 +3,14 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // Per-command limits for vpn-director.sh. A limit is a safety net against a
@@ -96,3 +99,34 @@ func (s *VPNDirectorService) Stop() error { return s.runChecked(ApplyTimeout, "s
 
 // Update downloads fresh ipsets and reapplies VPN Director configuration
 func (s *VPNDirectorService) Update() error { return s.runChecked(UpdateTimeout, "update", "update") }
+
+// Platform runs `vpn-director.sh platform` and decodes its document. No
+// --wait: the command takes no lock. The script's log() writes WARN lines to
+// stderr and the executor merges the streams, so the document - printed
+// last, on one line - is the last non-empty line of the output.
+func (s *VPNDirectorService) Platform() (vpnconfig.PlatformInfo, error) {
+	var info vpnconfig.PlatformInfo
+	result, err := s.run(StatusTimeout, "platform")
+	if err != nil {
+		return info, err
+	}
+	if result.ExitCode != 0 {
+		return info, fmt.Errorf("platform failed (exit %d): %s", result.ExitCode, result.Output)
+	}
+	doc := lastLine(result.Output)
+	if err := json.Unmarshal([]byte(doc), &info); err != nil {
+		return info, fmt.Errorf("decode platform info: %w", err)
+	}
+	return info, nil
+}
+
+// lastLine returns the last non-empty line of s.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return ""
+}

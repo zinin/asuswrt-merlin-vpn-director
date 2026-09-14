@@ -4,11 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // mockVPNDirector for testing
@@ -17,6 +18,8 @@ type mockVPNDirector struct {
 	restartXrayCalled bool
 	applyErr          error
 	restartXrayErr    error
+	platform          vpnconfig.PlatformInfo
+	platformErr       error
 }
 
 func (m *mockVPNDirector) Status() (string, error) { return "", nil }
@@ -31,6 +34,9 @@ func (m *mockVPNDirector) RestartXray() error {
 }
 func (m *mockVPNDirector) Stop() error   { return nil }
 func (m *mockVPNDirector) Update() error { return nil }
+func (m *mockVPNDirector) Platform() (vpnconfig.PlatformInfo, error) {
+	return m.platform, m.platformErr
+}
 
 // mockXrayGenerator for testing
 type mockXrayGenerator struct {
@@ -160,7 +166,7 @@ func TestApplier_Apply_Success(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -258,7 +264,7 @@ func TestApplier_Apply_KeepsAPausedClientPausedAcrossASpellingChange(t *testing.
 			PausedClients: []string{"192.168.50.20/32"},
 		},
 	}
-	applier := NewApplier(manager, sender, configStore, &mockVPNDirector{}, &mockXrayGenerator{})
+	applier := NewApplier(manager, sender, configStore, &mockVPNDirector{platform: platformWith("wgc1")}, &mockXrayGenerator{})
 
 	state := &State{
 		ChatID:      123,
@@ -297,7 +303,7 @@ func TestApplier_Apply_DefaultExclusions(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -466,7 +472,7 @@ func TestApplier_Apply_MultipleClientsToSameTunnel(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -750,7 +756,7 @@ func TestApplier_Apply_ExclusionsSorted(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -836,7 +842,7 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 				},
 			},
 		}
-		vpnDirector := &mockVPNDirector{}
+		vpnDirector := &mockVPNDirector{platform: platformWith("wgc1")}
 		xrayGen := &mockXrayGenerator{}
 
 		applier := NewApplier(manager, sender, configStore, vpnDirector, xrayGen)
@@ -848,7 +854,7 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 			Exclusions:  map[string]bool{"ru": true},
 			Clients: []ClientRoute{
 				{IP: "192.168.1.10", Route: "xray"},
-				{IP: "192.168.1.20", Route: "invalid_route"}, // Invalid
+				{IP: "192.168.1.20", Route: "not_a_tunnel"}, // neither the platform nor the config
 				{IP: "192.168.1.30", Route: "wgc1"},
 			},
 		}
@@ -860,17 +866,51 @@ func TestApplier_Apply_SkipsInvalidRoutes(t *testing.T) {
 			t.Errorf("expected 1 xray client, got %d", len(configStore.savedConfig.Xray.Clients))
 		}
 
-		// Should have 1 tunnel (wgc1 only, invalid_route skipped)
+		// Should have 1 tunnel (wgc1 only, not_a_tunnel skipped)
 		if len(configStore.savedConfig.TunnelDirector.Tunnels) != 1 {
 			t.Errorf("expected 1 tunnel, got %d", len(configStore.savedConfig.TunnelDirector.Tunnels))
 		}
 		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["wgc1"]; !ok {
 			t.Error("expected tunnel 'wgc1' to exist")
 		}
-		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["invalid_route"]; ok {
-			t.Error("expected tunnel 'invalid_route' NOT to exist")
+		if _, ok := configStore.savedConfig.TunnelDirector.Tunnels["not_a_tunnel"]; ok {
+			t.Error("expected tunnel 'not_a_tunnel' NOT to exist")
 		}
 	})
+}
+
+func TestApplier_Apply_PreservesExistingTunnelGateway(t *testing.T) {
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{
+			{Name: "Server1", IPs: []string{"1.2.3.4"}},
+		},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			DataDir: "/opt/vpn-director/data",
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: map[string]vpnconfig.TunnelConfig{
+					"wgc1": {Clients: []string{"192.168.1.1"}, Exclude: []string{"ru"}, Gateway: "10.73.149.1"},
+				},
+			},
+		},
+	}
+	applier := NewApplier(&trackingManager{}, &trackingSender{}, configStore, &mockVPNDirector{platform: platformWith("wgc1")}, &mockXrayGenerator{})
+
+	if err := applier.Apply(123, &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients:     []ClientRoute{{IP: "192.168.1.10", Route: "wgc1"}},
+	}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	got := configStore.savedConfig.TunnelDirector.Tunnels["wgc1"]
+	if got.Gateway != "10.73.149.1" {
+		t.Errorf("Gateway = %q, want 10.73.149.1 (configure must not drop it)", got.Gateway)
+	}
+	if len(got.Clients) != 1 || got.Clients[0] != "192.168.1.10" {
+		t.Errorf("Clients = %v, want [192.168.1.10]", got.Clients)
+	}
 }
 
 // The wizard is the third path that writes config.json, and it owes the same
@@ -933,5 +973,91 @@ func TestApplier_Apply_RecordsNothingWhenXrayGenerationFails(t *testing.T) {
 
 	if active := configStore.vpnConfig.Xray.ActiveServer; active != nil {
 		t.Errorf("recorded %+v after the config failed to generate", *active)
+	}
+}
+
+// A route that is neither xray nor already in the config can only be checked
+// against the platform. A transient Platform() failure between picking the
+// tunnel and applying - the NDM-rebuild window on Keenetic - used to drop the
+// confirmed client from the save without a word and still report success.
+// On Keenetic `vpn-director.sh platform` answers "tunnels": [] with exit 0
+// while RCI does not reply (spec 13), so an RCI outage reaches the wizard as a
+// successful, empty answer - the same document a router with no tunnels
+// produces. A route outside xray and the config cannot be validated either
+// way, and it must be refused like a Platform() error, not dropped from the
+// save behind a "Done!".
+func TestApplier_Apply_RefusesToSaveWhenThePlatformListsNoTunnels(t *testing.T) {
+	manager := &trackingManager{}
+	sender := &trackingSender{}
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{{Name: "Server1", IPs: []string{"1.2.3.4"}}},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			DataDir: "/opt/vpn-director/data",
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: make(map[string]vpnconfig.TunnelConfig),
+			},
+		},
+	}
+	applier := NewApplier(manager, sender, configStore,
+		&mockVPNDirector{platform: vpnconfig.PlatformInfo{}}, &mockXrayGenerator{})
+
+	state := &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients: []ClientRoute{
+			{IP: "192.168.1.30", Route: "OpenVPN0"}, // picked while the platform listed it
+		},
+	}
+
+	err := applier.Apply(123, state)
+
+	if err == nil {
+		t.Fatal("Apply() error = nil, want a refusal to save a route an empty platform answer cannot validate")
+	}
+	if configStore.saveConfigCalled {
+		t.Error("Apply() saved the configuration, want the client kept out of a silent drop")
+	}
+	if !strings.Contains(strings.Join(sender.messages, "\n"), "platform info unavailable") {
+		t.Errorf("user was told %q, want the platform-unavailable message", sender.messages)
+	}
+}
+
+func TestApplier_Apply_RefusesToSaveWhenThePlatformCannotValidateARoute(t *testing.T) {
+	manager := &trackingManager{}
+	sender := &trackingSender{}
+	configStore := &trackingConfigStore{
+		servers: []vpnconfig.Server{{Name: "Server1", IPs: []string{"1.2.3.4"}}},
+		vpnConfig: &vpnconfig.VPNDirectorConfig{
+			DataDir: "/opt/vpn-director/data",
+			TunnelDirector: vpnconfig.TunnelDirectorConfig{
+				Tunnels: make(map[string]vpnconfig.TunnelConfig),
+			},
+		},
+	}
+	applier := NewApplier(manager, sender, configStore,
+		&mockVPNDirector{platformErr: errors.New("RCI down")}, &mockXrayGenerator{})
+
+	state := &State{
+		ChatID:      123,
+		Step:        StepConfirm,
+		ServerIndex: 0,
+		Exclusions:  map[string]bool{"ru": true},
+		Clients: []ClientRoute{
+			{IP: "192.168.1.30", Route: "OpenVPN0"}, // picked while the platform answered
+		},
+	}
+
+	err := applier.Apply(123, state)
+
+	if err == nil {
+		t.Fatal("Apply() error = nil, want a refusal to save a config the platform cannot validate")
+	}
+	if configStore.saveConfigCalled {
+		t.Error("Apply() saved the configuration, want the client kept out of a silent drop")
+	}
+	if !strings.Contains(strings.Join(sender.messages, "\n"), "platform info unavailable") {
+		t.Errorf("user was told %q, want the platform-unavailable message", sender.messages)
 	}
 }

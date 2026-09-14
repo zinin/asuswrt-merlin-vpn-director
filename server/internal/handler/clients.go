@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 type ClientsHandler struct {
@@ -327,19 +327,50 @@ func (h *ClientsHandler) HandleTextInput(msg *tgbotapi.Message) {
 	h.showRouteSelection(chatID, normalized, cfg)
 }
 
+// showRouteSelection offers xray, every tunnel the platform lists, and the
+// tunnels already in the config the platform does not list (so an existing
+// route stays reachable), marked "(unknown)" the way the Web UI marks them.
+// When the platform cannot be asked the config's tunnels are all there is, and
+// the user is told: the tunnel is not unknown there, the platform is, so those
+// keep their bare names.
 func (h *ClientsHandler) showRouteSelection(chatID int64, ip string, cfg *vpnconfig.VPNDirectorConfig) {
 	kb := telegram.NewKeyboard()
 
 	kb.Button("xray", "clients:route:xray").Row()
 
+	listed := map[string]bool{}
+	platformAnswered := true
+	info, err := h.deps.VPN.Platform()
+	if err != nil {
+		platformAnswered = false
+		h.deps.Sender.SendPlain(chatID, "platform info unavailable; offering the configured tunnels only")
+	} else {
+		for _, t := range info.Tunnels {
+			label := t.ID
+			if t.Description != "" {
+				label += " " + t.Description
+			}
+			if !t.Connected {
+				label += " (down)"
+			}
+			kb.Button(label, fmt.Sprintf("clients:route:%s", t.ID)).Row()
+			listed[t.ID] = true
+		}
+	}
+
 	tunnelNames := make([]string, 0, len(cfg.TunnelDirector.Tunnels))
 	for name := range cfg.TunnelDirector.Tunnels {
-		tunnelNames = append(tunnelNames, name)
+		if !listed[name] {
+			tunnelNames = append(tunnelNames, name)
+		}
 	}
 	sort.Strings(tunnelNames)
-
 	for _, name := range tunnelNames {
-		kb.Button(name, fmt.Sprintf("clients:route:%s", name)).Row()
+		label := name
+		if platformAnswered {
+			label += " (unknown)"
+		}
+		kb.Button(label, fmt.Sprintf("clients:route:%s", name)).Row()
 	}
 
 	kb.Button("Cancel", "clients:route:cancel").Row()
@@ -378,10 +409,23 @@ func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
 
 	if route != "xray" {
 		if _, ok := cfg.TunnelDirector.Tunnels[route]; !ok {
-			// Stale keyboard — tunnel no longer exists
-			text, kb := h.buildClientList(cfg)
-			h.deps.Sender.EditMessage(chatID, msgID, text, kb)
-			return
+			// Not configured yet: fine when the router has the tunnel (the
+			// keyboard listed it from the platform), stale otherwise. Either way
+			// the client is not added, so say why - a redrawn list that simply
+			// lacks the new row reads as a bug.
+			info, err := h.deps.VPN.Platform()
+			if err != nil {
+				h.deps.Sender.SendPlain(chatID, "platform info unavailable, try again")
+				text, kb := h.buildClientList(cfg)
+				h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+				return
+			}
+			if !info.HasTunnel(route) {
+				h.deps.Sender.SendPlain(chatID, fmt.Sprintf("route %s is no longer available", route))
+				text, kb := h.buildClientList(cfg)
+				h.deps.Sender.EditMessage(chatID, msgID, text, kb)
+				return
+			}
 		}
 	}
 
@@ -391,9 +435,18 @@ func (h *ClientsHandler) handleAddRoute(chatID int64, msgID int, route string) {
 			cfg = c
 			return nil
 		}
+		if c.TunnelDirector.Tunnels == nil {
+			c.TunnelDirector.Tunnels = make(map[string]vpnconfig.TunnelConfig)
+		}
 		tunnel, ok := c.TunnelDirector.Tunnels[route]
 		if !ok {
-			return fmt.Errorf("tunnel %s no longer exists", route)
+			// A new tunnel inherits the Xray country exclusions, like the
+			// Web UI and the configure wizard: an empty exclude would route
+			// the client's local-country traffic through the tunnel as well.
+			tunnel = vpnconfig.TunnelConfig{
+				Clients: []string{},
+				Exclude: append([]string{}, c.Xray.ExcludeSets...),
+			}
 		}
 		tunnel.Clients = append(tunnel.Clients, ip)
 		c.TunnelDirector.Tunnels[route] = tunnel

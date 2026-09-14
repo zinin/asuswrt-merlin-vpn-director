@@ -1,0 +1,19 @@
+#!/bin/bash
+# Mock curl for the Keenetic RCI: the path after /rci/ in the URL maps to
+# fixtures/keenetic/rci/<path>.json. Options are skipped; only the URL counts.
+# A missing fixture is what curl -f makes of a 404: exit 22 and no body.
+# BATS_RCI_DOWN=1 is NDM not answering at all (exit 7, "failed to connect").
+echo "curl $*" >> /tmp/bats_curl_calls.log
+url=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --max-time|-m|-o) shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+[[ -z ${BATS_RCI_DOWN:-} ]] || exit 7
+path="${url#*/rci/}"
+fixture="${BATS_RCI_FIXTURES:-$TEST_ROOT/fixtures/keenetic/rci}/$path.json"
+[[ -f $fixture ]] || exit 22
+cat "$fixture"

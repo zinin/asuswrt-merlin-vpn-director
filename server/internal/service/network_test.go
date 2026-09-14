@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/shell"
 )
 
 func TestNetworkService_GetExternalIP(t *testing.T) {

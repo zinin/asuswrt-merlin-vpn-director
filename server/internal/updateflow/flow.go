@@ -1,6 +1,6 @@
 // Package updateflow owns the self-update orchestration shared by the
 // Telegram bot and the Web UI: one cached check against the GitHub release
-// API and one guarded start of the download plus the update script.
+// API and one guarded handover of the update to the new release's binary.
 package updateflow
 
 import (
@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // Cache windows for Check. GitHub allows 60 unauthenticated requests an hour
@@ -66,7 +66,8 @@ func New(upd updater.Updater, currentVersion string, devMode bool) *Flow {
 	return &Flow{upd: upd, currentVersion: currentVersion, devMode: devMode}
 }
 
-// InProgress reports whether an update script is running, by the lock file.
+// InProgress reports whether an update is running, by the lock file: it names
+// the daemon that started the handover while step 2 runs, then the script.
 func (f *Flow) InProgress() bool { return f.upd.IsUpdateInProgress() }
 
 // Check returns the cached result when it is younger than cacheTTL. force

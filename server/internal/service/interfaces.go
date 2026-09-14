@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // ConfigStore, VPNDirector, XrayGenerator, NetworkInfo, LogReader interfaces are defined here
@@ -62,6 +62,10 @@ type VPNDirector interface {
 	// Update downloads fresh ipsets and reapplies the configuration
 	// (vpn-director.sh update). Apply reuses cached ipsets instead.
 	Update() error
+	// Platform runs `vpn-director.sh platform` and decodes it: the tunnels
+	// the router has, by id. Live, uncached; the caller validates routes
+	// against it at the moment of the change.
+	Platform() (vpnconfig.PlatformInfo, error)
 }
 
 // XrayGenerator is the interface for Xray config generation. The optional

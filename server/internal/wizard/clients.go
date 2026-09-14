@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // ClientsStep handles Step 3: client management (including IP input and route selection)
@@ -81,8 +82,15 @@ func (s *ClientsStep) HandleCallback(cb *tgbotapi.CallbackQuery, state *State) {
 			return
 		}
 		route := strings.TrimPrefix(data, "route:")
-		// Validate route against allowed options
-		if !isValidRoute(route) {
+		// Validated against the platform now, not against the keyboard that was
+		// sent: a tunnel can go away between the two, and callback data is
+		// whatever the client sends.
+		valid, err := s.isValidRoute(route)
+		if err != nil {
+			s.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2("platform info unavailable, try again"))
+			return
+		}
+		if !valid {
 			s.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2("Invalid route selection"))
 			return
 		}
@@ -111,9 +119,13 @@ func (s *ClientsStep) HandleMessage(msg *tgbotapi.Message, state *State) bool {
 		return true
 	}
 
+	// The keyboard needs the platform; without it the user stays on the IP
+	// prompt and can send the address again once the router answers.
+	if !s.sendRouteSelection(msg.Chat.ID, ip) {
+		return true
+	}
 	state.SetPendingIP(ip)
 	state.SetStep(StepClientRoute)
-	s.sendRouteSelection(msg.Chat.ID, ip)
 	return true
 }
 
@@ -122,39 +134,51 @@ func (s *ClientsStep) sendIPPrompt(chatID int64) {
 	s.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2("Enter client IP address\n(e.g.: 192.168.1.100)"))
 }
 
-// sendRouteSelection sends a keyboard with route options for the given IP
-func (s *ClientsStep) sendRouteSelection(chatID int64, ip string) {
+// sendRouteSelection sends a keyboard with the routes this router has for
+// the given IP: xray, then every tunnel the platform lists. false when the
+// platform could not be asked; the user was told.
+func (s *ClientsStep) sendRouteSelection(chatID int64, ip string) bool {
+	info, err := s.deps.VPN.Platform()
+	if err != nil {
+		s.deps.Sender.Send(chatID, telegram.EscapeMarkdownV2("platform info unavailable, try again"))
+		return false
+	}
+
 	kb := telegram.NewKeyboard()
-
-	// Xray option
 	kb.Button("Xray", "route:xray").Row()
-
-	// OpenVPN options (5 buttons in one row)
-	for i := 1; i <= 5; i++ {
-		kb.Button(fmt.Sprintf("ovpnc%d", i), fmt.Sprintf("route:ovpnc%d", i))
+	for _, t := range info.Tunnels {
+		kb.Button(tunnelLabel(t), "route:"+t.ID).Row()
 	}
-	kb.Row()
-
-	// WireGuard options (5 buttons in one row)
-	for i := 1; i <= 5; i++ {
-		kb.Button(fmt.Sprintf("wgc%d", i), fmt.Sprintf("route:wgc%d", i))
-	}
-	kb.Row()
-
 	kb.Button("Cancel", "cancel").Row()
 
 	text := telegram.EscapeMarkdownV2(fmt.Sprintf("Where to route traffic for %s?", ip))
 	s.deps.Sender.SendWithKeyboard(chatID, text, kb.Build())
+	return true
 }
 
-// isValidRoute checks if the route is in the allowed RouteOptions
-func isValidRoute(route string) bool {
-	for _, r := range RouteOptions {
-		if r == route {
-			return true
-		}
+// tunnelLabel is the button text for a tunnel: its id, its description and
+// whether it is down.
+func tunnelLabel(t vpnconfig.PlatformTunnel) string {
+	label := t.ID
+	if t.Description != "" {
+		label += " " + t.Description
 	}
-	return false
+	if !t.Connected {
+		label += " (down)"
+	}
+	return label
+}
+
+// isValidRoute reports whether route is xray or a tunnel the platform lists.
+func (s *ClientsStep) isValidRoute(route string) (bool, error) {
+	if route == "xray" {
+		return true, nil
+	}
+	info, err := s.deps.VPN.Platform()
+	if err != nil {
+		return false, err
+	}
+	return info.HasTunnel(route), nil
 }
 
 // isValidLANIP validates that the IP is a valid LAN (private) IP address

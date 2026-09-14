@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/auth"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // mockVPN implements service.VPNDirector for testing.
@@ -21,6 +21,8 @@ type mockVPN struct {
 	err          error
 	applyCalls   int // number of Apply() calls, to assert auto-apply
 	updateCalls  int // number of Update() calls
+	platform     vpnconfig.PlatformInfo
+	platformErr  error
 }
 
 func (m *mockVPN) Status() (string, error) { return m.statusOutput, m.err }
@@ -29,6 +31,9 @@ func (m *mockVPN) Restart() error          { return m.err }
 func (m *mockVPN) RestartXray() error      { return m.err }
 func (m *mockVPN) Stop() error             { return m.err }
 func (m *mockVPN) Update() error           { m.updateCalls++; return m.err }
+func (m *mockVPN) Platform() (vpnconfig.PlatformInfo, error) {
+	return m.platform, m.platformErr
+}
 
 // mockNetwork implements service.NetworkInfo for testing.
 type mockNetwork struct {
@@ -169,8 +174,14 @@ func newTestDeps(t *testing.T) *Deps {
 	jwt := auth.NewJWTService("test-secret-key-32bytes!!!!!!!!", 1*time.Hour)
 
 	return &Deps{
-		Config:  &mockConfig{},
-		VPN:     &mockVPN{statusOutput: "all systems operational"},
+		Config: &mockConfig{},
+		VPN: &mockVPN{statusOutput: "all systems operational", platform: vpnconfig.PlatformInfo{
+			Platform: "merlin",
+			Tunnels: []vpnconfig.PlatformTunnel{
+				{ID: "wgc1", Iface: "wgc1", Type: "wireguard", Connected: true, Description: "Office WG"},
+				{ID: "ovpnc1", Iface: "tun11", Type: "openvpn", Description: "Office OVPN"},
+			},
+		}},
 		Xray:    &mockXray{},
 		Network: &mockNetwork{ip: "203.0.113.42"},
 		Logs:    &mockLogs{output: "log line 1\nlog line 2"},

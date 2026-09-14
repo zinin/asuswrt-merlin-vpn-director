@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // StartResult names the versions of a run, filled in even when Start refuses
@@ -29,10 +29,11 @@ func report(progress func(string), line string) {
 	progress(line)
 }
 
-// Start runs the pre-flight checks synchronously, takes the lock and launches
-// the download plus the update script in a goroutine; progress receives
+// Start runs the pre-flight checks synchronously, takes the lock and hands the
+// update over to the new release's binary in a goroutine; progress receives
 // human-readable status lines. It returns as soon as the background work is
-// under way, because the script kills this very process a few seconds later.
+// under way, because the update script kills this very process a few seconds
+// later.
 func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progress func(string)) (StartResult, error) {
 	if f.devMode {
 		return StartResult{}, ErrDevMode
@@ -41,7 +42,7 @@ func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progre
 		return StartResult{}, ErrDevVersion
 	}
 	// Rejected before the lock: an unknown initiator would only fail later,
-	// inside RunUpdateScript, with the lock already taken.
+	// inside the new version's self-update step, with the lock already taken.
 	if initiator != "bot" && initiator != "webui" {
 		return StartResult{}, fmt.Errorf("invalid initiator: %q", initiator)
 	}
@@ -91,9 +92,13 @@ func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progre
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("update goroutine panicked", "error", r)
-				// Unwind before reporting: with report absorbing callback
-				// panics, anything arriving here is a failure of our own and
-				// the lock must go regardless of what reporting does.
+				// Unwind before reporting: report absorbs callback panics, so
+				// anything arriving here is a failure of our own, and only one
+				// from before the handover succeeded can reach it - past that
+				// point run makes a single report call and returns. The lock
+				// and files/ are still this process's then; once step 2 has
+				// exited 0 they belong to the update script, and unwinding
+				// would pull the payload from under it.
 				f.upd.CleanFiles()
 				f.upd.RemoveLock()
 				report(progress, "Update failed unexpectedly. Check logs.")
@@ -105,30 +110,43 @@ func (f *Flow) Start(ctx context.Context, initiator string, chatID int64, progre
 	return res, nil
 }
 
-// run downloads the release and hands over to the update script. It builds
-// its own context: a closed browser tab or a finished Telegram poll must not
-// abort an update that is already downloading.
+// run hands the update over to the new release's binary (updater.Handover)
+// and reports how that went. It builds its own context: a closed browser tab
+// or a finished Telegram poll must not abort an update that is already
+// downloading. Cleaning up after a failure is Handover's: only it knows
+// whether the lock is still this process's or already the update script's.
 func (f *Flow) run(release *updater.Release, res StartResult, initiator string, chatID int64, progress func(string)) {
-	if err := f.upd.DownloadRelease(context.Background(), release); err != nil {
-		f.upd.CleanFiles()
-		f.upd.RemoveLock()
-		report(progress, fmt.Sprintf("Download failed: %v", err))
-		return
-	}
-	report(progress, "Files downloaded, starting update...")
-
-	err := f.upd.RunUpdateScript(updater.RunOptions{
+	err := f.upd.Handover(context.Background(), release, updater.RunOptions{
 		OldVersion: res.From,
 		NewVersion: res.To,
 		ChatID:     chatID,
 		Initiator:  initiator,
-	})
+	}, func(line string) { report(progress, line) })
 	if err != nil {
-		f.upd.CleanFiles()
-		f.upd.RemoveLock()
-		report(progress, fmt.Sprintf("Failed to run update script: %v", err))
+		// progress may reach nobody - a chat message that cannot be
+		// delivered, a browser tab that is gone - and a failed update that
+		// left no trace at all is one nobody can look into.
+		slog.Warn("self-update handover failed", "from", res.From, "to", res.To, "error", err)
+		report(progress, handoverMessage(err))
 		return
 	}
-
 	report(progress, "Update script started, the service will restart in a few seconds...")
+}
+
+// handoverMessage phrases a failed handover for the user.
+func handoverMessage(err error) string {
+	var he *updater.HandoverError
+	if !errors.As(err, &he) {
+		return fmt.Sprintf("Update failed: %v", err)
+	}
+	switch he.Phase {
+	case updater.PhaseDownload:
+		return fmt.Sprintf("Download failed: %v", he.Err)
+	case updater.PhaseStart:
+		return fmt.Sprintf("Failed to start the new version: %v", he.Err)
+	case updater.PhaseTimeout:
+		return "Update timed out"
+	default:
+		return fmt.Sprintf("Update failed: %v", he.Err)
+	}
 }

@@ -1,4 +1,4 @@
-.PHONY: build build-bot build-arm64 build-arm build-webui build-webui-arm64 build-webui-arm clean test
+.PHONY: build build-bot build-arm64 build-arm build-mipsle build-webui build-webui-arm64 build-webui-arm build-webui-mipsle clean test
 
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 VERSION_FULL ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -18,6 +18,10 @@ build-arm64:
 build-arm:
 	GOOS=linux GOARCH=arm GOARM=7 go build -trimpath $(LDFLAGS) -o bin/telegram-bot-arm ./cmd/bot
 
+# Keenetic MIPS models: little-endian, no FPU (GOMIPS=softfloat). Built, not tested on hardware.
+build-mipsle:
+	GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o bin/telegram-bot-mipsle ./cmd/bot
+
 build-webui:
 	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o bin/webui ./cmd/webui
 
@@ -26,6 +30,9 @@ build-webui-arm64:
 
 build-webui-arm:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath $(LDFLAGS) -o bin/webui-arm ./cmd/webui
+
+build-webui-mipsle:
+	CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath $(LDFLAGS) -o bin/webui-mipsle ./cmd/webui
 
 clean:
 	rm -rf bin/

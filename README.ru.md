@@ -1,8 +1,8 @@
 [🇬🇧 English](README.md) | 🇷🇺 Русский
 
-# VPN Director для Asuswrt-Merlin
+# VPN Director для Asuswrt-Merlin и KeeneticOS
 
-Выборочная маршрутизация трафика через Xray TPROXY и OpenVPN-туннели.
+Выборочная маршрутизация трафика через Xray TPROXY и туннели OpenVPN/WireGuard.
 
 ## Возможности
 
@@ -20,8 +20,8 @@ curl -fsSL \
   -H "Cache-Control: no-cache" \
   -H "Pragma: no-cache" \
   -H "If-Modified-Since: Thu, 01 Jan 1970 00:00:00 GMT" \
-  "https://raw.githubusercontent.com/zinin/asuswrt-merlin-vpn-director/master/install.sh?v=$(date +%s)" \
-| /usr/bin/env bash
+  "https://raw.githubusercontent.com/zinin/vpn-director/master/install.sh?v=$(date +%s)" \
+| /opt/bin/bash
 ```
 
 После установки:
@@ -40,7 +40,7 @@ curl -fsSL \
    ```
    https://<ip-роутера>:8444
    ```
-   Войдите с паролем администратора роутера.
+   Merlin: пароль администратора роутера. KeeneticOS: пользователь `root` с паролем Entware.
 
 4. Настройте Telegram-бота (опционально):
    ```bash
@@ -49,6 +49,8 @@ curl -fsSL \
 
 ## Требования
 
+### Asuswrt-Merlin
+
 - Прошивка Asuswrt-Merlin
 - Установленный Entware
 - Необходимые пакеты:
@@ -56,6 +58,24 @@ curl -fsSL \
   opkg install curl coreutils-base64 coreutils-sha256sum gawk jq xray-core procps-ng-pgrep procps-ng-pkill procps-ng-ps
   ```
 - OpenVPN-клиент, настроенный в интерфейсе роутера (для Tunnel Director)
+
+### KeeneticOS
+
+- KeeneticOS 5.x (проверено на 5.1.5) с Entware на USB-накопителе
+- Компонент прошивки «Модули ядра для Netfilter» (роутер один раз перезагружается при его добавлении)
+- Пакеты, которые `install.sh` ставит по запросу (сам bash нужно установить заранее: `opkg install bash`):
+  ```bash
+  opkg install bash curl jq iptables ipset ip-full flock coreutils-nohup coreutils-base64 coreutils-sha256sum gawk procps-ng-pgrep procps-ng-pkill procps-ng-ps openssl-util cron xray
+  ```
+- Клиентский интерфейс OpenVPN или WireGuard, настроенный в интерфейсе роутера (для Tunnel Director)
+
+Сборки для MIPS (`mipsle`) поставляются без проверки на устройстве.
+
+Известное ограничение: список туннелей строится из всех интерфейсов OpenVPN и WireGuard на
+роутере, включая OpenVPN- и WireGuard-**серверы**. Не назначайте клиентов на серверный
+интерфейс: Tunnel Director направит их в серверный туннель самого роутера, где трафик будет
+отброшен. Чтобы отличать серверы, нужен роутер с таким интерфейсом для проверки полей RCI; эта
+проверка ещё не выполнена.
 
 ### Опционально
 
@@ -102,7 +122,10 @@ HTTPS веб-интерфейс для управления VPN Director из б
 
 ### Доступ
 
-Откройте `https://<ip-роутера>:8444` и войдите с паролем администратора роутера (аутентификация через `/etc/shadow`).
+Откройте `https://<ip-роутера>:8444`.
+
+- **Asuswrt-Merlin**: войдите с паролем администратора роутера (аутентификация через `/etc/shadow`).
+- **KeeneticOS**: войдите как пользователь `root` с паролем Entware (`/opt/etc/passwd`, задаётся командой `passwd` по SSH).
 
 Самоподписанный TLS-сертификат генерируется автоматически при установке. Браузер покажет предупреждение безопасности — это нормально.
 
@@ -153,6 +176,8 @@ HTTPS веб-интерфейс для управления VPN Director из б
 
 > Переход **на** первый релиз с единым обновлением выполняет прежний обновлятор бота, который не знает про Web UI. После этого перехода один раз повторите команду [быстрой установки](#быстрая-установка); все последующие обновления охватывают оба демона.
 
+> **Обновление с v0.11.x и более ранних версий.** Встроенный в те релизы обновлятор скачивает фиксированный список файлов без `lib/platform.sh`, поэтому кнопка «Update» устанавливает этот релиз не полностью: shell-CLI, хуки firewall и ежедневное обновление перестают работать (правила Xray TPROXY и Tunnel Director больше не восстанавливаются после перезапуска firewall), пока вы один раз не выполните команду [быстрой установки](#быстрая-установка). Сами Web UI и бот продолжают работать. Все последующие обновления читают манифест релиза, и этот шаг им не нужен.
+
 ## Telegram-бот
 
 Удалённое управление через Telegram с авторизацией по имени пользователя.
@@ -200,7 +225,22 @@ HTTPS веб-интерфейс для управления VPN Director из б
 
 ### Tunnel Director
 
-Маршрутизирует трафик от указанных LAN-клиентов через туннели OpenVPN/WireGuard в зависимости от назначения. Настраиваемые исключения позволяют направлять трафик к выбранным странам напрямую для оптимальной производительности.
+Маршрутизирует трафик от указанных LAN-клиентов через туннели OpenVPN/WireGuard в зависимости от назначения. Настраиваемые исключения позволяют направлять трафик к выбранным странам напрямую для оптимальной производительности. Ключ туннеля — идентификатор из списка платформы (`wgc1` / `ovpnc1` на Merlin, `OpenVPN0` / `Wireguard1` на KeeneticOS). У OpenVPN-туннеля можно задать необязательный `gateway` (next hop; иначе берётся первый хост подсети). WireGuard его игнорирует.
+
+```json
+{
+  "tunnel_director": {
+    "tunnels": {
+      "wgc1": { "clients": ["192.168.50.0/24"], "exclude": ["<country_code>"] },
+      "OpenVPN0": {
+        "clients": ["192.168.1.5"],
+        "exclude": ["<country_code>"],
+        "gateway": "10.73.149.1"
+      }
+    }
+  }
+}
+```
 
 ### IPSet по странам
 
@@ -217,12 +257,13 @@ HTTPS веб-интерфейс для управления VPN Director из б
 | Скрипт | Когда вызывается | Назначение |
 |--------|------------------|------------|
 | `/opt/etc/init.d/S99vpn-director` | После инициализации Entware | Запускает `vpn-director.sh apply` для инициализации всех компонентов |
-| `/jffs/scripts/firewall-start` | После применения правил файрвола | Повторно применяет конфигурацию после перезагрузки файрвола |
-| `/jffs/scripts/wan-event` | При подключении WAN | Запускает `vpn-director.sh apply` при подключении WAN |
+| `/jffs/scripts/firewall-start` | После применения правил файрвола (Merlin) | Повторно применяет конфигурацию после перезагрузки файрвола |
+| `/jffs/scripts/wan-event` | При подключении WAN (Merlin) | Запускает `vpn-director.sh apply` при подключении WAN |
+| `/opt/etc/ndm/netfilter.d`, `wan.d`, `iflayerchanged.d` (`50-vpn-director.sh`) | Пересборка файрвола NDM / старт WAN / IPv4-слой VPN-клиента (KeeneticOS) | Отсоединённый `vpn-director.sh --wait apply` |
 
 **Примечание:** Скрипт init.d проверяет доступность bash из Entware перед запуском скриптов vpn-director.
 
-Для включения пользовательских скриптов: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
+На Merlin, для включения пользовательских скриптов: Administration -> System -> Enable JFFS custom scripts and configs -> Yes
 
 ## Мониторинг процессов
 

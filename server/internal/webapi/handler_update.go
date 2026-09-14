@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
 )
 
 // writeGitHubError answers 502 when err came from the GitHub API and reports
@@ -53,7 +53,7 @@ func handleUpdateCheck(deps *Deps) http.HandlerFunc {
 }
 
 // handleUpdateStart launches the unified self-update. It answers 202 as soon
-// as the download starts: the update script stops this process a few seconds
+// as the handover starts: the update script stops this process a few seconds
 // later, so the client learns the outcome by polling /api/version.
 func handleUpdateStart(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +62,7 @@ func handleUpdateStart(deps *Deps) http.HandlerFunc {
 		res, err := deps.Update.Start(r.Context(), "webui", 0, func(line string) {
 			slog.Info("self-update", "status", line)
 		})
-		// Re-arm before answering: Start has already spawned the download, so
+		// Re-arm before answering: Start has already spawned the handover, so
 		// a 202 lost to the deadline leaves the page on the old screen while
 		// the router updates underneath it. See handleUpdateCheck.
 		extendWriteDeadline(w, deadlineSlack)
@@ -94,8 +94,9 @@ func handleUpdateStart(deps *Deps) http.HandlerFunc {
 	}
 }
 
-// handleUpdateStatus reports whether an update script is running, so a client
-// that reconnected after a restart can tell "still updating" from "done".
+// handleUpdateStatus reports whether an update is running, so a client that
+// reconnected after a restart can tell "still updating" from "done". While
+// step 2 runs, the lock names the daemon that started it, not yet the script.
 func handleUpdateStatus(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		jsonOK(w, map[string]bool{"in_progress": deps.Update.InProgress()})

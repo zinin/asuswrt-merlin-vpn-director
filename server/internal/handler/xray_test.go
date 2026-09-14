@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 // mockXrayGenerator for testing
@@ -325,6 +325,9 @@ func (m *mockVPNDirectorWithXray) Restart() error          { return m.restartErr
 func (m *mockVPNDirectorWithXray) RestartXray() error      { return m.restartXrayErr }
 func (m *mockVPNDirectorWithXray) Stop() error             { return m.stopErr }
 func (m *mockVPNDirectorWithXray) Update() error           { return nil }
+func (m *mockVPNDirectorWithXray) Platform() (vpnconfig.PlatformInfo, error) {
+	return vpnconfig.PlatformInfo{}, nil
+}
 
 // trackingXrayConfigStore holds a config the way a configured router does, so
 // a test can read back what the switch wrote. The plain mockConfigStore stands

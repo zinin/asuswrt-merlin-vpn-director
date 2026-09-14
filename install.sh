@@ -1,4 +1,22 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# shellcheck shell=bash
+# KeeneticOS has no /usr/bin/env and mounts / read-only, so the usual
+# "#!/usr/bin/env bash" cannot start this script there. Begin as a POSIX shell
+# and hand over to bash by absolute path - Entware's first, a workstation's
+# after it. PATH is no help here: Asuswrt-Merlin's /bin/sh has no "command"
+# builtin (see .claude/rules/shell-conventions.md) and its /bin/bash is a
+# symlink to busybox rather than bash.
+if [ -z "${BASH_VERSION:-}" ]; then
+    for _vpd_bash in /opt/bin/bash /usr/bin/bash /bin/bash; do
+        # Asuswrt-Merlin's /bin/bash is busybox: a POSIX shell that never sets
+        # BASH_VERSION, so exec-ing it would re-run this block forever. Only a
+        # candidate that proves it is bash gets the script.
+        [ -x "$_vpd_bash" ] && "$_vpd_bash" -c '[ -n "$BASH_VERSION" ]' 2>/dev/null &&
+            exec "$_vpd_bash" "$0" "$@"
+    done
+    echo "$0: bash not found; install it (Entware package \"bash\")" >&2
+    exit 1
+fi
 set -euo pipefail
 
 # Debug mode: set DEBUG=1 to enable tracing
@@ -8,7 +26,7 @@ if [[ ${DEBUG:-0} == 1 ]]; then
 fi
 
 ###############################################################################
-# VPN Director Installer for Asuswrt-Merlin
+# VPN Director Installer for Asuswrt-Merlin and KeeneticOS
 # Downloads and installs scripts. Run configure.sh after for setup.
 ###############################################################################
 
@@ -20,11 +38,28 @@ NC='\033[0m' # No Color
 
 # Installation paths
 VPD_DIR="/opt/vpn-director"
-JFFS_HOOKS_DIR="/jffs/scripts"
 XRAY_CONFIG_DIR="/opt/etc/xray"
-GITHUB_REPO="zinin/asuswrt-merlin-vpn-director"
+GITHUB_REPO="zinin/vpn-director"
 INIT_DIR="/opt/etc/init.d"
 WEBUI_URL=""   # set by start_webui once the daemon answers; read by print_next_steps
+
+# Platform tag that selects files from router/files.manifest, set by
+# detect_platform with an inline copy of lib/platform.sh's rules: the library
+# is not installed yet when the installer starts.
+PLATFORM=""
+
+# Root the manifest files are installed under: "" on a router, a temporary
+# directory in tests.
+INSTALL_ROOT="${INSTALL_ROOT:-}"
+
+# Where a question to the user is read from when stdin is the script itself
+# (curl ... | bash); tests point it at a file.
+INSTALL_TTY="${INSTALL_TTY:-/dev/tty}"
+
+# Entware packages VPN Director needs on KeeneticOS (spec 6.6): the router's
+# busybox has no flock, nohup, pkill, openssl or gawk, its wget cannot do TLS,
+# and cron and xray are not there at all.
+KEENETIC_PACKAGES="bash curl jq iptables ipset ip-full flock coreutils-nohup coreutils-base64 coreutils-sha256sum gawk procps-ng-pgrep procps-ng-pkill procps-ng-ps openssl-util cron xray"
 
 ###############################################################################
 # Helper functions
@@ -83,15 +118,25 @@ resolve_release_tag() {
 }
 
 ###############################################################################
-# Environment check
+# Platform detection and environment check
 ###############################################################################
 
-check_environment() {
-    if [[ ! -d /jffs ]]; then
-        print_error "This script must be run on Asuswrt-Merlin router"
+# detect_platform - sets PLATFORM with the rules of lib/platform.sh
+#   (VPD_PROBE_ROOT prefixes the probed paths, for tests)
+detect_platform() {
+    local root="${VPD_PROBE_ROOT:-}"
+    if [[ -d "$root/opt/etc/ndm" ]] && [[ -x "$root/bin/ndmc" ]]; then
+        PLATFORM="keenetic"
+    elif [[ -d "$root/jffs" ]] && [[ -x "$root/bin/nvram" ]]; then
+        PLATFORM="merlin"
+    else
+        print_error "Unsupported platform: neither Asuswrt-Merlin nor KeeneticOS detected"
         exit 1
     fi
+    print_success "Platform: $PLATFORM"
+}
 
+check_environment() {
     # Check for Entware
     if [[ ! -d /opt/bin ]]; then
         print_error "Entware not found. Install Entware first."
@@ -109,6 +154,65 @@ check_environment() {
         print_info "Install with: opkg install curl"
         exit 1
     fi
+
+    if [[ $PLATFORM == keenetic ]]; then
+        check_keenetic_prerequisites
+    fi
+}
+
+# check_keenetic_prerequisites - the TPROXY kernel module and the Entware packages
+#   The module ships in the firmware component "Kernel modules for Netfilter";
+#   without it there is nothing to insmod and TPROXY cannot work, so stop
+#   before downloading anything. Missing packages are installed on request
+#   when a terminal can answer, else listed with the command and refused.
+check_keenetic_prerequisites() {
+    local modules_dir="${VPD_MODULES_DIR:-/lib/modules/$(uname -r)}"
+    if [[ ! -f "$modules_dir/xt_TPROXY.ko" ]]; then
+        print_error "xt_TPROXY.ko not found in $modules_dir"
+        print_info "Enable the firmware component \"Kernel modules for Netfilter\" (opkg-kmod-netfilter):"
+        print_info "  router web UI -> Management -> System settings -> Component options"
+        print_info "The router rebuilds its firmware and reboots; then run this installer again."
+        exit 1
+    fi
+
+    local pkg missing=""
+    # shellcheck disable=SC2086  # KEENETIC_PACKAGES is a space-separated list
+    for pkg in $KEENETIC_PACKAGES; do
+        if ! opkg status "$pkg" 2>/dev/null | grep -q '^Status: install'; then
+            missing="$missing $pkg"
+        fi
+    done
+    missing="${missing# }"
+    if [[ -z $missing ]]; then
+        print_success "Required Entware packages are installed"
+        return 0
+    fi
+
+    print_info "Missing Entware packages: $missing"
+    if [[ -r $INSTALL_TTY ]]; then
+        local answer=""
+        printf "Install them now with opkg? [Y/n] "
+        # A readable /dev/tty is not a controlling terminal: the read then fails with
+        # ENXIO, and a failed or EOF read must refuse, not take the default-yes branch.
+        if read -r answer < "$INSTALL_TTY" 2>/dev/null; then
+            case "$answer" in
+                ""|y|Y|yes|YES)
+                    # shellcheck disable=SC2086
+                    if opkg update && opkg install $missing; then
+                        print_success "Installed: $missing"
+                        return 0
+                    fi
+                    print_error "opkg install failed"
+                    exit 1
+                    ;;
+            esac
+        else
+            printf '\n'
+        fi
+    fi
+    print_error "Install the missing packages first:"
+    print_info "  opkg update && opkg install $missing"
+    exit 1
 }
 
 ###############################################################################
@@ -118,13 +222,107 @@ check_environment() {
 create_directories() {
     print_info "Creating directories..."
 
-    mkdir -p "$VPD_DIR/lib"
-    mkdir -p "$VPD_DIR/data"
-    mkdir -p "$XRAY_CONFIG_DIR"
-    mkdir -p "$INIT_DIR"
-    mkdir -p "$JFFS_HOOKS_DIR"
+    mkdir -p "$VPD_DIR/lib" "$VPD_DIR/data" "$XRAY_CONFIG_DIR" "$INIT_DIR"
+    case "$PLATFORM" in
+        merlin)
+            mkdir -p "${INSTALL_ROOT}/jffs/scripts"
+            ;;
+        keenetic)
+            mkdir -p "${INSTALL_ROOT}/opt/etc/ndm/netfilter.d" "${INSTALL_ROOT}/opt/etc/ndm/wan.d" \
+                "${INSTALL_ROOT}/opt/etc/ndm/iflayerchanged.d" "${INSTALL_ROOT}/opt/etc/cron.d"
+            ;;
+    esac
 
     print_success "Directories created"
+}
+
+###############################################################################
+# Architecture and platform facts
+###############################################################################
+
+# release_arch - the release asset suffix for this CPU
+#   aarch64 -> arm64, armv7l -> arm, mips -> mipsle (every Keenetic MIPS model
+#   is little-endian). Prints nothing and returns 1 for anything else.
+release_arch() {
+    case "$(uname -m)" in
+        aarch64) printf 'arm64\n' ;;
+        armv7l)  printf 'arm\n' ;;
+        mips)    printf 'mipsle\n' ;;
+        *)       return 1 ;;
+    esac
+}
+
+# load_platform_lib - source the platform library download_scripts installed,
+#   so the LAN address and host name come from the contract and not from an
+#   inline nvram copy. Returns 1 when it is not there yet.
+load_platform_lib() {
+    [[ -f "$VPD_DIR/lib/platform.sh" ]] || return 1
+    export VPD_PLATFORM="$PLATFORM"
+    # shellcheck disable=SC1091
+    . "$VPD_DIR/lib/platform.sh"
+}
+
+# lan_ip / lan_hostname - the contract's answer, or a default the certificate
+#   and the printed URL can live with when the library or the router cannot say.
+lan_ip() {
+    local ip=""
+    ip="$(platform_lan_ip 2>/dev/null)" || ip=""
+    printf '%s\n' "${ip:-192.168.1.1}"
+}
+
+lan_hostname() {
+    local name=""
+    name="$(platform_hostname 2>/dev/null)" || name=""
+    printf '%s\n' "${name:-router}"
+}
+
+###############################################################################
+# File manifest
+###############################################################################
+
+# manifest_files <manifest> <platform>
+#   Prints the repository paths tagged "common" or <platform>, one per line,
+#   in manifest order. Blank lines and "#" comments are skipped. An
+#   unrecognised tag is an error, not something to skip: a typo like "comon"
+#   would drop that file from every install, and no "the path exists" check
+#   can see it. The Go updater tolerates an unknown tag because an old binary
+#   can meet a newer release; this parser ships with the manifest it reads.
+manifest_files() {
+    local manifest="$1" platform="$2" line="" lineno=0 tag path
+    # `|| [[ -n $line ]]` keeps a last line with no trailing newline. The Go
+    # parser's bufio.Scanner reads it, and the two must not disagree about
+    # what a release ships.
+    while read -r line || [[ -n $line ]]; do
+        lineno=$((lineno + 1))
+        read -r tag path _ <<< "$line"
+        case "$tag" in ''|'#'*) continue ;; esac
+        case "$tag" in
+            common|merlin|keenetic) ;;
+            *)
+                # stderr: the caller reads this function's stdout as the list.
+                print_error "files.manifest line $lineno: unknown tag \"$tag\" in \"$line\"" >&2
+                return 1
+                ;;
+        esac
+        # The rule is the Go parser's (server/internal/updater/manifest.go).
+        if [[ ! $path =~ ^router/[A-Za-z0-9._/-]+$ || $path == *..* ]]; then
+            print_error "files.manifest line $lineno: invalid path \"$path\" in \"$line\"" >&2
+            return 1
+        fi
+        if [[ $tag == common || $tag == "$platform" ]]; then
+            printf '%s\n' "$path"
+        fi
+    done < "$manifest"
+}
+
+# manifest_is_executable <repo path>
+#   Returns 0 when the installed file gets the executable bit: everything
+#   except templates, JSON and the manifest itself.
+manifest_is_executable() {
+    case "$1" in
+        *.template|*.json|*.manifest) return 1 ;;
+    esac
+    return 0
 }
 
 ###############################################################################
@@ -132,44 +330,49 @@ create_directories() {
 ###############################################################################
 
 download_scripts() {
+    print_info "Downloading file manifest..."
+
+    local manifest
+    manifest=$(mktemp)
+    if ! curl -fsSL "$REPO_URL/router/files.manifest" -o "$manifest"; then
+        rm -f "$manifest"
+        print_error "Failed to download router/files.manifest"
+        return 1
+    fi
+
+    # Parse the whole manifest before installing anything. In a process
+    # substitution manifest_files' exit status is invisible, so a bad tag
+    # halfway down would leave a half-installed router and still report
+    # success.
+    local files
+    if ! files=$(manifest_files "$manifest" "$PLATFORM"); then
+        rm -f "$manifest"
+        return 1
+    fi
+    rm -f "$manifest"
+
+    # No match means a corrupt manifest or a platform this release does not
+    # ship. Reporting success here would send main() on to setup_webui_config
+    # and start_webui on top of absent scripts.
+    if [[ -z $files ]]; then
+        print_error "files.manifest lists no file for platform $PLATFORM"
+        return 1
+    fi
+
     print_info "Downloading scripts..."
-
-    # NOTE: Keep file list in sync with server/internal/updater/downloader.go
-    for script in \
-        "router/opt/vpn-director/vpn-director.sh" \
-        "router/opt/vpn-director/configure.sh" \
-        "router/opt/vpn-director/import_server_list.sh" \
-        "router/opt/vpn-director/vpn-director.json.template" \
-        "router/opt/vpn-director/lib/common.sh" \
-        "router/opt/vpn-director/lib/firewall.sh" \
-        "router/opt/vpn-director/lib/config.sh" \
-        "router/opt/vpn-director/lib/ipset.sh" \
-        "router/opt/vpn-director/lib/tunnel.sh" \
-        "router/opt/vpn-director/lib/tproxy.sh" \
-        "router/opt/vpn-director/lib/xrayconf.sh" \
-        "router/opt/vpn-director/lib/send-email.sh" \
-        "router/opt/vpn-director/setup_telegram_bot.sh" \
-        "router/jffs/scripts/firewall-start" \
-        "router/jffs/scripts/wan-event" \
-        "router/opt/etc/init.d/S99vpn-director" \
-        "router/opt/etc/init.d/S98telegram-bot" \
-        "router/opt/etc/init.d/S98vpn-director-webui"
-    do
-        target="/${script#router/}"
-        curl -fsSL "$REPO_URL/$script" -o "$target" || {
-            print_error "Failed to download $script"
-            exit 1
-        }
-        chmod +x "$target"
+    local file target
+    while IFS= read -r file; do
+        target="${INSTALL_ROOT}/${file#router/}"
+        mkdir -p "$(dirname "$target")"
+        if ! curl -fsSL "$REPO_URL/$file" -o "$target"; then
+            print_error "Failed to download $file"
+            return 1
+        fi
+        if manifest_is_executable "$file"; then
+            chmod +x "$target"
+        fi
         print_success "Installed $target"
-    done
-
-    # Download xray config template
-    curl -fsSL "$REPO_URL/router/opt/etc/xray/config.json.template" -o "$XRAY_CONFIG_DIR/config.json.template" || {
-        print_error "Failed to download config.json.template"
-        exit 1
-    }
-    print_success "Installed $XRAY_CONFIG_DIR/config.json.template"
+    done <<< "$files"
 }
 
 ###############################################################################
@@ -179,22 +382,16 @@ download_scripts() {
 download_telegram_bot() {
     print_info "Downloading telegram bot binary..."
 
-    local arch
-    arch=$(uname -m)
-    local bot_binary=""
+    local arch_suffix
+    if ! arch_suffix="$(release_arch)"; then
+        print_info "Architecture $(uname -m) not supported for telegram bot (optional component)"
+        return 0
+    fi
+    local bot_binary="telegram-bot-$arch_suffix"
     local release_url="$RELEASE_ASSET_URL"
     local bot_path="$VPD_DIR/telegram-bot"
     local tmp_path="${bot_path}.tmp"
     local was_running=false
-
-    case "$arch" in
-        aarch64) bot_binary="telegram-bot-arm64" ;;
-        armv7l)  bot_binary="telegram-bot-arm" ;;
-        *)
-            print_info "Architecture $arch not supported for telegram bot (optional component)"
-            return 0
-            ;;
-    esac
 
     # Download to temp file first
     if ! curl -fsSL "$release_url/$bot_binary" -o "$tmp_path"; then
@@ -234,21 +431,15 @@ download_telegram_bot() {
 download_webui() {
     print_info "Downloading Web UI binary..."
 
-    local arch
-    arch=$(uname -m)
-    local webui_binary=""
+    local arch_suffix
+    if ! arch_suffix="$(release_arch)"; then
+        print_info "Architecture $(uname -m) not supported for webui (optional component)"
+        return 0
+    fi
+    local webui_binary="webui-$arch_suffix"
     local webui_path="$VPD_DIR/webui"
     local tmp_path="${webui_path}.tmp"
     local was_running=false
-
-    case "$arch" in
-        aarch64) webui_binary="webui-arm64" ;;
-        armv7l)  webui_binary="webui-arm" ;;
-        *)
-            print_info "Architecture $arch not supported for webui (optional component)"
-            return 0
-            ;;
-    esac
 
     if ! curl -fsSL "$RELEASE_ASSET_URL/$webui_binary" -o "$tmp_path"; then
         print_info "Warning: Failed to download webui (optional component)"
@@ -294,15 +485,10 @@ generate_tls_cert() {
 
     mkdir -p "$cert_dir"
 
-    # `nvram get` exits 0 and prints nothing for an unset variable, so `|| echo`
-    # never fires: an empty value would leave subjectAltName with an empty IP,
-    # openssl would reject -addext and fall through to a certificate with no SAN.
     local lan_ip
-    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || true)
-    [[ -n "$lan_ip" ]] || lan_ip="192.168.1.1"
+    lan_ip=$(lan_ip)
     local hostname
-    hostname=$(nvram get lan_hostname 2>/dev/null || true)
-    [[ -n "$hostname" ]] || hostname="router"
+    hostname=$(lan_hostname)
 
     openssl req -x509 -newkey rsa:2048 \
         -keyout "$cert_dir/server.key" \
@@ -384,8 +570,7 @@ start_webui() {
         return 0
     fi
 
-    lan_ip=$(nvram get lan_ipaddr 2>/dev/null || true)
-    [[ -n "$lan_ip" ]] || lan_ip="192.168.1.1"
+    lan_ip=$(lan_ip)
     local port=8444
     if [[ -f "$VPD_DIR/vpn-director.json" ]] && command -v jq >/dev/null 2>&1; then
         local p
@@ -415,7 +600,10 @@ print_next_steps() {
     if [[ -n "$WEBUI_URL" ]]; then
         printf "  4. Open the Web UI (already running):\n"
         printf "     ${GREEN}%s${NC}\n" "$WEBUI_URL"
-        printf "     Log in with the router admin username and password\n\n"
+        case "$PLATFORM" in
+            keenetic) printf "     Log in as root with the Entware password (set it with passwd over SSH)\n\n" ;;
+            *)        printf "     Log in with the router admin username and password\n\n" ;;
+        esac
     else
         printf "  4. Web UI is not running. Start it with:\n"
         printf "     ${GREEN}%s/S98vpn-director-webui start${NC}\n" "$INIT_DIR"
@@ -434,10 +622,12 @@ main() {
     print_header "VPN Director Installer"
     printf "This will install VPN Director scripts to your router.\n\n"
 
+    detect_platform
     check_environment
     resolve_release_tag
     create_directories
     download_scripts
+    load_platform_lib || print_info "Platform library not installed; using default LAN facts"
     download_telegram_bot
     download_webui
     generate_tls_cert

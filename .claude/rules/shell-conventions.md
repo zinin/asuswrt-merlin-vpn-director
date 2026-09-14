@@ -6,7 +6,10 @@ paths: "**/*.sh, jffs/**/*"
 
 ## Script Structure
 
-- Shebang: `#!/usr/bin/env bash` with `set -euo pipefail`
+- Shebang: `#!/usr/bin/env bash` for libraries, which are only ever sourced - except
+  `lib/send-email.sh`, which `S99vpn-director` executes. A script a router executes starts
+  `#!/bin/sh` and hands over to bash itself (see "No `/usr/bin/env`
+  on KeeneticOS" below). Both forms then `set -euo pipefail`
 - Debug mode: `DEBUG=1 ./script.sh` enables `set -x` with informative PS4
 - shellcheck annotations for intentional expansions/externals (SC2086, SC2155, SC2034)
 
@@ -16,7 +19,7 @@ paths: "**/*.sh, jffs/**/*"
 - Locking: `acquire_lock [name]` prevents concurrent script execution; with `VPD_LOCK_WAIT=<sec>` (set by `vpn-director.sh --wait[=SEC]`) it waits for the lock instead of exiting 0
 - Temp files: `tmp_file` / `tmp_dir` with auto-cleanup on exit
 
-## Key Utilities (common.sh)
+## Key Utilities (common.sh and the platform contract)
 
 | Function | Description |
 |----------|-------------|
@@ -30,12 +33,17 @@ paths: "**/*.sh, jffs/**/*"
 | `is_lan_ip [-6] <ip>` | Check if IP is in RFC1918/ULA range |
 | `is_pos_int <value>` | Check if value is positive integer (>=1) |
 | `strip_comments [text]` | Remove blank lines and # comments |
-| `get_active_wan_if` | Get active WAN interface name |
-| `get_ipv6_enabled` | Returns 1 if IPv6 enabled, 0 otherwise |
+| `platform_wan_if` | Active WAN interface (platform contract; `get_active_wan_if` is a wrapper) |
+| `platform_ipv6_enabled` | 1 when IPv6 is enabled (platform contract; `get_ipv6_enabled` is a wrapper) |
+| `platform_tunnels`, `platform_tunnel_table`, `platform_load_module`, `platform_cron_add` | Other platform facts; see `lib/platform.sh` header for the whole contract |
 | `download_file <url> <dest> [timeout]` | Download with retry (wget/curl fallback) |
 | `log_error_trace <msg>` | Log error with bash stack trace |
 
 **Logging**: `LOG_FILE=/tmp/vpn-director.log` with 200KB rotation
+
+**Platform contract**: `common.sh` sources `lib/platform.sh` at its end, so every script that
+sources `common.sh` can call `platform_*`. Firmware-specific facts belong in
+`lib/platform/<name>.sh`; no core module tests `VPD_PLATFORM` itself.
 
 ## Firewall Utilities (firewall.sh)
 
@@ -48,8 +56,8 @@ paths: "**/*.sh, jffs/**/*"
 | `purge_fw_rules [-6] [-q] [--count] "<table> <chain>" "<pattern>"` | Remove matching rules |
 | `ensure_fw_rule [-6] [-q] [--count] <table> <chain> [-I [pos]\|-D] <rule>` | Idempotent rule add/delete |
 | `sync_fw_rule [-6] [-q] [--count] <table> <chain> "<pattern>" "<desired>" [pos]` | Replace matching rules with one |
-| `block_wan_for_host <host> [wan_id]` | Block host from WAN (IPv4/IPv6) |
-| `allow_wan_for_host <host> [wan_id]` | Unblock host from WAN |
+| `block_wan_for_host <host>` | Block host from WAN (IPv4/IPv6); WAN interface from `platform_wan_if` |
+| `allow_wan_for_host <host>` | Unblock host from WAN |
 | `chg <cmd>` | Returns true if command output is non-zero integer |
 | `validate_port <N>` | Validate port 1-65535 |
 | `validate_ports <spec>` | Validate port spec (any, N, N-M, N,N2) |
@@ -149,6 +157,9 @@ bash/ksh extension that dash rejects, and generated scripts run under
 ip rule show | grep -c "fwmark 0x100.*lookup 100"
 ```
 
+KeeneticOS has no `/etc/iproute2/rt_tables`; `ip rule show` prints table numbers,
+and `_tproxy_table_label` falls back to the number so both sides still agree.
+
 `_tproxy_setup_routing` did exactly this and re-added its rule on every apply —
 seven copies on a router with 23 days of uptime, and auto-apply from the Web UI
 made each click add another.
@@ -226,14 +237,49 @@ have_cmd() {
 }
 ```
 
-Scripts with a `#!/usr/bin/env bash` shebang run under Entware's bash
-(`/opt/bin/bash`), where `command -v` works — this applies to `#!/bin/sh`
-scripts: the generated update script and the init scripts.
+Scripts that reach bash run under Entware's bash (`/opt/bin/bash`), where
+`command -v` works; the rule above is for what stays in `#!/bin/sh`: the
+generated update script, the init scripts and the NDM hooks. KeeneticOS's
+`/bin/sh` does have `command` (measured on 5.1.5), Asuswrt-Merlin's does not,
+so anything shipped to both platforms must assume it is missing.
 
-**Related**: `/bin/bash` on the router is a symlink to busybox. A login shell
-puts `/opt/bin` first in `PATH`, so `curl … | bash` resolves to the real bash
-5.x, but a non-interactive `ssh router 'bash script.sh'` does not — call
+**Related**: `/bin/bash` on the Merlin router is a symlink to busybox. A login
+shell puts `/opt/bin` first in `PATH`, so `curl … | bash` resolves to the real
+bash 5.x, but a non-interactive `ssh router 'bash script.sh'` does not — call
 `/opt/bin/bash` explicitly there.
+
+### No `/usr/bin/env` on KeeneticOS
+
+**Problem**: KeeneticOS has neither `/usr/bin/env` nor `/bin/env`, and its root
+filesystem is a read-only squashfs, so nothing can be added there. A script
+shipped with `#!/usr/bin/env bash` dies on rc 126, `bad interpreter` — by hand,
+from `S99vpn-director`, from an NDM hook, and from the Go daemons, which run
+the CLI through `exec.CommandContext` on its own path.
+
+**Solution**: every script a router executes starts as a POSIX shell and hands
+over to bash by absolute path, Entware's first:
+
+```sh
+#!/bin/sh
+if [ -z "${BASH_VERSION:-}" ]; then
+    for _vpd_bash in /opt/bin/bash /usr/bin/bash /bin/bash; do
+        # Asuswrt-Merlin's /bin/bash is busybox: a POSIX shell that never sets
+        # BASH_VERSION, so exec-ing it would re-run this block forever. Only a
+        # candidate that proves it is bash gets the script.
+        [ -x "$_vpd_bash" ] && "$_vpd_bash" -c '[ -n "$BASH_VERSION" ]' 2>/dev/null &&
+            exec "$_vpd_bash" "$0" "$@"
+    done
+    echo "$0: bash not found; install it (Entware package \"bash\")" >&2
+    exit 1
+fi
+```
+
+`PATH` is deliberately not consulted: Merlin's `/bin/sh` has no `command`
+builtin and its `/bin/bash` is busybox, so both `command -v bash` and a bare
+`exec bash` would pick the wrong interpreter or fail. Sourcing the script from
+bash (`source install.sh --source-only` in the tests) skips the block, because
+`BASH_VERSION` is already set. `router/test/unit/entrypoints.bats` pins the
+block in every file that needs it.
 
 ### A deleted working directory breaks monit and every shell below it
 
@@ -280,3 +326,11 @@ log() {
     { echo "$1" >> "$LOG_FILE"; } 2>/dev/null || true
 }
 ```
+
+### busybox wget on KeeneticOS segfaults on https
+
+**Problem**: Entware's busybox `wget` on KeeneticOS segfaults on https URLs
+(no working TLS). A download that only called wget would never complete.
+
+**Solution**: `download_file` prefers wget, then falls back to curl when wget
+is missing or fails. Keenetic installs `curl` as a required package.

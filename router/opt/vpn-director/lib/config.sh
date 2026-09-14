@@ -50,6 +50,18 @@ _cfg_arr_active() {
         "$VPD_CONFIG_FILE" | tr '\n' ' ' | sed 's/ $//';
 }
 
+# Dotted IPv4, octets 0-255. Same check as _tunnel_gateway; this file cannot
+# call that (tunnel.sh is not sourced here) and cannot use jq regex (Entware
+# jq has none).
+_cfg_is_ipv4() {
+    local gw="${1:-}" o
+    [[ $gw =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    for o in "${BASH_REMATCH[@]:1}"; do
+        [[ $((10#$o)) -le 255 ]] || return 1
+    done
+    return 0
+}
+
 ###################################################################################################
 # 4. Tunnel Director variables
 ###################################################################################################
@@ -64,6 +76,24 @@ TUN_DIR_TUNNELS_JSON=$(jq --argjson p "$_PAUSED_CLIENTS_JSON" \
            then .value.clients = ((.value.clients // []) - $p)
            else . end)
      | from_entries' "$VPD_CONFIG_FILE")
+
+# Spec 12: drop a tunnel.gateway that is not a dotted IPv4. Validate in bash
+# (jq on Keenetic has no regex). Do not abort the load; _tunnel_gateway is
+# the apply-time belt for callers that skip this file.
+while IFS=$'\t' read -r _tid _gw; do
+    [[ -n ${_tid:-} ]] || continue
+    _cfg_is_ipv4 "${_gw:-}" && continue
+    if declare -F log >/dev/null 2>&1; then
+        log -l WARN "Tunnel '${_tid}': invalid gateway '${_gw}' ignored (expected an IPv4 address)"
+    fi
+    TUN_DIR_TUNNELS_JSON=$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq --arg t "$_tid" 'del(.[$t].gateway)')
+done < <(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '
+    to_entries[]
+    | select(.value | type == "object" and has("gateway"))
+    | "\(.key)\t\(.value.gateway | tostring)"
+')
+unset _tid _gw
+
 IPS_BDR_DIR=$(_cfg '.data_dir')
 
 ###################################################################################################

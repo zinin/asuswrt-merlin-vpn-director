@@ -44,6 +44,148 @@ func assertExecRefused(t *testing.T, s *Service, err error) {
 	}
 }
 
+// testManifest is the payload manifest the script tests install from. It has
+// the shape of the real router/files.manifest, the daemon init scripts
+// included: those land in both the FILES table, which installs them, and the
+// DAEMONS table, which starts and stops them.
+const testManifest = "common router/opt/vpn-director/vpn-director.sh\n" +
+	"common router/opt/vpn-director/lib/common.sh\n" +
+	"common router/opt/vpn-director/vpn-director.json.template\n" +
+	"common router/opt/etc/init.d/S99vpn-director\n" +
+	"common router/opt/etc/init.d/S98telegram-bot\n" +
+	"common router/opt/etc/init.d/S98vpn-director-webui\n" +
+	"merlin router/jffs/scripts/firewall-start\n" +
+	"keenetic router/opt/etc/ndm/netfilter.d/50-vpn-director.sh\n"
+
+// writeTestManifest gives the update payload the manifest generateScript
+// reads; DownloadRelease writes it there in production. Only the golden test
+// renders with the default paths - it is the one render that has to be
+// deterministic - and so is the only one writing into the real
+// /tmp/vpn-director-update, from which what lands there is taken back out
+// afterwards.
+func writeTestManifest(t *testing.T, s *Service) {
+	t.Helper()
+	dir := s.getFilesDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir files dir: %v", err)
+	}
+	path := filepath.Join(dir, "files.manifest")
+	if err := os.WriteFile(path, []byte(testManifest), 0644); err != nil {
+		t.Fatalf("write files.manifest: %v", err)
+	}
+	t.Cleanup(func() {
+		os.Remove(path)
+		// Both only succeed while they are empty, which is the only case
+		// where this test created them.
+		os.Remove(dir)
+		os.Remove(s.getUpdateDir())
+	})
+}
+
+func TestGenerateScript_CopiesManifestFiles(t *testing.T) {
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
+
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+	for _, want := range []string{
+		"opt/vpn-director/lib/common.sh|/opt/vpn-director/lib/common.sh|x",
+		"opt/vpn-director/vpn-director.json.template|/opt/vpn-director/vpn-director.json.template|-",
+		"opt/etc/init.d/S99vpn-director|/opt/etc/init.d/S99vpn-director|x",
+		"jffs/scripts/firewall-start|/jffs/scripts/firewall-start|x",
+		`mkdir -p "$(dirname "$dst")"`,
+		`cp -f "$FILES_DIR/$src" "$dst"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"netfilter.d",
+		`cp -f "$FILES_DIR/jffs/scripts/"*`,
+		`cp -f "$FILES_DIR/opt/vpn-director/lib/"*.sh`,
+		"chmod +x /jffs/scripts/firewall-start",
+	} {
+		if strings.Contains(script, stale) {
+			t.Errorf("script still contains %q", stale)
+		}
+	}
+}
+
+// A table the shell cannot split back into files installs nothing, and a
+// missing chmod ships a shell script the init system cannot run. Both are
+// invisible to a containment check, so the generated loop is run here against
+// a sandbox: every source the table names is copied to its destination, with
+// the executable bit on exactly the entries marked "x".
+func TestGenerateScript_FileTableInstallsWhatItNames(t *testing.T) {
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
+
+	script, err := s.generateScript(validOpts())
+	if err != nil {
+		t.Fatalf("generateScript() error = %v", err)
+	}
+	table := regexp.MustCompile(`(?m)^FILES="([^"]*)"$`).FindStringSubmatch(script)
+	if table == nil {
+		t.Fatal("no FILES table in the generated script")
+	}
+	loop := regexp.MustCompile(`(?ms)^for entry in \$FILES; do.*?^done$`).FindString(script)
+	if loop == "" {
+		t.Fatal("no copy loop over $FILES in the generated script")
+	}
+
+	// Give the payload every source the table names.
+	for _, entry := range strings.Fields(table[1]) {
+		src := filepath.Join(s.getFilesDir(), strings.SplitN(entry, "|", 2)[0])
+		if err := os.MkdirAll(filepath.Dir(src), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(src, []byte("payload\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The destinations are absolute paths on the router, so they are rehomed
+	// under a temporary root. Only the table is rewritten - "|/" starts a
+	// destination and nothing else - so the loop itself runs verbatim.
+	root := t.TempDir()
+	snippet := "set -e\nFILES_DIR=" + s.getFilesDir() + "\nFILES=\"" +
+		strings.ReplaceAll(table[1], "|/", "|"+root+"/") + "\"\n" + loop + "\n"
+	if out, err := exec.Command("/bin/sh", "-c", snippet).CombinedOutput(); err != nil {
+		t.Fatalf("the copy loop failed: %v\n%s", err, out)
+	}
+
+	for rel, wantExec := range map[string]bool{
+		"opt/vpn-director/vpn-director.sh":            true,
+		"opt/vpn-director/lib/common.sh":              true,
+		"opt/etc/init.d/S99vpn-director":              true,
+		"opt/etc/init.d/S98telegram-bot":              true,
+		"jffs/scripts/firewall-start":                 true,
+		"opt/vpn-director/vpn-director.json.template": false,
+	} {
+		fi, err := os.Stat(filepath.Join(root, rel))
+		if err != nil {
+			t.Errorf("%s was not installed: %v", rel, err)
+			continue
+		}
+		if gotExec := fi.Mode()&0111 != 0; gotExec != wantExec {
+			t.Errorf("%s installed as %v, want executable = %v", rel, fi.Mode(), wantExec)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "opt/etc/ndm/netfilter.d/50-vpn-director.sh")); err == nil {
+		t.Error("a keenetic-tagged file was installed on a merlin router")
+	}
+}
+
+func TestGenerateScript_FailsWithoutPayloadManifest(t *testing.T) {
+	s := &Service{updateDir: t.TempDir()}
+	if _, err := s.generateScript(validOpts()); err == nil || !strings.Contains(err.Error(), "files.manifest") {
+		t.Fatalf("generateScript() error = %v, want one naming files.manifest", err)
+	}
+}
+
 func TestService_ShellDefaultsToBinSh(t *testing.T) {
 	// The seam must not change what ships: a router has /bin/sh and nothing
 	// else is guaranteed.
@@ -61,6 +203,7 @@ func TestGenerateScript(t *testing.T) {
 	s := &Service{
 		updateDir: tmpDir,
 	}
+	writeTestManifest(t, s)
 
 	script, err := s.generateScript(RunOptions{ChatID: 123456789, OldVersion: "v1.0.0", NewVersion: "v1.1.0", Initiator: "bot"})
 	if err != nil {
@@ -131,6 +274,7 @@ func TestGenerateScript_PathsCorrect(t *testing.T) {
 	s := &Service{
 		updateDir: tmpDir,
 	}
+	writeTestManifest(t, s)
 
 	script, err := s.generateScript(RunOptions{ChatID: 999, OldVersion: "v1.0.0", NewVersion: "v2.0.0", Initiator: "bot"})
 	if err != nil {
@@ -155,6 +299,7 @@ func TestGenerateScript_PathsCorrect(t *testing.T) {
 func TestGenerateScript_EmbedsInitiator(t *testing.T) {
 	tmpDir := t.TempDir()
 	s := &Service{updateDir: tmpDir}
+	writeTestManifest(t, s)
 
 	script, err := s.generateScript(RunOptions{
 		OldVersion: "v1.0.0", NewVersion: "v1.1.0", ChatID: 0, Initiator: "webui",
@@ -171,7 +316,8 @@ func TestGenerateScript_EmbedsInitiator(t *testing.T) {
 }
 
 func TestGenerateScript_CoversEveryDaemon(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -185,18 +331,29 @@ func TestGenerateScript_CoversEveryDaemon(t *testing.T) {
 		}
 	}
 
-	// The daemon table drives every loop, so it is the only place an init
-	// script may be named. A second mention is a hardcoded call, and a
-	// hardcoded call silently skips the other daemon.
-	for _, d := range Daemons {
-		if n := strings.Count(script, d.InitScript); n != 1 {
-			t.Errorf("init script %s named %d times, want exactly 1 (only in the DAEMONS table)", d.InitScript, n)
+	// The tables drive every loop, and both reach an init script only through
+	// parameter expansion - ${entry##*|} in the daemon loops, $dst in the copy
+	// loop. So an init script spelled out in a line the shell executes is a
+	// hardcoded call, and a hardcoded call silently skips the other daemon.
+	// The two table lines are where the names belong; comments, as elsewhere
+	// in this file, are free to name what they explain.
+	for i, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, `DAEMONS="`) || strings.HasPrefix(trimmed, `FILES="`) {
+			continue
+		}
+		for _, d := range Daemons {
+			if strings.Contains(line, d.InitScript) {
+				t.Errorf("line %d spells out the init script %s instead of taking it from a table: %s", i+1, d.InitScript, line)
+			}
 		}
 	}
 }
 
 func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -232,7 +389,8 @@ func TestGenerateScript_RecoveryOnFailure(t *testing.T) {
 // Both the happy path and the recovery path must release before they start
 // anything.
 func TestGenerateScript_ReleasesApplyLockBeforeStartingDaemons(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -268,7 +426,8 @@ func TestGenerateScript_ReleasesApplyLockBeforeStartingDaemons(t *testing.T) {
 // a bash/ksh extension. getShell() runs the generated script with /bin/sh, and
 // dash rejects "exec 201>" outright.
 func TestGenerateScript_UsesPOSIXFileDescriptors(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -284,7 +443,8 @@ func TestGenerateScript_UsesPOSIXFileDescriptors(t *testing.T) {
 // exists it finds nothing, and a running process never looks again, so the
 // failure would stay unreported until the next restart.
 func TestGenerateScript_CommitsTheFailedStatusBeforeRestarting(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -307,7 +467,8 @@ func TestGenerateScript_CommitsTheFailedStatusBeforeRestarting(t *testing.T) {
 // daemons back before the status is committed lets it put the bot up without
 // a notify.json to read, and CheckAndSendNotify runs at startup only.
 func TestGenerateScript_RestoresMonitLast(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -340,7 +501,8 @@ func TestGenerateScript_RestoresMonitLast(t *testing.T) {
 // deletes the lock as stale, and the running update ends up unlocked - free
 // for a second update to start and wipe the shared files/ directory.
 func TestGenerateScript_PublishesThePIDByRename(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -360,7 +522,8 @@ func TestGenerateScript_PublishesThePIDByRename(t *testing.T) {
 // written that way silently never unmonitors anything. Nothing in the generated
 // script may depend on it.
 func TestGenerateScript_DoesNotUseTheCommandBuiltin(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -387,7 +550,8 @@ func TestGenerateScript_DoesNotUseTheCommandBuiltin(t *testing.T) {
 }
 
 func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -417,7 +581,8 @@ func TestGenerateScript_RefusesWithoutPgrep(t *testing.T) {
 }
 
 func TestGenerateScript_ReportsAFailedStart(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -486,7 +651,8 @@ func afterOnExit(t *testing.T, script string) string {
 }
 
 func TestGenerateScript_NotifyFormat(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(RunOptions{
 		OldVersion: "v1.2.0", NewVersion: "v1.3.0", ChatID: 0, Initiator: "webui",
 	})
@@ -509,7 +675,8 @@ func TestGenerateScript_IsValidShell(t *testing.T) {
 		t.Skip("sh not available")
 	}
 
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)
@@ -528,9 +695,12 @@ func TestGenerateScript_IsValidShell(t *testing.T) {
 
 func TestGenerateScript_Golden(t *testing.T) {
 	// Default paths keep the render deterministic, so the golden file shows
-	// the exact script that ships to routers. Regenerate with:
+	// the exact script that ships to routers - save for its FILES table,
+	// which belongs to the payload and here comes from testManifest.
+	// Regenerate with:
 	//   UPDATE_GOLDEN=1 go test ./internal/updater -run TestGenerateScript_Golden -count=1
 	s := &Service{}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(RunOptions{
 		OldVersion: "v1.2.0", NewVersion: "v1.3.0", ChatID: 42, Initiator: "bot",
 	})
@@ -635,6 +805,7 @@ func TestRunUpdateScript_InvalidInitiator(t *testing.T) {
 
 func TestRunUpdateScript_ValidVersion(t *testing.T) {
 	s := noExecService(t)
+	writeTestManifest(t, s)
 
 	// The exec is expected to fail - the interpreter does not exist. A
 	// validation error is not: it would mean valid versions were rejected.
@@ -653,6 +824,7 @@ func TestRunUpdateScript_ValidVersion(t *testing.T) {
 
 func TestRunUpdateScript_ScriptContent(t *testing.T) {
 	s := noExecService(t)
+	writeTestManifest(t, s)
 
 	// The exec fails, but the script is written before it is launched
 	err := s.RunUpdateScript(RunOptions{ChatID: 42, OldVersion: "v1.2.3", NewVersion: "v2.0.0", Initiator: "bot"})
@@ -729,7 +901,8 @@ func TestUpdateCommand_StartsTheScriptOutsideTheDirectoryTheUpdateDeletes(t *tes
 // ends the script where it stands - taking the monit re-monitor and the lock
 // removal of steps 7 and 8 with it.
 func TestGenerateScript_LogSurvivesTheDirectoryTheBotDeletes(t *testing.T) {
-	s := &Service{}
+	s := &Service{updateDir: t.TempDir()}
+	writeTestManifest(t, s)
 	script, err := s.generateScript(validOpts())
 	if err != nil {
 		t.Fatalf("generateScript() error = %v", err)

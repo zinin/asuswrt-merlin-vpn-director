@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ###################################################################################################
-# common.sh  -  shared functions library for Asuswrt-Merlin shell scripts
+# common.sh  -  shared functions library for VPN Director shell scripts
 # -------------------------------------------------------------------------------------------------
 # Public API
 # ----------
@@ -55,10 +55,14 @@
 #         -a : return ALL LAN matches (default: first only)
 #
 #   get_ipv6_enabled
-#       Prints 1 if IPv6 is enabled in NVRAM (ipv6_service != disabled), otherwise 0.
+#       Prints 1 if the platform reports IPv6 enabled, otherwise 0. Wrapper over platform_ipv6_enabled.
 #
 #   get_active_wan_if
-#       Returns the name of the currently active WAN interface (e.g., eth0, eth10).
+#       Prints the active WAN interface name, or nothing. Wrapper over platform_wan_if.
+#
+#   platform_* (see lib/platform.sh)
+#       The platform contract; common.sh sources lib/platform.sh at the end, so every script that
+#       sources common.sh can call it.
 #
 #   strip_comments [<text>]
 #       Removes leading/trailing whitespace, drops blank/# lines, and strips inline '#' comments.
@@ -728,55 +732,23 @@ resolve_lan_ip() {
 }
 
 ###################################################################################################
-# get_ipv6_enabled - check if IPv6 is enabled in router settings
+# get_ipv6_enabled - print 1 when IPv6 is enabled on this router, else 0
 # -------------------------------------------------------------------------------------------------
-# Usage:
-#   IPV6_ENABLED="$(get_ipv6_enabled)"
-#
-# Behavior:
-#   * Reads the NVRAM variable "ipv6_service".
-#   * Prints "1" if set and not "disabled"; otherwise prints "0".
-#
-# Output / Returns:
-#   * Prints: 1 (enabled) or 0 (disabled)
-#   * Exit status: always 0 (safe under `set -e`)
+# Wrapper over platform_ipv6_enabled, kept under its old name for callers outside this repository.
+# Exit status is always 0.
 ###################################################################################################
 get_ipv6_enabled() {
-    local s
-    s="$(nvram get ipv6_service 2>/dev/null || true)"
-    if [ -n "$s" ] && [ "$s" != "disabled" ]; then
-        printf '1\n'
-    else
-        printf '0\n'
-    fi
+    platform_ipv6_enabled || printf '0\n'
 }
 
 ###################################################################################################
-# get_active_wan_if - return the name of the currently active WAN interface
+# get_active_wan_if - print the active WAN interface name
 # -------------------------------------------------------------------------------------------------
-# Usage:
-#   WAN_IF=$(get_active_wan_if)  # -> eth0, eth10, ...
-#
-# Behavior:
-#   * ASUSWRT stores a "primary" flag per WAN (wan0_primary, wan1_primary, ...).
-#   * The flag is 1 for the interface that's up / in use, 0 otherwise.
-#   * We loop through the known WAN slots in order and return the first one
-#     whose _primary flag is 1.
-#   * Falls back to wan0_ifname if none are marked primary.
+# Wrapper over platform_wan_if, kept under its old name for callers outside this repository.
+# Prints nothing when the platform has no answer; exit status is always 0.
 ###################################################################################################
 get_active_wan_if() {
-    local idx
-
-    # Adjust the 0 1 2 sequence if you have more than three WANs configured
-    for idx in 0 1 2; do
-        if [ "$(nvram get wan${idx}_primary)" = "1" ]; then
-            nvram get wan${idx}_ifname
-            return
-        fi
-    done
-
-    # Fallback: default to wan0 if nothing is flagged primary
-    nvram get wan0_ifname
+    platform_wan_if || true
 }
 
 ###################################################################################################
@@ -849,7 +821,7 @@ is_pos_int() {
 #
 # Behavior:
 #   * Prefers wget if available (better retry handling, resume support).
-#   * Falls back to curl with timeouts if wget is not installed.
+#   * Falls back to curl when wget is not installed or fails (KeeneticOS's busybox wget cannot do TLS).
 #   * wget: 3 retry attempts.
 #   * Removes partial files on failure.
 #   * Returns 0 on success, 1 on failure.
@@ -861,19 +833,37 @@ is_pos_int() {
 download_file() {
     local url="$1" dest="$2"
     local timeout="${3:-180}"
-    local rc=0
+    local rc=1
+
+    # wget first (retries, resume), curl when wget is absent or fails. The
+    # busybox wget of Entware on KeeneticOS has no TLS and dies on https
+    # URLs, so a failure here is not the end of the download.
+    local have_curl=0
+    if command -v curl >/dev/null 2>&1; then
+        have_curl=1
+    fi
 
     if command -v wget >/dev/null 2>&1; then
-        # wget available: use with timeout and retries
         log -l DEBUG "Downloading with wget (timeout=${timeout}s): $url"
-        if ! wget -q -T "$timeout" -t 3 -O "$dest" "$url" 2>/dev/null; then
-            rc=1
+        if wget -q -T "$timeout" -t 3 -O "$dest" "$url" 2>/dev/null; then
+            rc=0
+        elif [[ $have_curl -eq 1 ]]; then
+            log -l DEBUG "wget failed; trying curl"
+        else
+            # The one line the log has to carry on a router where neither
+            # downloader can do the job; promising a curl that is not
+            # installed sends whoever reads it looking in the wrong place.
+            log -l DEBUG "wget failed and curl is not installed"
         fi
-    else
-        # Fallback to curl with timeouts
+    fi
+    if [[ $rc -ne 0 && $have_curl -eq 1 ]]; then
         log -l DEBUG "Downloading with curl (timeout=${timeout}s): $url"
-        if ! curl -sS --connect-timeout 30 --max-time "$timeout" -o "$dest" "$url" 2>/dev/null; then
-            rc=1
+        # -f: an HTTP error is a failure. Without it curl writes the server's
+        # error page to $dest and exits 0, and on Keenetic - where curl is the
+        # whole download path - a 404 from a mirror would be stored as data.
+        # -L: follow redirects, which wget does, so the two paths agree.
+        if curl -fsSL --connect-timeout 30 --max-time "$timeout" -o "$dest" "$url" 2>/dev/null; then
+            rc=0
         fi
     fi
 
@@ -885,3 +875,20 @@ download_file() {
 
     return 0
 }
+
+###################################################################################################
+# Platform contract - detection and platform_* functions (lib/platform.sh)
+###################################################################################################
+# Not optional: without it every platform_* call in the modules below would be a
+# command-not-found in the middle of an apply. A router that got this common.sh
+# without platform.sh - an update delivered by an updater that predates the
+# platform layer - would otherwise die on the shell's own "No such file or
+# directory", which names no way out. Say what is missing and how to get it, and
+# still fail.
+if [[ ! -f "${BASH_SOURCE[0]%/*}/platform.sh" ]]; then
+    log -l ERROR "Platform library not found: ${BASH_SOURCE[0]%/*}/platform.sh - re-run install.sh to reinstall it"
+    # shellcheck disable=SC2317
+    return 1 2>/dev/null || exit 1
+fi
+# shellcheck source=platform.sh
+. "${BASH_SOURCE[0]%/*}/platform.sh"

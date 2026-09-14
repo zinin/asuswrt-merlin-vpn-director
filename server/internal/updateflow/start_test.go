@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // collectProgress returns a progress func and a getter for what it received.
@@ -26,7 +26,7 @@ func collectProgress() (func(string), func() []string) {
 		}
 }
 
-// waitFor polls cond for up to a second: Start hands the download to a
+// waitFor polls cond for up to a second: Start hands the update over in a
 // goroutine, so the assertions have to wait for it.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -40,7 +40,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-func TestStart_RunsTheScriptWithTheInitiator(t *testing.T) {
+func TestStart_HandsTheUpdateOverWithTheInitiator(t *testing.T) {
 	upd := newMockUpdater()
 	f := New(upd, "v1.2.0", false)
 	progress, lines := collectProgress()
@@ -53,14 +53,12 @@ func TestStart_RunsTheScriptWithTheInitiator(t *testing.T) {
 		t.Errorf("StartResult = %+v, want v1.2.0 -> v1.3.0", res)
 	}
 
-	waitFor(t, "the update script to start", func() bool {
-		upd.mu.Lock()
-		defer upd.mu.Unlock()
-		return upd.runScriptCalled
+	waitFor(t, "the handover to be reported", func() bool {
+		return strings.Contains(strings.Join(lines(), "\n"), "Update script started")
 	})
 
 	upd.mu.Lock()
-	opts := upd.runScriptOpts
+	opts := upd.handoverOpts
 	upd.mu.Unlock()
 	if opts.Initiator != "webui" || opts.ChatID != 0 {
 		t.Errorf("RunOptions = %+v, want initiator webui and chat 0", opts)
@@ -68,12 +66,9 @@ func TestStart_RunsTheScriptWithTheInitiator(t *testing.T) {
 	if opts.OldVersion != "v1.2.0" || opts.NewVersion != "v1.3.0" {
 		t.Errorf("RunOptions versions = %+v", opts)
 	}
-
-	// The download line is emitted before RunUpdateScript is called, so the
-	// wait above already puts it in the collector.
-	got := strings.Join(lines(), "\n")
-	if !strings.Contains(got, "Files downloaded, starting update...") {
-		t.Errorf("progress missing the download line: %q", got)
+	want := "Files downloaded, starting update...\nUpdate script started, the service will restart in a few seconds..."
+	if got := strings.Join(lines(), "\n"); got != want {
+		t.Errorf("progress = %q, want step 2's line and then the success line", got)
 	}
 }
 
@@ -97,8 +92,8 @@ func TestStart_UpToDateKeepsTheVersionsAndTakesNoLock(t *testing.T) {
 	if upd.createLockCalled {
 		t.Error("an up-to-date router must not take the lock")
 	}
-	if upd.runScriptCalled {
-		t.Error("an up-to-date router must not run the script")
+	if upd.handoverCalled {
+		t.Error("an up-to-date router must not hand over")
 	}
 }
 
@@ -124,7 +119,7 @@ func TestStart_RejectsWithoutTouchingAnything(t *testing.T) {
 			if _, err := f.Start(context.Background(), "bot", 42, progress); !errors.Is(err, tt.want) {
 				t.Fatalf("Start() error = %v, want %v", err, tt.want)
 			}
-			// "Touching anything" is all three: GitHub, the lock, the script.
+			// "Touching anything" is all three: GitHub, the lock, the handover.
 			if n := upd.calls(); n != 0 {
 				t.Errorf("a rejected start made %d GitHub requests, want 0", n)
 			}
@@ -133,8 +128,8 @@ func TestStart_RejectsWithoutTouchingAnything(t *testing.T) {
 			if upd.createLockCalled {
 				t.Error("rejected start must not take the lock")
 			}
-			if upd.runScriptCalled {
-				t.Error("rejected start must not run the script")
+			if upd.handoverCalled {
+				t.Error("rejected start must not hand over")
 			}
 		})
 	}
@@ -184,7 +179,7 @@ func TestStart_StaleReleaseIsRejectedBeforeTheLock(t *testing.T) {
 	if upd.createLockCalled {
 		t.Error("the mismatch must be caught before the lock is taken, so a retry is possible")
 	}
-	if upd.runScriptCalled {
+	if upd.handoverCalled {
 		t.Error("a mismatched release must not be installed")
 	}
 }
@@ -196,9 +191,9 @@ func TestStart_ProgressCallbackCannotAbortTheUpdate(t *testing.T) {
 	// instead, that recover would call CleanFiles and delete files/ from under
 	// an update script that is still stopping daemons.
 	//
-	// The first progress line is emitted before RunUpdateScript, so the script
-	// runs at all only if the panic was absorbed — that makes runScriptCalled
-	// a positive anchor rather than a wait on the absence of something.
+	// The mock's step 2 prints a line through progress before Handover
+	// returns, so handoverDone is set only when that panic was absorbed - a
+	// positive anchor rather than a wait on the absence of something.
 	tests := []struct {
 		name     string
 		progress func(string)
@@ -215,26 +210,26 @@ func TestStart_ProgressCallbackCannotAbortTheUpdate(t *testing.T) {
 				t.Fatalf("Start() error = %v", err)
 			}
 
-			waitFor(t, "the update script to run despite the callback", func() bool {
+			waitFor(t, "the handover to finish despite the callback", func() bool {
 				upd.mu.Lock()
 				defer upd.mu.Unlock()
-				return upd.runScriptCalled
+				return upd.handoverDone
 			})
 			upd.mu.Lock()
 			defer upd.mu.Unlock()
 			if upd.cleanFilesCalled || upd.removeLockCalled {
-				t.Error("a run already handed to the script must not be unwound by a broken callback")
+				t.Error("a run already handed over must not be unwound by a broken callback")
 			}
 		})
 	}
 }
 
-func TestStart_DownloadOutlivesTheCallersContext(t *testing.T) {
+func TestStart_HandoverOutlivesTheCallersContext(t *testing.T) {
 	// The whole point of the goroutine: a closed browser tab or a finished
-	// Telegram poll cancels the request context, and the download must carry
-	// on regardless.
+	// Telegram poll cancels the request context, and the update must carry on
+	// regardless.
 	upd := newMockUpdater()
-	upd.downloadGate = make(chan struct{})
+	upd.handoverGate = make(chan struct{})
 	f := New(upd, "v1.2.0", false)
 	progress, _ := collectProgress()
 
@@ -244,66 +239,62 @@ func TestStart_DownloadOutlivesTheCallersContext(t *testing.T) {
 	if _, err := f.Start(ctx, "webui", 0, progress); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	// The gate holds the download until the caller is gone, so a download
+	// The gate holds the handover until the caller is gone, so a handover
 	// that had inherited ctx would see it already cancelled.
 	cancel()
-	close(upd.downloadGate)
+	close(upd.handoverGate)
 
 	waitFor(t, "the update to continue past the cancelled request", func() bool {
 		upd.mu.Lock()
 		defer upd.mu.Unlock()
-		return upd.runScriptCalled
+		return upd.handoverCalled
 	})
 	upd.mu.Lock()
 	defer upd.mu.Unlock()
-	if upd.downloadCtxDone {
-		t.Error("run() must not download with the caller's context")
+	if upd.handoverCtxDone {
+		t.Error("run() must not hand over with the caller's context")
 	}
 }
 
-func TestStart_DownloadFailureCleansUp(t *testing.T) {
-	// A half-downloaded release plus a stale lock would block every later
-	// attempt, so the goroutine has to unwind both.
-	upd := newMockUpdater()
-	upd.downloadErr = errors.New("HTTP 404")
-	f := New(upd, "v1.2.0", false)
-	progress, lines := collectProgress()
-
-	if _, err := f.Start(context.Background(), "bot", 42, progress); err != nil {
-		t.Fatalf("Start() error = %v: the download failure is reported through progress", err)
+func TestStart_AFailedHandoverIsReportedInTheUsersTerms(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"download", &updater.HandoverError{Phase: updater.PhaseDownload, Err: errors.New("HTTP 404")},
+			"Download failed: HTTP 404"},
+		{"start", &updater.HandoverError{Phase: updater.PhaseStart, Err: errors.New("exec format error")},
+			"Failed to start the new version: exec format error"},
+		{"step 2", &updater.HandoverError{Phase: updater.PhaseInstaller, Err: errors.New("this binary is v1.3.0, asked to install v1.4.0")},
+			"Update failed: this binary is v1.3.0, asked to install v1.4.0"},
+		{"timeout", &updater.HandoverError{Phase: updater.PhaseTimeout, Err: context.DeadlineExceeded},
+			"Update timed out"},
+		{"untyped", errors.New("boom"), "Update failed: boom"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upd := newMockUpdater()
+			upd.handoverErr = tt.err
+			upd.handoverLines = nil
+			f := New(upd, "v1.2.0", false)
+			progress, lines := collectProgress()
 
-	// Both halves of the failure path are in the condition, so the wait does
-	// not depend on the order run() does them in.
-	waitFor(t, "cleanup and the report of a failed download", func() bool {
-		upd.mu.Lock()
-		cleaned := upd.cleanFilesCalled && upd.removeLockCalled
-		upd.mu.Unlock()
-		return cleaned && strings.Contains(strings.Join(lines(), "\n"), "Download failed: HTTP 404")
-	})
-	upd.mu.Lock()
-	defer upd.mu.Unlock()
-	if upd.runScriptCalled {
-		t.Error("a failed download must not run the script")
+			if _, err := f.Start(context.Background(), "bot", 42, progress); err != nil {
+				t.Fatalf("Start() error = %v: a failed handover is reported through progress", err)
+			}
+
+			waitFor(t, "the failure report", func() bool { return len(lines()) > 0 })
+			if got := strings.Join(lines(), "\n"); got != tt.want {
+				t.Errorf("progress = %q, want %q", got, tt.want)
+			}
+			upd.mu.Lock()
+			defer upd.mu.Unlock()
+			if upd.cleanFilesCalled || upd.removeLockCalled {
+				t.Error("run() cleaned up by itself; that is Handover's call, which knows whether the lock is still its own")
+			}
+		})
 	}
-}
-
-func TestStart_ScriptFailureCleansUp(t *testing.T) {
-	upd := newMockUpdater()
-	upd.runScriptErr = errors.New("start script: permission denied")
-	f := New(upd, "v1.2.0", false)
-	progress, lines := collectProgress()
-
-	if _, err := f.Start(context.Background(), "bot", 42, progress); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	waitFor(t, "cleanup and the report of a failed script", func() bool {
-		upd.mu.Lock()
-		cleaned := upd.cleanFilesCalled && upd.removeLockCalled
-		upd.mu.Unlock()
-		return cleaned && strings.Contains(strings.Join(lines(), "\n"), "Failed to run update script")
-	})
 }
 
 func TestStart_ExistingLockIsErrInProgress(t *testing.T) {
@@ -318,7 +309,7 @@ func TestStart_ExistingLockIsErrInProgress(t *testing.T) {
 	}
 	upd.mu.Lock()
 	defer upd.mu.Unlock()
-	if upd.runScriptCalled {
+	if upd.handoverCalled {
 		t.Error("no lock, no update")
 	}
 }
@@ -335,7 +326,7 @@ func TestStart_LockFailureIsReportedSynchronously(t *testing.T) {
 	}
 	upd.mu.Lock()
 	defer upd.mu.Unlock()
-	if upd.runScriptCalled {
+	if upd.handoverCalled {
 		t.Error("no lock, no update")
 	}
 }

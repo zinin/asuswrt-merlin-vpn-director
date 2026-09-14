@@ -18,9 +18,7 @@ fi
 start() {
     echo "Starting $DESC..."
     if "$VPD" apply; then
-        # Remove legacy cron job from previous versions
-        cru d update_ipsets 2>/dev/null
-        cru a vpn_director_update "0 3 * * * $VPD update"
+        "$VPD" cron install
         /opt/vpn-director/lib/send-email.sh "Startup" "VPN Director started" 2>/dev/null || true
     else
         echo "Failed to start $DESC"
@@ -31,9 +29,7 @@ start() {
 stop() {
     echo "Stopping $DESC..."
     "$VPD" stop
-    cru d vpn_director_update
-    # Also remove legacy cron job if present
-    cru d update_ipsets 2>/dev/null
+    "$VPD" cron remove
 }
 
 case "$1" in

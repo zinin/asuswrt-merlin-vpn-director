@@ -43,6 +43,10 @@ type VPNDirectorConfig struct {
 type TunnelConfig struct {
 	Clients []string `json:"clients"`
 	Exclude []string `json:"exclude"`
+	// Gateway is the next hop of the tunnel's default route on Keenetic
+	// (spec 12): read by lib/platform/keenetic.sh for OpenVPN tunnels,
+	// ignored elsewhere. Kept here so a save by a daemon does not drop it.
+	Gateway string `json:"gateway,omitempty"`
 }
 
 type TunnelDirectorConfig struct {
@@ -85,6 +89,37 @@ type ClientInfo struct {
 	IP     string `json:"ip"`
 	Route  string `json:"route"`
 	Paused bool   `json:"paused"`
+}
+
+// PlatformInfo is the document `vpn-director.sh platform` prints (spec 5.3):
+// what the daemons know about the router without reading its firmware.
+type PlatformInfo struct {
+	Platform     string           `json:"platform"`
+	Arch         string           `json:"arch"`
+	PasswordFile string           `json:"password_file"`
+	LANIfaces    []string         `json:"lan_ifaces"`
+	WANIf        string           `json:"wan_if"`
+	Tunnels      []PlatformTunnel `json:"tunnels"`
+}
+
+// PlatformTunnel is one firmware VPN client tunnel, as the platform lists it.
+// ID is what tunnel_director.tunnels is keyed by.
+type PlatformTunnel struct {
+	ID          string `json:"id"`
+	Iface       string `json:"iface"`
+	Type        string `json:"type"` // openvpn or wireguard
+	Connected   bool   `json:"connected"`
+	Description string `json:"description"`
+}
+
+// HasTunnel reports whether id is a tunnel the platform lists.
+func (p PlatformInfo) HasTunnel(id string) bool {
+	for _, t := range p.Tunnels {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectClients builds a unified list of all clients from xray and tunnel_director sections.

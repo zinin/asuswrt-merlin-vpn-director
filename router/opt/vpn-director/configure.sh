@@ -1,4 +1,22 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# shellcheck shell=bash
+# KeeneticOS has no /usr/bin/env and mounts / read-only, so the usual
+# "#!/usr/bin/env bash" cannot start this script there. Begin as a POSIX shell
+# and hand over to bash by absolute path - Entware's first, a workstation's
+# after it. PATH is no help here: Asuswrt-Merlin's /bin/sh has no "command"
+# builtin (see .claude/rules/shell-conventions.md) and its /bin/bash is a
+# symlink to busybox rather than bash.
+if [ -z "${BASH_VERSION:-}" ]; then
+    for _vpd_bash in /opt/bin/bash /usr/bin/bash /bin/bash; do
+        # Asuswrt-Merlin's /bin/bash is busybox: a POSIX shell that never sets
+        # BASH_VERSION, so exec-ing it would re-run this block forever. Only a
+        # candidate that proves it is bash gets the script.
+        [ -x "$_vpd_bash" ] && "$_vpd_bash" -c '[ -n "$BASH_VERSION" ]' 2>/dev/null &&
+            exec "$_vpd_bash" "$0" "$@"
+    done
+    echo "$0: bash not found; install it (Entware package \"bash\")" >&2
+    exit 1
+fi
 set -euo pipefail
 
 # Debug mode: set DEBUG=1 to enable tracing
@@ -25,6 +43,12 @@ XRAY_CONFIG_DIR="${XRAY_CONFIG_DIR:-/opt/etc/xray}"
 
 # Library: Xray config generator (self-contained pure-jq; no common.sh needed)
 . "$VPD_DIR/lib/xrayconf.sh"
+
+# Platform contract: the tunnels this router has (platform_tunnels,
+# platform_tunnel_info). platform.sh alone, not common.sh: the contract
+# functions never log, and common.sh would install its temp-file EXIT trap
+# into an interactive wizard.
+. "$VPD_DIR/lib/platform.sh"
 
 # Temporary storage for parsed data
 XRAY_CLIENTS_LIST=""
@@ -56,6 +80,35 @@ print_warning() {
 
 print_info() {
     printf "${BLUE}[INFO]${NC} %s\n" "$1"
+}
+
+# wizard_tunnel_choices - the tunnels this router has, one numbered line each
+# ("  N) <id>  <description> (down)"); main is not offered.
+wizard_tunnel_choices() {
+    local id info desc connected n=0
+    while IFS= read -r id; do
+        [[ -n $id && $id != main ]] || continue
+        n=$((n + 1))
+        desc=""
+        connected=1
+        if info="$(platform_tunnel_info "$id")"; then
+            connected="$(printf '%s\n' "$info" | sed -n 2p)"
+            desc="$(printf '%s\n' "$info" | sed -n 3p)"
+        fi
+        printf '  %d) %s%s%s\n' "$n" "$id" "${desc:+  $desc}" "$([[ $connected == 1 ]] || printf ' (down)')"
+    done < <(platform_tunnels || true)
+}
+
+# wizard_tunnel_by_number <n> - the id at position n of wizard_tunnel_choices,
+# nothing for anything else. The awk filter is the one wizard_tunnel_choices
+# numbers by, so a number read off the menu cannot name a different tunnel.
+# Never fails, whatever the user typed: the caller assigns its output under
+# "set -e", so a non-zero return would abort the wizard instead of asking
+# again - hence [1-9] rather than [0-9], since sed rejects the line address 0
+# with an error, and the trailing "|| true" for a platform_tunnels that fails.
+wizard_tunnel_by_number() {
+    [[ ${1:-} =~ ^[1-9][0-9]*$ ]] || return 0
+    platform_tunnels 2>/dev/null | awk 'length && $0 != "main"' | sed -n "${1}p" || true
 }
 
 # shellcheck disable=SC2034  # INPUT_RESULT used by callers
@@ -324,43 +377,30 @@ step_configure_clients() {
                 print_success "$client_ip -> Xray"
                 ;;
             2)
-                printf "\nTunnel type:\n"
-                printf "  1) WireGuard (wgc1-5)\n"
-                printf "  2) OpenVPN (ovpnc1-5)\n"
-                printf "Choice [1-2]: "
-                read -r tunnel_type
-
-                local tunnel_prefix=""
-                case "$tunnel_type" in
-                    1) tunnel_prefix="wgc" ;;
-                    2) tunnel_prefix="ovpnc" ;;
-                    *)
-                        print_error "Invalid tunnel type"
-                        continue
-                        ;;
-                esac
-
-                printf "Tunnel number [1-5]: "
+                local choices tunnel tunnel_num
+                choices="$(wizard_tunnel_choices)"
+                if [[ -z $choices ]]; then
+                    print_error "This router has no VPN client tunnel; configure one in the router UI first"
+                    continue
+                fi
+                printf "\nTunnel:\n%s\nChoice: " "$choices"
                 read -r tunnel_num
-                case "$tunnel_num" in
-                    [1-5])
-                        local tunnel="${tunnel_prefix}${tunnel_num}"
+                tunnel="$(wizard_tunnel_by_number "$tunnel_num")"
+                if [[ -z $tunnel ]]; then
+                    print_error "Invalid tunnel number"
+                    continue
+                fi
 
-                        # Ask for exclude countries only for new tunnels
-                        if ! jq -e --arg t "$tunnel" '.[$t]' <<< "$TUN_DIR_TUNNELS_JSON" >/dev/null 2>&1; then
-                            select_exclude_countries
-                            add_client_to_tunnel "$tunnel" "$client_ip" "$SELECTED_EXCLUDE"
-                            print_success "$client_ip -> $tunnel (exclude: ${SELECTED_EXCLUDE:-none})"
-                        else
-                            # Tunnel exists - just add client
-                            add_client_to_tunnel "$tunnel" "$client_ip" ""
-                            print_success "$client_ip -> $tunnel (using existing exclude)"
-                        fi
-                        ;;
-                    *)
-                        print_error "Invalid tunnel number"
-                        ;;
-                esac
+                # Ask for exclude countries only for new tunnels
+                if ! jq -e --arg t "$tunnel" '.[$t]' <<< "$TUN_DIR_TUNNELS_JSON" >/dev/null 2>&1; then
+                    select_exclude_countries
+                    add_client_to_tunnel "$tunnel" "$client_ip" "$SELECTED_EXCLUDE"
+                    print_success "$client_ip -> $tunnel (exclude: ${SELECTED_EXCLUDE:-none})"
+                else
+                    # Tunnel exists - just add client
+                    add_client_to_tunnel "$tunnel" "$client_ip" ""
+                    print_success "$client_ip -> $tunnel (using existing exclude)"
+                fi
                 ;;
             *)
                 print_error "Invalid choice"
@@ -521,17 +561,39 @@ step_generate_configs() {
     # Write to a temp file first: a '>' redirect truncates the live config
     # before jq runs, so a generator failure would take the jwt_secret with it.
     _vpd_cfg_tmp=$(mktemp "$VPD_DIR/vpn-director.json.XXXXXX")
+    # The wizard's in-memory tunnels are {clients, exclude} only. Copy
+    # gateway from the on-disk object for ids that still exist, so a
+    # hand-set Keenetic OpenVPN next hop survives a wizard save. Do not
+    # write "gateway": "" and do not invent the key on a newly created
+    # tunnel. `$existing[.key].gateway // empty` would drop new ids:
+    # empty as $gw skips the map item. `//` replaces only null and false,
+    # so a tunnels value of the wrong type (an array, say) is mapped to {}
+    # by hand: indexing it by key would end the whole save with jq's rc 5.
     if printf '%s' "$base_json" | jq \
         --argjson clients "$xray_clients_json" \
         --argjson exclude "$xray_exclude_json" \
         --argjson tunnels "$TUN_DIR_TUNNELS_JSON" \
         --argjson servers "$xray_servers_json" \
         --argjson active "$xray_active_server_json" \
-        '.xray.clients = $clients |
+        '((.tunnel_director.tunnels? // {}) | if type == "object" then . else {} end) as $existing |
+         .xray.clients = $clients |
          .xray.exclude_sets = $exclude |
          .xray.servers = $servers |
          .xray.active_server = $active |
-         .tunnel_director.tunnels = $tunnels' \
+         .tunnel_director.tunnels = (
+             $tunnels
+             | to_entries
+             | map(
+                 (if ($existing[.key] | type) == "object" and ($existing[.key].gateway | type) == "string"
+                  then $existing[.key].gateway
+                  else "" end) as $gw
+                 | if (.value | has("gateway") | not) and ($gw != "")
+                   then .value += {gateway: $gw}
+                   else .
+                   end
+               )
+             | from_entries
+         )' \
         > "$_vpd_cfg_tmp"; then
         chmod 600 "$_vpd_cfg_tmp"
         mv -f "$_vpd_cfg_tmp" "$VPD_DIR/vpn-director.json"

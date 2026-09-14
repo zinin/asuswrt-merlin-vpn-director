@@ -69,6 +69,36 @@ func TestVerify_MD5_ValidPassword(t *testing.T) {
 	}
 }
 
+// KeeneticOS has no /etc/shadow: the hash sits in field 2 of Entware's
+// seven-field /opt/etc/passwd, MD5-crypt as busybox passwd writes it.
+func TestVerify_KeeneticPasswdLine(t *testing.T) {
+	path := writeShadowFile(t, "root:"+md5Hash+":0:0:root:/root:/bin/sh\n")
+	sa := NewShadowAuth(path)
+
+	ok, err := sa.Verify("root", "testpass")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected Verify to return true for a seven-field passwd line")
+	}
+}
+
+// "x" in that field says the hash lives in a shadow file this platform does not
+// have: nothing to verify against, so a failed login, not a 500.
+func TestVerify_PasswdShadowMarkerIsNotAnError(t *testing.T) {
+	path := writeShadowFile(t, "root:x:0:0:root:/root:/bin/sh\n")
+	sa := NewShadowAuth(path)
+
+	ok, err := sa.Verify("root", "testpass")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected Verify to return false for the \"x\" shadow marker")
+	}
+}
+
 func TestVerify_WrongPassword(t *testing.T) {
 	path := writeShadowFile(t, "admin:"+sha256Hash+":19000:0:99999:7:::\n")
 	sa := NewShadowAuth(path)

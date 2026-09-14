@@ -2,14 +2,21 @@
 package devmode
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/shell"
 )
+
+// devPlatformFile is what the mock answers for `vpn-director.sh platform`,
+// relative to server/ like every other dev path.
+const devPlatformFile = "testdata/dev/platform.json"
 
 // safeCommands lists commands that are safe to execute in dev mode
 var safeCommands = map[string]bool{
@@ -22,7 +29,8 @@ var safeCommands = map[string]bool{
 // Router commands (vpn-director.sh) return mock responses.
 // Unknown commands fail with exit code 1.
 type Executor struct {
-	real service.ShellExecutor
+	real         service.ShellExecutor
+	platformFile string
 }
 
 // Compile-time interface check
@@ -30,13 +38,13 @@ var _ service.ShellExecutor = (*Executor)(nil)
 
 // NewExecutor creates a new dev mode executor with default real executor
 func NewExecutor() *Executor {
-	return &Executor{real: service.DefaultExecutor()}
+	return &Executor{real: service.DefaultExecutor(), platformFile: devPlatformFile}
 }
 
 // NewExecutorWithReal creates a new dev mode executor with a custom real executor
 // (useful for testing)
 func NewExecutorWithReal(real service.ShellExecutor) *Executor {
-	return &Executor{real: real}
+	return &Executor{real: real, platformFile: devPlatformFile}
 }
 
 // Exec executes a command, routing to real executor for safe commands,
@@ -112,10 +120,26 @@ func (e *Executor) mockVPNDirector(args ...string) (*shell.Result, error) {
 			Output:   "[DEV MODE] IPsets updated and configuration reapplied",
 			ExitCode: 0,
 		}, nil
+	case "platform":
+		return e.mockPlatform()
 	default:
 		return &shell.Result{
 			Output:   "[DEV MODE] vpn-director.sh: unknown command: " + cmd,
 			ExitCode: 1,
 		}, nil
 	}
+}
+
+// mockPlatform answers with the dev platform document on one line, the way
+// the CLI prints it (the service reads the last line of the output).
+func (e *Executor) mockPlatform() (*shell.Result, error) {
+	data, err := os.ReadFile(e.platformFile)
+	if err != nil {
+		return &shell.Result{Output: "dev mode: " + err.Error(), ExitCode: 1}, nil
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, data); err != nil {
+		return &shell.Result{Output: "dev mode: " + e.platformFile + ": " + err.Error(), ExitCode: 1}, nil
+	}
+	return &shell.Result{Output: buf.String() + "\n", ExitCode: 0}, nil
 }

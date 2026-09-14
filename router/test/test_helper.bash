@@ -26,6 +26,10 @@ export LIB_DIR="$SCRIPTS_DIR/lib"
 export TEST_MODE=1
 export LOG_FILE="/tmp/bats_test_vpn_director.log"
 
+# Platform under test. lib/platform.sh skips detection when this is set, so
+# the suite never depends on /jffs or /opt/etc/ndm of the machine running it.
+export VPD_PLATFORM="${VPD_PLATFORM:-merlin}"
+
 # Override system paths for mocks
 setup() {
     export PATH="$TEST_ROOT/mocks:$PATH"
@@ -59,7 +63,7 @@ load_common() {
     # Set $0 to a fake script path for get_script_* functions
     export BASH_SOURCE_OVERRIDE="$SCRIPTS_DIR/test_script.sh"
 
-    # common.sh ends with "trap _cleanup_tmp EXIT INT TERM", which replaces the
+    # common.sh installs "trap _cleanup_tmp EXIT INT TERM", which replaces the
     # EXIT trap bats installs to report the result of the test. Without the
     # trap bats never hears about a failing assertion and prints "Executed N
     # instead of expected M" instead of naming the test, so save it and put it
@@ -111,5 +115,12 @@ load_tproxy_module() {
 load_import_server_list() {
     load_common
     export IMPORT_TEST_MODE=1
+    # import_server_list.sh sources common.sh itself, which re-installs the
+    # EXIT trap load_common just put back - and a failing assertion in this
+    # file would vanish into "Executed N instead of expected M" with no name.
+    # Same guard as load_common.
+    local bats_exit_trap
+    bats_exit_trap="$(trap -p EXIT)"
     source "$SCRIPTS_DIR/import_server_list.sh"
+    eval "${bats_exit_trap:-trap - EXIT}"
 }

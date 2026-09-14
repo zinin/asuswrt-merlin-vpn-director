@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
+	"github.com/zinin/vpn-director/server/internal/auth"
 )
 
 func TestHandleLogin_ValidCredentials(t *testing.T) {

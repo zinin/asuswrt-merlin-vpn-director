@@ -155,3 +155,55 @@ load 'test_helper'
     [[ "$exclude" == *"ru"* ]]
     rm -f "$tmp_cfg"
 }
+
+# Spec 12: a tunnel gateway that is not a dotted IPv4 is dropped at load so
+# it never reaches ip route. The rest of the tunnel (and the rest of the
+# config) still loads; apply-time _tunnel_gateway is the belt.
+#
+# Entware jq has no Oniguruma: test/match/sub abort `source config.sh` under
+# set -e as soon as any gateway string is present, valid IPv4 included.
+# Host bats cannot catch that (this workstation's jq has regex). Pin the
+# jq programs themselves.
+@test "config.sh: jq programs do not call regex functions Keenetic jq lacks" {
+    run grep -nE 'test\(|match\(|sub\(' "$LIB_DIR/config.sh"
+    assert_failure
+    refute_output
+}
+
+# The same pin over every shell file that ships to a router. Entware jq on
+# KeeneticOS is built without Oniguruma, so test/match/capture/scan/splits abort
+# any jq program under set -e on the device while a workstation's jq accepts
+# them - which is how 0d5dc6f passed green here and failed on the router. This is
+# a source pin, not a run under the device's jq. sub(/gsub( stay with the
+# config.sh-scoped test above, because awk shares those names and common.sh uses
+# awk's sub().
+@test "shipped shell does not call jq regex functions Keenetic jq lacks" {
+    run grep -rnE '(^|[^A-Za-z_])(test|match|capture|scan|splits)\(' \
+        "$SCRIPTS_DIR" "$PROJECT_ROOT/../install.sh"
+    assert_failure
+    refute_output
+}
+
+@test "config.sh: drops a non-IPv4 tunnel gateway and keeps a valid one" {
+    load_common
+    local tmp_cfg="$BATS_TEST_TMPDIR/vpn-director-gateway.json"
+    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.1" |
+        .tunnel_director.tunnels.ovpnc1 = {"clients":["192.168.1.5"],"exclude":["ru"],"gateway":"not-an-ip"}' \
+        "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1.gateway')" = "10.8.0.1" ]
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.ovpnc1 | has("gateway")')" = "false" ]
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.ovpnc1.clients[0]')" = "192.168.1.5" ]
+    grep -q "WARN.*invalid gateway 'not-an-ip'" "$LOG_FILE"
+}
+
+@test "config.sh: drops a gateway whose octet is above 255" {
+    local tmp_cfg="$BATS_TEST_TMPDIR/vpn-director-gateway-octet.json"
+    jq '.tunnel_director.tunnels.wgc1.gateway = "10.8.0.999"' \
+        "$TEST_ROOT/fixtures/vpn-director.json" > "$tmp_cfg"
+    export VPD_CONFIG_FILE="$tmp_cfg"
+    source "$LIB_DIR/config.sh"
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1 | has("gateway")')" = "false" ]
+    [ "$(printf '%s\n' "$TUN_DIR_TUNNELS_JSON" | jq -r '.wgc1.clients[0]')" = "192.168.50.0/24" ]
+}

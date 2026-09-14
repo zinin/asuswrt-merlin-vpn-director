@@ -96,6 +96,10 @@ PREROUTING (pos 1)
           ├─ dst {exclude_sets} → RETURN
           ├─ tcp → TPROXY :port mark
           └─ udp → TPROXY :port mark
+
+mangle INPUT (Keenetic, pos 1):
+    -m mark --mark <fwmark> → ACCEPT
+    (so TPROXY-marked HTTPS never reaches _NDM_HTTP_INPUT_TLS_)
 ```
 
 ## Routing Setup
@@ -109,6 +113,11 @@ ip rule add pref $XRAY_RULE_PREF fwmark $XRAY_FWMARK/$XRAY_FWMARK_MASK table $XR
 ```
 
 **Fwmark bit allocation**: `0x100` (bit 8) is free from firmware VPN marking (bit 0) and Tunnel Director (bits 16-23).
+
+The TPROXY ip rule uses pref 200. On KeeneticOS 5.1.5 that preference was free of
+NDM connection policies (a user policy landed at prefs 102/103, table 4097; no
+tables in the 40s). `_tproxy_setup_routing` still only removes rules carrying our
+mark or our table, because other firmware versions may still park policies at 200.
 
 ## Requirements
 

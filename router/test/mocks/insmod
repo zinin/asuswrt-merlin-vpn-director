@@ -1,0 +1,4 @@
+#!/bin/bash
+# Mock insmod - records the call and succeeds
+echo "insmod $*" >> /tmp/bats_insmod_calls.log
+exit 0

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
+	"github.com/zinin/vpn-director/server/internal/auth"
 )
 
 // authMiddleware returns HTTP middleware that validates JWT tokens and binds

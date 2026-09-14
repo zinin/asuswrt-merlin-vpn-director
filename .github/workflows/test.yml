@@ -77,10 +77,7 @@ jobs:
           sudo git clone https://github.com/bats-core/bats-support.git /usr/lib/bats/bats-support
           sudo git clone https://github.com/bats-core/bats-assert.git /usr/lib/bats/bats-assert
 
-      - name: Unit tests
-        run: bats router/test/unit
-
-      # vpn_director.bats covers the --wait option every Web UI and bot
-      # mutation depends on, and nothing else in CI runs it.
-      - name: Integration tests
-        run: bats router/test/integration
+      # Four places: a directory argument is not recursive, so unit +
+      # integration alone miss the 102 tests in router/test/*.bats.
+      - name: Tests
+        run: bats router/test/*.bats router/test/unit router/test/integration

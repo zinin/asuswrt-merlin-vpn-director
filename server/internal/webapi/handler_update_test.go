@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
 )
 
 func TestHandleUpdateCheck_ReturnsTheResult(t *testing.T) {

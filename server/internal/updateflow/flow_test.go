@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updater"
+	"github.com/zinin/vpn-director/server/internal/updater"
 )
 
 // mockUpdater implements updater.Updater for testing.
@@ -31,28 +31,31 @@ type mockUpdater struct {
 
 	inProgress    bool
 	createLockErr error
-	downloadErr   error
-	runScriptErr  error
+	handoverErr   error
+	// handoverLines are what the mock's step 2 prints: Handover passes each
+	// to progress before it returns.
+	handoverLines []string
 
-	// downloadGate holds DownloadRelease until the test closes it, so a test
-	// can make something happen — cancelling the context it passed to Start —
-	// before the download inspects what it was handed. Set before any
+	// handoverGate holds Handover until the test closes it, so a test can
+	// make something happen - cancelling the context it passed to Start -
+	// before the handover inspects what it was handed. Set before any
 	// goroutine starts and nil for every other test.
-	downloadGate chan struct{}
+	handoverGate chan struct{}
 
 	createLockCalled bool
-	downloadCalled   bool
-	downloadCtxDone  bool // the download was handed an already-cancelled context
+	handoverCalled   bool
+	handoverDone     bool // Handover got past every progress line
+	handoverCtxDone  bool // the handover was handed an already-cancelled context
+	handoverOpts     updater.RunOptions
 	cleanFilesCalled bool
 	removeLockCalled bool
-	runScriptCalled  bool
-	runScriptOpts    updater.RunOptions
 }
 
 func newMockUpdater() *mockUpdater {
 	return &mockUpdater{
-		release:      &updater.Release{TagName: "v1.3.0", Body: "changelog text"},
-		shouldUpdate: true,
+		release:       &updater.Release{TagName: "v1.3.0", Body: "changelog text"},
+		shouldUpdate:  true,
+		handoverLines: []string{"Files downloaded, starting update..."},
 	}
 }
 
@@ -109,29 +112,32 @@ func (m *mockUpdater) CleanFiles() {
 	m.cleanFilesCalled = true
 }
 
-func (m *mockUpdater) DownloadRelease(ctx context.Context, _ *updater.Release) error {
+func (m *mockUpdater) Handover(ctx context.Context, _ *updater.Release, opts updater.RunOptions, progress func(string)) error {
 	m.mu.Lock()
-	gate := m.downloadGate
+	gate := m.handoverGate
 	m.mu.Unlock()
 
 	// Wait outside m.mu, so the test can still read the mock while the
-	// download is held.
+	// handover is held.
 	if gate != nil {
 		<-gate
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.downloadCalled = true
-	m.downloadCtxDone = ctx.Err() != nil
-	return m.downloadErr
-}
+	m.handoverCalled = true
+	m.handoverCtxDone = ctx.Err() != nil
+	m.handoverOpts = opts
+	lines, err := m.handoverLines, m.handoverErr
+	m.mu.Unlock()
 
-func (m *mockUpdater) RunUpdateScript(opts updater.RunOptions) error {
+	// Outside m.mu: progress may be the test's collector or a callback that
+	// panics.
+	for _, line := range lines {
+		progress(line)
+	}
+
 	m.mu.Lock()
-	m.runScriptCalled = true
-	m.runScriptOpts = opts
-	err := m.runScriptErr
+	m.handoverDone = true
 	m.mu.Unlock()
 	return err
 }

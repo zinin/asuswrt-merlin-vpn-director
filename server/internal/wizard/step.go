@@ -3,8 +3,8 @@ package wizard
 
 import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/telegram"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/telegram"
 )
 
 // StepHandler defines the interface for wizard step handlers
@@ -27,4 +27,5 @@ type StepHandler interface {
 type StepDeps struct {
 	Sender telegram.MessageSender
 	Config service.ConfigStore
+	VPN    service.VPNDirector // the tunnels this router has, for the route keyboard
 }

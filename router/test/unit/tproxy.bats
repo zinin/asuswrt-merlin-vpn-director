@@ -351,6 +351,24 @@ EOF
 # _tproxy_setup_routing / _tproxy_teardown_routing - fwmark rule for TPROXY
 # ============================================================================
 
+# The routers' iproute2 takes no selectors on "ip rule show" (mocks/ip refuses
+# them the way the tool does), so a preference is filtered by the caller.
+rules_at_pref() {
+    ip rule show | grep "^$1:" || true
+}
+
+# The kernel refuses an exact duplicate through "ip rule add", but an older
+# version of this module left duplicates behind all the same - it added its
+# rule under a different table label, which the kernel accepted, and the copies
+# accumulated. Reproduce that state the way the kernel would hold it.
+duplicate_last_rule() {
+    local f="${BATS_IP_RULES_FILE:-/tmp/bats_test_ip_rules}" n="${1:-1}" line
+    line="$(tail -1 "$f")"
+    while (( n-- > 0 )); do
+        printf '%s\n' "$line" >> "$f"
+    done
+}
+
 # The kernel prints a routing table by its rt_tables name, so table 100 comes
 # back as "lookup wan0" on Asuswrt-Merlin. A check that looks for the number
 # never recognises its own rule and re-adds it on every apply.
@@ -360,7 +378,7 @@ EOF
     _tproxy_setup_routing
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_equal "$(grep -c 'fwmark 0x100/0x100' <<< "$output")" 1
 }
@@ -368,12 +386,11 @@ EOF
 @test "_tproxy_setup_routing: collapses duplicates left behind by an older version" {
     load_tproxy_module
     ip rule add pref 200 fwmark 0x100/0x100 table 100
-    ip rule add pref 200 fwmark 0x100/0x100 table 100
-    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    duplicate_last_rule 2
 
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_equal "$(grep -c 'fwmark 0x100/0x100' <<< "$output")" 1
 }
@@ -381,11 +398,11 @@ EOF
 @test "_tproxy_teardown_routing: removes every copy of the rule" {
     load_tproxy_module
     ip rule add pref 200 fwmark 0x100/0x100 table 100
-    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    duplicate_last_rule 1
 
     _tproxy_teardown_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     refute_output
 }
@@ -400,7 +417,7 @@ EOF
 
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_output --partial "lookup wan0"
     refute_output --partial "lookup wgc1"
@@ -412,7 +429,7 @@ EOF
 
     _tproxy_setup_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     assert_output --partial "fwmark 0x100/0x100"
     refute_output --partial "0x1ff"
@@ -424,7 +441,158 @@ EOF
 
     _tproxy_teardown_routing
 
-    run ip rule show pref 200
+    run rules_at_pref 200
     assert_success
     refute_output
+}
+
+# Another owner may park a rule at our pref (a connection policy on some
+# KeeneticOS versions; 5.1.5 measured none at 200 - its policies sit at prefs
+# 102/103, table 4097). Sharing a preference is not owning it: only a rule with
+# our mark value or our table is ours to remove.
+@test "_tproxy_setup_routing: leaves another owner's rule at the same pref alone" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0xffffd00 table 42
+
+    run _tproxy_setup_routing
+    assert_success
+    refute_output --partial "Removed stale ip rule"
+
+    run rules_at_pref 200
+    assert_output --partial "fwmark 0xffffd00 lookup 42"
+    assert_output --partial "fwmark 0x100/0x100 lookup wan0"
+}
+
+@test "_tproxy_teardown_routing: removes only our rules from the shared pref" {
+    load_tproxy_module
+    ip rule add pref 200 fwmark 0xffffd00 table 42
+    ip rule add pref 200 fwmark 0x100/0x100 table 100
+    ip rule add pref 200 fwmark 0x100/0x1ff table 111
+
+    _tproxy_teardown_routing
+
+    run rules_at_pref 200
+    assert_output "200:	from all fwmark 0xffffd00 lookup 42"
+}
+
+@test "_tproxy_rule_is_ours: our mark value under any mask, or our table under any mark" {
+    load_tproxy_module
+    run _tproxy_rule_is_ours 0x100/0x100 wan0 wan0
+    assert_success
+    run _tproxy_rule_is_ours 0x100/0x1ff 111 wan0
+    assert_success
+    run _tproxy_rule_is_ours 0xabc wan0 wan0
+    assert_success
+    run _tproxy_rule_is_ours 0xffffd00 42 wan0
+    assert_failure
+    run _tproxy_rule_is_ours "" 42 wan0
+    assert_failure
+    run _tproxy_rule_is_ours garbage 42 wan0
+    assert_failure
+}
+
+# ============================================================================
+# Platform contract in tproxy.sh
+# ============================================================================
+
+@test "_tproxy_check_module: loads xt_TPROXY through platform_load_module" {
+    load_tproxy_module
+    platform_load_module() { echo "load $1" >> "$BATS_TEST_TMPDIR/load.log"; return 0; }
+    run _tproxy_check_module
+    assert_success
+    grep -q "load xt_TPROXY" "$BATS_TEST_TMPDIR/load.log"
+}
+
+@test "_tproxy_check_module: fails with an ERROR when the platform cannot load the module" {
+    load_tproxy_module
+    platform_load_module() { return 1; }
+    run _tproxy_check_module
+    assert_failure
+    assert_output --partial "xt_TPROXY module not available"
+}
+
+@test "_tproxy_setup_bypass_ipset: adds every platform VPN endpoint" {
+    load_tproxy_module
+    platform_vpn_endpoints() { printf '%s\n' 203.0.113.7 198.51.100.9; }
+    : > /tmp/bats_ipset_calls.log
+    run _tproxy_setup_bypass_ipset
+    assert_success
+    grep -q "ipset add TPROXY_BYPASS 203.0.113.7" /tmp/bats_ipset_calls.log
+    grep -q "ipset add TPROXY_BYPASS 198.51.100.9" /tmp/bats_ipset_calls.log
+}
+
+@test "_tproxy_setup_iptables: applies platform extra rules with the configured mark and one jump per LAN interface" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { echo "extra $1 $2" >> "$BATS_TEST_TMPDIR/extra.log"; }
+    platform_lan_ifaces() { printf 'br0\nbr1\n'; }
+    : > /tmp/bats_iptables_calls.log
+    run _tproxy_setup_iptables
+    assert_success
+    grep -qF "extra apply 0x100/0x100" "$BATS_TEST_TMPDIR/extra.log"
+    # Each interface asks for its own position, so no jump displaces another and
+    # the next apply finds both already in place instead of rewriting them.
+    grep -q -- '-I PREROUTING 1 -i br0 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
+    grep -q -- '-I PREROUTING 2 -i br1 -j XRAY_TPROXY' /tmp/bats_iptables_calls.log
+}
+
+# The jump is the whole point of the chain. A platform that cannot name its LAN
+# interfaces used to run the loop zero times, leaving a fully populated chain
+# with nothing jumping to it and logging "Applied TPROXY iptables rules" - every
+# packet the proxy exists to carry silently going direct. Unreachable on Merlin,
+# where platform_lan_ifaces is a constant.
+@test "_tproxy_setup_iptables: fails and builds no chain when the platform names no LAN interface" {
+    load_tproxy_module
+    platform_lan_ifaces() { return 1; }
+    : > /tmp/bats_iptables_calls.log
+    run _tproxy_setup_iptables
+    assert_failure
+    assert_output --partial "Cannot determine the LAN interfaces"
+    refute grep -q -- "-j XRAY_TPROXY" /tmp/bats_iptables_calls.log
+    refute grep -q -- "-N XRAY_TPROXY" /tmp/bats_iptables_calls.log
+}
+
+# An empty answer with rc 0 is the same failure: zero jumps installed.
+@test "_tproxy_setup_iptables: fails when the platform prints no LAN interface" {
+    load_tproxy_module
+    platform_lan_ifaces() { return 0; }
+    : > /tmp/bats_iptables_calls.log
+    run _tproxy_setup_iptables
+    assert_failure
+    assert_output --partial "Cannot determine the LAN interfaces"
+    refute grep -q -- "-j XRAY_TPROXY" /tmp/bats_iptables_calls.log
+}
+
+# _tproxy_setup_iptables runs as "if ! _tproxy_setup_iptables", which turns
+# errexit off for its whole body, and its last command is a log - so a platform
+# that cannot install its own rules would otherwise be reported as a clean apply.
+@test "_tproxy_setup_iptables: warns when the platform cannot apply its extra rules" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { return 1; }
+    run _tproxy_setup_iptables
+    assert_success
+    assert_output --partial "Failed to apply platform TPROXY rules"
+}
+
+@test "_tproxy_teardown_iptables: removes platform extra rules with the configured mark" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { echo "extra $1 $2" >> "$BATS_TEST_TMPDIR/extra.log"; }
+    run _tproxy_teardown_iptables
+    assert_success
+    grep -qF "extra stop 0x100/0x100" "$BATS_TEST_TMPDIR/extra.log"
+}
+
+# tproxy_stop calls this bare under set -euo pipefail, so a platform whose
+# cleanup fails must not abort the teardown at its first line: the PREROUTING
+# purge, the chain deletion and the ipsets matter more than the platform's own
+# rules. Called without "run" on purpose - "run" turns errexit off, and errexit
+# is exactly what the real caller has on.
+@test "_tproxy_teardown_iptables: finishes the teardown when the platform stop fails" {
+    load_tproxy_module
+    platform_tproxy_extra_rules() { return 1; }
+    : > /tmp/bats_iptables_calls.log
+
+    _tproxy_teardown_iptables
+
+    grep -q -- '-t mangle -S PREROUTING' /tmp/bats_iptables_calls.log
+    grep -q -- '-t mangle -X XRAY_TPROXY' /tmp/bats_iptables_calls.log
 }

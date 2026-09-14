@@ -1,6 +1,9 @@
-// Package auth provides authentication against /etc/shadow password hashes.
+// Package auth verifies passwords against the platform's password file:
+// /etc/shadow on Asuswrt-Merlin, /opt/etc/passwd on KeeneticOS (Entware's
+// seven-field file, an MD5-crypt $1$ hash in field 2, usually mode 0644).
 // It supports MD5 ($1$), SHA-256 ($5$), and SHA-512 ($6$) MCF hash formats.
-// Pure Go implementation — no cgo dependency, cross-compiles cleanly for ARM.
+// Pure Go implementation — no cgo dependency, cross-compiles cleanly for ARM
+// and MIPS.
 package auth
 
 import (
@@ -131,9 +134,11 @@ func fingerprintHash(hash string) string {
 }
 
 // isUnusableHash reports whether the shadow field carries no password that can
-// be verified: empty, "!" (locked) or "*" (login disabled).
+// be verified: empty, "!" (locked), "*" (login disabled), or passwd's "x", which
+// says the hash lives in the shadow file rather than in this field.
 func isUnusableHash(hash string) bool {
-	return hash == "" || strings.HasPrefix(hash, "!") || strings.HasPrefix(hash, "*")
+	return hash == "" || strings.HasPrefix(hash, "!") || strings.HasPrefix(hash, "*") ||
+		hash == "x"
 }
 
 // findEntry scans the shadow file for a matching username and returns the

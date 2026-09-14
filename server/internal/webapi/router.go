@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/auth"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/updateflow"
+	"github.com/zinin/vpn-director/server/internal/auth"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/updateflow"
 )
 
 // UpdateFlow is the subset of updateflow.Flow the API handlers use. Declared
@@ -82,6 +82,7 @@ func registerProtectedRoutes(mux *http.ServeMux, deps *Deps) {
 	// Info
 	mux.HandleFunc("GET /api/ip", handleIP(deps))
 	mux.HandleFunc("GET /api/version", handleVersion(deps))
+	mux.HandleFunc("GET /api/platform", handlePlatform(deps))
 
 	// Servers
 	mux.HandleFunc("GET /api/servers", handleListServers(deps))

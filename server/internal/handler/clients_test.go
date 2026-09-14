@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/service"
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/service"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 type mockSenderClients struct {
@@ -78,7 +78,9 @@ func (m *mockConfigClients) DataDirOrDefault() string                 { return "
 func (m *mockConfigClients) ScriptsDir() string                       { return "/scripts" }
 
 type mockVPNClients struct {
-	applyErr error
+	applyErr    error
+	platform    vpnconfig.PlatformInfo
+	platformErr error
 }
 
 func (m *mockVPNClients) Status() (string, error) { return "", nil }
@@ -87,6 +89,9 @@ func (m *mockVPNClients) Restart() error          { return nil }
 func (m *mockVPNClients) RestartXray() error      { return nil }
 func (m *mockVPNClients) Stop() error             { return nil }
 func (m *mockVPNClients) Update() error           { return nil }
+func (m *mockVPNClients) Platform() (vpnconfig.PlatformInfo, error) {
+	return m.platform, m.platformErr
+}
 
 func TestClientsHandler_HandleClients_WithClients(t *testing.T) {
 	sender := &mockSenderClients{}
@@ -309,7 +314,7 @@ func TestClientsHandler_HandleTextInput_ValidIP(t *testing.T) {
 			},
 		},
 	}
-	deps := &Deps{Sender: sender, Config: config}
+	deps := &Deps{Sender: sender, Config: config, VPN: &mockVPNClients{}}
 	h := NewClientsHandler(deps)
 
 	h.mu.Lock()
@@ -474,5 +479,127 @@ func TestClientsHandler_Pause_SaveErrorIsReported(t *testing.T) {
 
 	if n := len(sender.plainTexts); n == 0 || !strings.Contains(sender.plainTexts[n-1], "Save error: disk full") {
 		t.Errorf("expected the save error to reach the user, got %v", sender.plainTexts)
+	}
+}
+
+func TestClientsHandler_RouteKeyboardListsPlatformTunnelsThenConfiguredOnes(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{TunnelDirector: vpnconfig.TunnelDirectorConfig{
+		Tunnels: map[string]vpnconfig.TunnelConfig{"wgc1": {Clients: []string{}}},
+	}}
+	vpn := &mockVPNClients{platform: vpnconfig.PlatformInfo{Tunnels: []vpnconfig.PlatformTunnel{
+		{ID: "OpenVPN0", Connected: true, Description: "office"},
+	}}}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: &mockConfigClients{vpnConfig: cfg}, VPN: vpn})
+
+	h.showRouteSelection(100, "192.168.1.5", cfg)
+
+	rows := sender.lastKeyboard.InlineKeyboard
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want xray, OpenVPN0, wgc1, Cancel", len(rows))
+	}
+	if *rows[1][0].CallbackData != "clients:route:OpenVPN0" || rows[1][0].Text != "OpenVPN0 office" {
+		t.Errorf("row 1 = %+v", rows[1][0])
+	}
+	if *rows[2][0].CallbackData != "clients:route:wgc1" || rows[2][0].Text != "wgc1 (unknown)" {
+		t.Errorf("row 2 = %+v: a configured tunnel the platform does not list stays reachable, marked unknown", rows[2][0])
+	}
+}
+
+func TestClientsHandler_RouteKeyboardFallsBackToTheConfigWhenThePlatformIsDown(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{TunnelDirector: vpnconfig.TunnelDirectorConfig{
+		Tunnels: map[string]vpnconfig.TunnelConfig{"wgc1": {Clients: []string{}}},
+	}}
+	vpn := &mockVPNClients{platformErr: errors.New("down")}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: &mockConfigClients{vpnConfig: cfg}, VPN: vpn})
+
+	h.showRouteSelection(100, "192.168.1.5", cfg)
+
+	rows := sender.lastKeyboard.InlineKeyboard
+	if len(rows) != 3 || *rows[1][0].CallbackData != "clients:route:wgc1" {
+		t.Errorf("rows = %+v, want xray, wgc1, Cancel", rows)
+	}
+	// The platform is what is unknown here, not the tunnel, so no "(unknown)" label.
+	if rows[1][0].Text != "wgc1" {
+		t.Errorf("row 1 text = %q, want the bare tunnel name", rows[1][0].Text)
+	}
+	if len(sender.plainTexts) == 0 || !strings.Contains(sender.plainTexts[len(sender.plainTexts)-1], "platform info unavailable") {
+		t.Errorf("plain texts = %v", sender.plainTexts)
+	}
+}
+
+func TestClientsHandler_HandleAddRoute_NewPlatformTunnelInheritsTheXrayExclusions(t *testing.T) {
+	sender := &mockSenderClients{}
+	cfg := &vpnconfig.VPNDirectorConfig{Xray: vpnconfig.XrayConfig{ExcludeSets: []string{"ru"}}}
+	config := &mockConfigClients{vpnConfig: cfg}
+	vpn := &mockVPNClients{platform: vpnconfig.PlatformInfo{Tunnels: []vpnconfig.PlatformTunnel{{ID: "OpenVPN0"}}}}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: config, VPN: vpn})
+	h.mu.Lock()
+	h.addState[100] = "192.168.1.5"
+	h.mu.Unlock()
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		Data:    "clients:route:OpenVPN0",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	if config.savedConfig == nil {
+		t.Fatal("expected config to be saved")
+	}
+	tunnel := config.savedConfig.TunnelDirector.Tunnels["OpenVPN0"]
+	if len(tunnel.Clients) != 1 || tunnel.Clients[0] != "192.168.1.5" || len(tunnel.Exclude) != 1 || tunnel.Exclude[0] != "ru" {
+		t.Errorf("OpenVPN0 = %+v", tunnel)
+	}
+}
+
+func TestClientsHandler_HandleAddRoute_UnknownRouteIsStale(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{vpnConfig: &vpnconfig.VPNDirectorConfig{}}
+	vpn := &mockVPNClients{platform: vpnconfig.PlatformInfo{Tunnels: []vpnconfig.PlatformTunnel{{ID: "OpenVPN0"}}}}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: config, VPN: vpn})
+	h.mu.Lock()
+	h.addState[100] = "192.168.1.5"
+	h.mu.Unlock()
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		Data:    "clients:route:wgc1",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	if config.savedConfig != nil {
+		t.Error("a route the router does not have must not be saved")
+	}
+	// A list redrawn without the new row reads as a bug; the user is told why.
+	if len(sender.plainTexts) == 0 || !strings.Contains(sender.plainTexts[len(sender.plainTexts)-1], "route wgc1 is no longer available") {
+		t.Errorf("plain texts = %v, want the vanished route named", sender.plainTexts)
+	}
+	if sender.editMsgID != 42 {
+		t.Errorf("the list was not refreshed: editMsgID = %d", sender.editMsgID)
+	}
+}
+
+func TestClientsHandler_HandleAddRoute_PlatformErrorIsReported(t *testing.T) {
+	sender := &mockSenderClients{}
+	config := &mockConfigClients{vpnConfig: &vpnconfig.VPNDirectorConfig{}}
+	vpn := &mockVPNClients{platformErr: errors.New("down")}
+	h := NewClientsHandler(&Deps{Sender: sender, Config: config, VPN: vpn})
+	h.mu.Lock()
+	h.addState[100] = "192.168.1.5"
+	h.mu.Unlock()
+
+	h.HandleCallback(&tgbotapi.CallbackQuery{
+		Data:    "clients:route:wgc1",
+		Message: &tgbotapi.Message{MessageID: 42, Chat: &tgbotapi.Chat{ID: 100}},
+	})
+
+	if config.savedConfig != nil {
+		t.Error("a route that could not be checked must not be saved")
+	}
+	if len(sender.plainTexts) == 0 || !strings.Contains(sender.plainTexts[len(sender.plainTexts)-1], "platform info unavailable, try again") {
+		t.Errorf("plain texts = %v, want the platform reported as unavailable", sender.plainTexts)
+	}
+	if sender.editMsgID != 42 {
+		t.Errorf("the list was not refreshed: editMsgID = %d", sender.editMsgID)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/shell"
+	"github.com/zinin/vpn-director/server/internal/shell"
 )
 
 func TestLogService_Read(t *testing.T) {

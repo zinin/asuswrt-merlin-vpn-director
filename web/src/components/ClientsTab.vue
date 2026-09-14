@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import api from '../api'
-import type { ClientInfo } from '../types'
+import type { ClientInfo, PlatformTunnel } from '../types'
 
 const clients = ref<ClientInfo[]>([])
 const loading = ref(false)
@@ -12,11 +12,51 @@ const newIp = ref('')
 const newRoute = ref('xray')
 const addLoading = ref(false)
 
-const routeOptions = [
-  'xray',
-  'wgc1', 'wgc2', 'wgc3', 'wgc4', 'wgc5',
-  'ovpnc1', 'ovpnc2', 'ovpnc3', 'ovpnc4', 'ovpnc5',
-]
+interface RouteOption {
+  value: string
+  label: string
+}
+
+// xray first, then every tunnel the router has. These options also feed the Add
+// form's select, and POST /api/clients rejects a route the platform does not
+// list, so a listed client's unlisted route is added only when the platform
+// itself could not be asked - the fallback the form's own message describes.
+// The client rows print their route as text, so nothing is hidden either way.
+// Rebuilt whenever the platform or the clients are reloaded.
+const routeOptions = ref<RouteOption[]>([{ value: 'xray', label: 'xray' }])
+const platformTunnels = ref<PlatformTunnel[]>([])
+const platformError = ref('')
+
+function buildRouteOptions() {
+  const opts: RouteOption[] = [{ value: 'xray', label: 'xray' }]
+  for (const t of platformTunnels.value) {
+    const desc = t.description ? ` — ${t.description}` : ''
+    opts.push({ value: t.id, label: `${t.id}${desc}${t.connected ? '' : ' (down)'}` })
+  }
+  if (platformError.value !== '') {
+    for (const c of clients.value) {
+      if (!opts.some((o) => o.value === c.route)) {
+        opts.push({ value: c.route, label: c.route })
+      }
+    }
+  }
+  routeOptions.value = opts
+  if (!opts.some((o) => o.value === newRoute.value)) {
+    newRoute.value = 'xray'
+  }
+}
+
+async function loadPlatform() {
+  try {
+    const resp = await api.getPlatform()
+    platformTunnels.value = resp.data.tunnels ?? []
+    platformError.value = ''
+  } catch (e: any) {
+    platformTunnels.value = []
+    platformError.value = e.response?.data?.error || e.message
+  }
+  buildRouteOptions()
+}
 
 // Shows the server error; when the change was saved but apply failed
 // (response carries saved: true) the list is refreshed so the saved
@@ -36,6 +76,7 @@ async function loadClients() {
   try {
     const resp = await api.getClients()
     clients.value = resp.data.clients ?? []
+    buildRouteOptions()
   } catch (e: any) {
     error.value = e.response?.data?.error || e.message
   } finally {
@@ -95,7 +136,9 @@ async function removeClient(ip: string) {
   }
 }
 
-onMounted(loadClients)
+onMounted(async () => {
+  await Promise.all([loadClients(), loadPlatform()])
+})
 </script>
 
 <template>
@@ -110,16 +153,19 @@ onMounted(loadClients)
           @keyup.enter="addClient"
         />
       </div>
-      <div class="form-group" style="width: 140px; margin-bottom: 0;">
+      <div class="form-group" style="width: 260px; margin-bottom: 0;">
         <label>Route</label>
         <select v-model="newRoute">
-          <option v-for="r in routeOptions" :key="r" :value="r">{{ r }}</option>
+          <option v-for="r in routeOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
         </select>
       </div>
       <button class="btn btn-primary" :disabled="addLoading || !newIp.trim()" @click="addClient">
         {{ addLoading ? '...' : '+ Add' }}
       </button>
     </div>
+    <p v-if="platformError" class="error-msg" style="margin-top: 0.5rem;">
+      Tunnel list unavailable ({{ platformError }}); only xray and the routes in use are offered.
+    </p>
   </div>
 
   <div class="card">

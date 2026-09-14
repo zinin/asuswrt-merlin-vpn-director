@@ -29,6 +29,7 @@ async function submit() {
       <h1>VPN Director</h1>
       <div class="error-msg" v-if="error">{{ error }}</div>
       <input v-model="username" type="text" placeholder="Username" autocomplete="username" />
+      <div style="margin-top: 4px; color: #999; font-size: 0.875rem;">admin on Asuswrt-Merlin, root on KeeneticOS</div>
       <input v-model="password" type="password" placeholder="Password" autocomplete="current-password" style="margin-top: 0.5rem;" />
       <button class="btn btn-primary" type="submit" :disabled="loading" style="width: 100%; margin-top: 1rem;">
         {{ loading ? 'Logging in...' : 'Login' }}

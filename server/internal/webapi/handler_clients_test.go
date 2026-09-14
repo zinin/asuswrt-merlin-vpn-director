@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zinin/asuswrt-merlin-vpn-director/server/internal/vpnconfig"
+	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
 func TestHandleListClients_OK(t *testing.T) {
@@ -908,5 +908,101 @@ func TestRemoveAddr(t *testing.T) {
 	}
 	if containsAddr(nil, "1.2.3.4") {
 		t.Error("containsAddr on nil must be false")
+	}
+}
+
+func TestHandleAddClient_RouteMustBeATunnelThePlatformLists(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}}
+	deps.VPN = &mockVPN{platform: vpnconfig.PlatformInfo{Tunnels: []vpnconfig.PlatformTunnel{{ID: "OpenVPN0"}}}}
+
+	rec := httptest.NewRecorder()
+	handleAddClient(deps).ServeHTTP(rec, httptest.NewRequest("POST", "/api/clients",
+		strings.NewReader(`{"ip":"192.168.1.5","route":"wgc1"}`)))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid route") {
+		t.Fatalf("wgc1 on a Keenetic: status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	handleAddClient(deps).ServeHTTP(rec, httptest.NewRequest("POST", "/api/clients",
+		strings.NewReader(`{"ip":"192.168.1.5","route":"OpenVPN0"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OpenVPN0: status = %d: %s", rec.Code, rec.Body.String())
+	}
+	saved := deps.Config.(*mockConfig).savedCfg
+	if saved == nil || len(saved.TunnelDirector.Tunnels["OpenVPN0"].Clients) != 1 {
+		t.Errorf("saved = %+v", saved)
+	}
+}
+
+func TestHandleAddClient_XrayNeedsNoPlatform(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}}
+	deps.VPN = &mockVPN{platformErr: errors.New("down")}
+
+	rec := httptest.NewRecorder()
+	handleAddClient(deps).ServeHTTP(rec, httptest.NewRequest("POST", "/api/clients",
+		strings.NewReader(`{"ip":"192.168.1.5","route":"xray"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ClientsTab offers exactly the configured tunnels when the platform cannot be
+// asked, and the bot and the wizard accept one in that state; the API was the
+// one path that still answered 503 for it.
+func TestHandleAddClient_ConfiguredTunnelNeedsNoPlatform(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{
+		TunnelDirector: vpnconfig.TunnelDirectorConfig{
+			Tunnels: map[string]vpnconfig.TunnelConfig{"OpenVPN0": {Clients: []string{"192.168.1.9"}}},
+		},
+	}}
+	deps.VPN = &mockVPN{platformErr: errors.New("down")}
+
+	rec := httptest.NewRecorder()
+	handleAddClient(deps).ServeHTTP(rec, httptest.NewRequest("POST", "/api/clients",
+		strings.NewReader(`{"ip":"192.168.1.5","route":"OpenVPN0"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	saved := deps.Config.(*mockConfig).savedCfg
+	if saved == nil || len(saved.TunnelDirector.Tunnels["OpenVPN0"].Clients) != 2 {
+		t.Errorf("saved = %+v", saved)
+	}
+}
+
+// The same RCI outage can also arrive as a successful platform document with
+// no tunnels at all (spec 13): not an invalid route, an answer that cannot
+// validate one.
+func TestHandleAddClient_EmptyPlatformAnswerIs503(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}}
+	deps.VPN = &mockVPN{platform: vpnconfig.PlatformInfo{}}
+
+	rec := httptest.NewRecorder()
+	handleAddClient(deps).ServeHTTP(rec, httptest.NewRequest("POST", "/api/clients",
+		strings.NewReader(`{"ip":"192.168.1.5","route":"OpenVPN0"}`)))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "platform info unavailable") {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if deps.Config.(*mockConfig).savedCfg != nil {
+		t.Error("nothing may be saved when the route could not be validated")
+	}
+}
+
+func TestHandleAddClient_PlatformUnavailableIs503(t *testing.T) {
+	deps := newTestDeps(t)
+	deps.Config = &mockConfig{cfg: &vpnconfig.VPNDirectorConfig{}}
+	deps.VPN = &mockVPN{platformErr: errors.New("down")}
+
+	rec := httptest.NewRecorder()
+	handleAddClient(deps).ServeHTTP(rec, httptest.NewRequest("POST", "/api/clients",
+		strings.NewReader(`{"ip":"192.168.1.5","route":"OpenVPN0"}`)))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "platform info unavailable") {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if deps.Config.(*mockConfig).savedCfg != nil {
+		t.Error("nothing may be saved when the route could not be validated")
 	}
 }
