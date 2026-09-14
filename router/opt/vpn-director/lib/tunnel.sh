@@ -292,7 +292,14 @@ tunnel_apply() {
     # still force previously matched clients into the tunnel, so tear down.
     if [[ -z $TUN_DIR_TUNNELS_JSON ]] || [[ $TUN_DIR_TUNNELS_JSON == "{}" ]]; then
         log "No tunnels configured"
-        tunnel_stop
+        # Only when there is something to tear down: a state file, or a chain
+        # that outlived its state files in /tmp. Every Xray-only install (the
+        # template's default) takes this branch on every hook and cron run,
+        # and an unconditional tunnel_stop is 255 `ip rule del` spawns, a
+        # PREROUTING purge and two syslog lines each time.
+        if [[ -f $TUN_DIR_HASH || -f $TUN_DIR_TABLES ]] || fw_chain_exists mangle "$TUN_DIR_CHAIN"; then
+            tunnel_stop
+        fi
         return 0
     fi
 

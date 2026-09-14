@@ -513,6 +513,31 @@ load_tunnel_module_with() {
     grep -q 'ip rule del pref 16384' /tmp/bats_ip_calls.log
 }
 
+# Every Xray-only install applies with tunnels = {} (the template's default) on
+# every hook and cron run. Unconditional, the teardown above cost 255
+# `ip rule del` spawns, a PREROUTING purge and two syslog lines each time, with
+# nothing to tear down.
+@test "tunnel_apply: empty tunnels with no prior state runs no teardown" {
+    load_tunnel_module_with '{}'
+    fw_chain_exists() { return 1; }
+    : > /tmp/bats_ip_calls.log
+    run tunnel_apply
+    assert_success
+    assert_output --partial "No tunnels configured"
+    refute_output --partial "Stopping Tunnel Director"
+    refute grep -q 'ip rule del' /tmp/bats_ip_calls.log
+}
+
+# The state files live in /tmp; a chain that outlived them is still torn down.
+@test "tunnel_apply: empty tunnels still tears down a chain left without state files" {
+    load_tunnel_module_with '{}'
+    fw_chain_exists() { return 0; }
+    rm -f "$TUN_DIR_HASH" "$TUN_DIR_TABLES"
+    run tunnel_apply
+    assert_success
+    assert_output --partial "Stopping Tunnel Director"
+}
+
 # The jump is the whole point of the chain. A platform that cannot name its LAN
 # interfaces used to run the loop zero times, leaving a fully populated chain
 # with nothing jumping to it and tunnel_apply returning 0 - every client routed
