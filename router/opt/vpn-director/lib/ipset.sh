@@ -597,8 +597,14 @@ ipset_status() {
 
     while IFS= read -r name; do
         local info type entries
-        # Guard against concurrent set removal: if lookup fails, skip this set
-        if ! info=$(ipset list "$name" 2>/dev/null); then
+        # Guard against concurrent set removal: if lookup fails, skip this set.
+        # "-t" asks for the header alone. Without it the kernel also prints every
+        # member - 148 KiB for a 9657-entry "ru" - and the awk below stops at the
+        # header line, leaving that listing half-written in a full pipe. The
+        # writer then takes SIGPIPE, pipefail makes it 141, and errexit ends the
+        # report where it stands: every set sorting after the big one vanished,
+        # and so did the Tunnel Director and Xray sections.
+        if ! info=$(ipset list "$name" -t 2>/dev/null); then
             continue
         fi
         type=$(printf '%s\n' "$info" | awk '/^Type:/ { print $2 }')

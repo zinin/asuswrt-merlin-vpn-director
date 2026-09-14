@@ -225,6 +225,35 @@ load '../test_helper'
     assert_output --partial "1000"
 }
 
+# Run a function the way vpn-director.sh runs it. Bats' own "run" clears
+# errexit, so a command that only fails under "set -e" reports success here -
+# which is exactly how the SIGPIPE below stayed invisible to this suite while
+# it truncated the report on every router with a country set.
+under_errexit() { ( set -euo pipefail; "$@" ); }
+
+@test "ipset_status: reads headers only, never a set's whole member list" {
+    # The header carrying name, type and entry count is seven lines; a country
+    # set's member list is hundreds of kilobytes. Asking for the whole listing
+    # to pick one header line leaves the writer blocked on a full pipe when awk
+    # stops at that line: SIGPIPE, which pipefail turns into 141 and errexit
+    # turns into "the report ends here". Measured on an RT-AX86U, where "ru"
+    # holds 9657 entries: status stopped at "kz" and exited 141, so Tunnel
+    # Director and Xray never reached the report at all.
+    #
+    # The crash itself is not portable - the router's awk stops at the matching
+    # line while a development box's gawk drains the rest and survives - so what
+    # is pinned here is the request that makes it possible.
+    load_ipset_module
+    : > /tmp/bats_ipset_calls.log
+    run under_errexit ipset_status
+    assert_success
+    assert_output --partial "bigset"
+    assert_output --partial "us"
+
+    run grep -c '^ipset list bigset$' /tmp/bats_ipset_calls.log
+    assert_output "0"
+}
+
 # ============================================================================
 # _is_valid_country_code - validate country codes
 # ============================================================================
