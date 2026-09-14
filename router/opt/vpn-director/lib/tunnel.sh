@@ -513,6 +513,13 @@ tunnel_apply() {
         # is not: a lookup in an empty table falls through to main.
         local table
         table="$(platform_tunnel_table "$tunnel" "$tunnel_idx")"
+        # Start from an empty table. An apply that died after ensuring this
+        # route but before TUN_DIR_TABLES was written (NDM wiping the chain
+        # mid-apply, a busy xtables lock, a signal) left the route with no
+        # record, so the cleanup above never released it, and a route_ensure
+        # that fails now (interface down) would leave the previous owner's
+        # route behind the ip rule installed below. No-op on Merlin.
+        platform_tunnel_table_release "$tunnel" "$tunnel_idx" || true
         if ! platform_tunnel_route_ensure "$tunnel" "$tunnel_idx" "$(_tunnel_gateway "$tunnel")"; then
             log -l WARN "Tunnel '$tunnel': route not installed (interface down or not mapped?); traffic falls through to main"
             warnings=1

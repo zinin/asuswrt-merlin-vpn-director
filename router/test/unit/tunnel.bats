@@ -538,6 +538,23 @@ load_tunnel_module_with() {
     assert_output --partial "Stopping Tunnel Director"
 }
 
+# An apply that died after ensuring a route but before recording TUN_DIR_TABLES
+# (NDM wiping the chain mid-apply, a busy xtables lock, a signal) leaves the
+# route in its table with no record, so the cleanup at the top of the rebuild
+# never releases it. The next apply hands that index to whichever tunnel comes
+# first now; if that tunnel's route cannot be installed (interface down), the
+# ip rule installed for it resolves to the previous owner's route - the wrong
+# tunnel, while the log reports the fallback to main.
+@test "tunnel_apply: releases a tunnel's table before ensuring its route" {
+    load_tunnel_module
+    platform_tunnel_table_release() { echo "release $1 $2" >> "$BATS_TEST_TMPDIR/calls.log"; }
+    platform_tunnel_route_ensure() { echo "ensure $1 $2" >> "$BATS_TEST_TMPDIR/calls.log"; return 1; }
+    run tunnel_apply
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/calls.log"
+    assert_output $'release wgc1 0\nensure wgc1 0'
+}
+
 # The jump is the whole point of the chain. A platform that cannot name its LAN
 # interfaces used to run the loop zero times, leaving a fully populated chain
 # with nothing jumping to it and tunnel_apply returning 0 - every client routed

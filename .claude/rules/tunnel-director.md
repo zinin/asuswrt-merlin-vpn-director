@@ -99,6 +99,12 @@ file — keying it off the hash alone left those tables allocated while the next
 indices to other tunnels, and on Keenetic table `2000+idx` then still held the previous tunnel's
 route.
 
+The rebuild loop also releases each tunnel's table right before it ensures the route
+(`platform_tunnel_table_release`, then `platform_tunnel_route_ensure`): an apply that dies after
+ensuring a route but before writing `TUN_DIR_TABLES` leaves that route with no record at all, and
+the next apply, handing the index to a tunnel whose route cannot be installed, would otherwise
+send its clients through the previous owner's tunnel.
+
 **Rebuild triggers**:
 - Config hash changed
 - Chain does not exist
