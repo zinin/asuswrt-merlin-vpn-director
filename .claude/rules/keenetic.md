@@ -50,6 +50,8 @@ Xray needs none of this — TPROXY terminates the connection in a local socket, 
 
 Interface names are a convention RCI does not expose: `OpenVPNN` → `ovpn_brN` (a bridge; the tunnel's `tunN` is enslaved), `WireguardN` → `nwgN`. `platform_tunnel_iface` checks the address while the tunnel is up.
 
+`platform_tunnels` selects by `type` alone, so an OpenVPN or WireGuard *server* the router hosts is listed as a tunnel too, and `platform_tunnel_route` would derive its next hop from the server's own address — a route into the router itself. Which RCI field tells a server from a client is unverified (`tunnel-protocol: tcp-client` and `remote-endpoint-address` are what the client fixture carries); the KN-4521 has no server interface. A known limitation, stated in both READMEs.
+
 ## Hooks (`/opt/etc/ndm/*.d/`, run serially by NDM under a 24-second timeout, `/opt/bin/sh` whatever the shebang)
 
 | Directory | Invocation | Our hook |

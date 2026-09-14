@@ -71,6 +71,12 @@ After installation:
 
 MIPS (`mipsle`) builds ship untested.
 
+Known limitation: the tunnel list is built from every OpenVPN and WireGuard interface the
+router has, an OpenVPN or WireGuard **server** included. Do not assign clients to a server
+interface: Tunnel Director would route them into the router's own server tunnel, where their
+traffic is dropped. Telling servers apart needs a router that has one to check the RCI fields
+against; that check is still open.
+
 ### Optional
 
 - `opkg install wget-ssl` — faster and more reliable downloads for country zone files (recommended)
