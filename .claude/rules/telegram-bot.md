@@ -253,5 +253,11 @@ Uses Go's `log/slog` package:
 - Format: `time=2026-01-30T15:04:05.000+03:00 level=INFO source=main.go:42 msg="Bot started"`
 - Levels: `DEBUG`, `INFO`, `WARN`, `ERROR` (configurable via `log_level` in config)
 - Rotation: Log file truncated at 200KB (checked every minute)
+- Redaction: everything written passes `logging.redactingWriter`, which replaces the
+  secret half of a bot token with `REDACTED` and keeps the public bot id. The token
+  travels in the Telegram request path, and `net/http` puts the whole URL into every
+  `*url.Error`, so a bot that cannot reach Telegram used to log its own credentials on
+  each retry into a mode 0644 file the Web UI displays. The writer sits under both slog
+  and the standard log package, so the Telegram client's own debug output is covered too
 
 **Runtime level change**: Call `logger.SetLevel("debug")` to adjust without restart

@@ -24,7 +24,11 @@ func NewSlogLogger(logPath string) (*slog.Logger, *Logger, error) {
 		return nil, nil, err
 	}
 
-	multiWriter := io.MultiWriter(os.Stdout, file)
+	// Everything written to the log passes the scrubber first: a bot token
+	// reaches slog inside the *url.Error that net/http returns, and reaches the
+	// standard log package from the Telegram client's own debug output. One
+	// writer covers both, and both destinations.
+	multiWriter := io.Writer(&redactingWriter{w: io.MultiWriter(os.Stdout, file)})
 
 	// Redirect standard log to the same output (for dependencies like telegram-bot-api)
 	log.SetOutput(multiWriter)
