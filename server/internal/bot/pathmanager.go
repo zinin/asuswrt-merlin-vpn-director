@@ -188,12 +188,14 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 			slog.Warn("Telegram API unreachable on WAN, using backup path")
 		}
 		m.mu.Lock()
-		m.current = next
 		closers := slices.Clone(m.closers)
 		m.mu.Unlock()
 		for _, fn := range closers {
 			fn()
 		}
+		m.mu.Lock()
+		m.current = next
+		m.mu.Unlock()
 	}
 	if next.kind == kindNone {
 		slog.Warn("Telegram API unreachable on every path", "tried", tried)
