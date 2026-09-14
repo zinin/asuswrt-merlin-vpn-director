@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zinin/vpn-director/server/internal/chatstore"
@@ -22,14 +23,15 @@ import (
 
 // Bot is the main Telegram bot struct with DI
 type Bot struct {
-	api       *tgbotapi.BotAPI
-	auth      *Auth
-	router    *Router
-	sender    telegram.MessageSender
-	devMode   bool
-	executor  service.ShellExecutor
-	updater   updater.Updater
-	chatStore *chatstore.Store
+	api         *tgbotapi.BotAPI
+	auth        *Auth
+	router      *Router
+	sender      telegram.MessageSender
+	devMode     bool
+	executor    service.ShellExecutor
+	updater     updater.Updater
+	chatStore   *chatstore.Store
+	pathManager *PathManager
 	// version the bot is running. The startup notifier compares it with the
 	// version a failed update left behind.
 	version string
@@ -63,32 +65,7 @@ func WithChatStore(store *chatstore.Store) Option {
 // New creates a new Bot with full dependency injection.
 // Use WithDevMode() and WithUpdater() options to configure the bot.
 func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error) {
-	httpClient, err := NewHTTPClient(cfg.Proxy, cfg.ProxyFallbackDirect)
-	if err != nil {
-		// Permanent config error — do not retry
-		return nil, &PermanentError{Err: fmt.Errorf("failed to create HTTP client: %w", err)}
-	}
-	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, tgbotapi.APIEndpoint, httpClient)
-	if err != nil {
-		var apiErr *tgbotapi.Error
-		if errors.As(err, &apiErr) && apiErr.Code == 401 {
-			return nil, &PermanentError{Err: fmt.Errorf("invalid bot token: %w", err)}
-		}
-		return nil, err
-	}
-
-	slog.Info("Authorized", "username", api.Self.UserName)
-
-	// Create sender
-	sender := telegram.NewSender(api)
-
-	// Create bot with defaults
-	b := &Bot{
-		api:     api,
-		auth:    NewAuth(cfg.AllowedUsers),
-		sender:  sender,
-		version: version,
-	}
+	b := &Bot{version: version}
 
 	// Apply options
 	for _, opt := range opts {
@@ -101,6 +78,36 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 	xraySvc := service.NewXrayService(p.XrayTemplate, p.XrayConfig)
 	networkSvc := service.NewNetworkService(b.executor)
 	logSvc := service.NewLogService(b.executor)
+
+	var httpClient *http.Client
+	if b.devMode {
+		httpClient = &http.Client{}
+	} else {
+		pm := NewPathManager(PathManagerConfig{
+			Token:        cfg.BotToken,
+			LoadVPN:      configSvc.LoadVPNConfig,
+			LoadPlatform: vpnSvc.Platform,
+		})
+		pm.SelectOnce(context.Background())
+		b.pathManager = pm
+		httpClient = NewPathClient(pm)
+	}
+
+	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, tgbotapi.APIEndpoint, httpClient)
+	if err != nil {
+		var apiErr *tgbotapi.Error
+		if errors.As(err, &apiErr) && apiErr.Code == 401 {
+			return nil, &PermanentError{Err: fmt.Errorf("invalid bot token: %w", err)}
+		}
+		return nil, err
+	}
+
+	slog.Info("Authorized", "username", api.Self.UserName)
+
+	sender := telegram.NewSender(api)
+	b.api = api
+	b.auth = NewAuth(cfg.AllowedUsers)
+	b.sender = sender
 
 	// Create handler dependencies
 	deps := &handler.Deps{
@@ -168,6 +175,9 @@ func (b *Bot) RegisterCommands() error {
 
 // Run starts the bot and processes updates until context is cancelled
 func (b *Bot) Run(ctx context.Context) {
+	if b.pathManager != nil {
+		go b.pathManager.Start(ctx)
+	}
 	// b.chatStore is a typed nil in dev mode; assigning it straight into the
 	// interface would hand CheckAndSendNotify a non-nil interface over a nil
 	// pointer and panic on the first call.
