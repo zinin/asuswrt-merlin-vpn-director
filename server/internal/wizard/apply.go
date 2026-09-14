@@ -85,9 +85,27 @@ func (a *Applier) Apply(chatID int64, state *State) error {
 			validRoutes[id] = true
 		}
 	}
+	platformOK := false
 	if info, err := a.vpn.Platform(); err == nil {
+		platformOK = true
 		for _, t := range info.Tunnels {
 			validRoutes[t.ID] = true
+		}
+	}
+
+	// A route that is neither xray nor already in the config can only be
+	// checked against the platform. With the platform silent, the loop below
+	// would drop that client from the save without a word and the wizard would
+	// still report success - and a transient RCI failure between picking the
+	// tunnel and applying is exactly the NDM-rebuild window. Refuse the save
+	// instead, so a confirmed VPN assignment is never lost quietly. A route the
+	// platform does answer about and does not know stays a skip below.
+	if !platformOK {
+		for _, c := range clients {
+			if !validRoutes[c.Route] {
+				a.sender.SendPlain(chatID, "platform info unavailable, try again")
+				return fmt.Errorf("platform info unavailable: cannot validate route %q for %s", c.Route, c.IP)
+			}
 		}
 	}
 
