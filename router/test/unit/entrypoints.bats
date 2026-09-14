@@ -43,7 +43,47 @@ entry_scripts() {
         run grep -c 'exec "\$_vpd_bash" "\$0" "\$@"' "$script"
         assert_success
         assert_output "1"
+        # A candidate is exec-ed only after it proves it really is bash.
+        run grep -c '"\$_vpd_bash" -c '"'"'\[ -n "\$BASH_VERSION" \]'"'" "$script"
+        assert_success
+        assert_output "1"
     done < <(entry_scripts)
+}
+
+# The block lifted out of the CLI, its candidate list replaced by the caller's,
+# given a body that reports which interpreter it ended up in.
+make_probe_with_candidates() {
+    local probe="$1"; shift
+    sed -n '1,/^fi$/p' "$SCRIPTS_DIR/vpn-director.sh" |
+        sed "s|/opt/bin/bash /usr/bin/bash /bin/bash|$*|" > "$probe"
+    printf 'printf "BASH=%%s\\n" "${BASH_VERSION:-none}"\n' >> "$probe"
+    chmod +x "$probe"
+}
+
+# On Asuswrt-Merlin /bin/bash is a busybox symlink: a POSIX shell that never
+# sets BASH_VERSION. Exec-ing it re-runs the block, which execs it again,
+# forever. A /bin/sh symlink named bash reproduces that here.
+@test "the hand-over block skips a bash that is really a POSIX shell" {
+    local fake="$BATS_TEST_TMPDIR/busybox/bash" probe="$BATS_TEST_TMPDIR/probe.sh"
+    mkdir -p "${fake%/*}"
+    ln -s /bin/sh "$fake"
+    make_probe_with_candidates "$probe" "$fake" "$(command -v bash)"
+
+    run timeout 5 sh "$probe"
+    assert_success
+    assert_output --partial "BASH="
+    refute_output --partial "BASH=none"
+}
+
+@test "the hand-over block gives up instead of looping when no candidate is bash" {
+    local fake="$BATS_TEST_TMPDIR/busybox/bash" probe="$BATS_TEST_TMPDIR/probe.sh"
+    mkdir -p "${fake%/*}"
+    ln -s /bin/sh "$fake"
+    make_probe_with_candidates "$probe" "$fake"
+
+    run timeout 5 sh "$probe"
+    assert_failure 1
+    assert_output --partial "bash not found"
 }
 
 @test "the hand-over block runs the body under real bash" {

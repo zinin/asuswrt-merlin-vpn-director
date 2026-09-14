@@ -263,7 +263,11 @@ over to bash by absolute path, Entware's first:
 #!/bin/sh
 if [ -z "${BASH_VERSION:-}" ]; then
     for _vpd_bash in /opt/bin/bash /usr/bin/bash /bin/bash; do
-        [ -x "$_vpd_bash" ] && exec "$_vpd_bash" "$0" "$@"
+        # Asuswrt-Merlin's /bin/bash is busybox: a POSIX shell that never sets
+        # BASH_VERSION, so exec-ing it would re-run this block forever. Only a
+        # candidate that proves it is bash gets the script.
+        [ -x "$_vpd_bash" ] && "$_vpd_bash" -c '[ -n "$BASH_VERSION" ]' 2>/dev/null &&
+            exec "$_vpd_bash" "$0" "$@"
     done
     echo "$0: bash not found; install it (Entware package \"bash\")" >&2
     exit 1
