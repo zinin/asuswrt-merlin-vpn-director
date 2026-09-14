@@ -53,19 +53,32 @@ func handleAddClient(deps *Deps) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "route is required")
 			return
 		}
-		// A route is xray or a tunnel this router has, asked of the platform
-		// now: the list is the firmware's (Merlin wgcN/ovpncN, Keenetic
-		// OpenVPN0, Wireguard1, ...) and a tunnel can appear or go at any time.
+		// A route is xray, a tunnel already in the config, or a tunnel this
+		// router has, asked of the platform now: the list is the firmware's
+		// (Merlin wgcN/ovpncN, Keenetic OpenVPN0, Wireguard1, ...) and a tunnel
+		// can appear or go at any time. A configured tunnel is accepted without
+		// the platform, as the bot and the wizard accept it: ClientsTab offers
+		// exactly those when the platform cannot be asked, and a 503 here made
+		// that fallback unusable. An empty list is not an answer either: on
+		// Keenetic `vpn-director.sh platform` prints "tunnels": [] and exits 0
+		// while RCI does not reply (spec 13).
 		if req.Route != "xray" {
-			extendWriteDeadline(w, statusDeadline)
-			info, err := deps.VPN.Platform()
+			cfg, err := deps.Config.LoadVPNConfig()
 			if err != nil {
-				jsonError(w, http.StatusServiceUnavailable, "platform info unavailable")
+				jsonError(w, http.StatusInternalServerError, "failed to load configuration")
 				return
 			}
-			if !info.HasTunnel(req.Route) {
-				jsonError(w, http.StatusBadRequest, "invalid route: must be xray or a tunnel this router has")
-				return
+			if _, configured := cfg.TunnelDirector.Tunnels[req.Route]; !configured {
+				extendWriteDeadline(w, statusDeadline)
+				info, err := deps.VPN.Platform()
+				if err != nil || len(info.Tunnels) == 0 {
+					jsonError(w, http.StatusServiceUnavailable, "platform info unavailable")
+					return
+				}
+				if !info.HasTunnel(req.Route) {
+					jsonError(w, http.StatusBadRequest, "invalid route: must be xray or a tunnel this router has")
+					return
+				}
 			}
 		}
 

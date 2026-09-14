@@ -49,7 +49,7 @@ Every route below `/api/` except `POST /api/login` requires a valid token.
 | GET | `/api/platform` | `vpn-director.sh platform`: firmware, password file, LAN/WAN interfaces, tunnels; 503 when the script cannot answer |
 | GET | `/api/servers` | Xray server list plus `active`, the recorded server |
 | POST | `/api/servers/active`, `/api/servers/import` | Select the active server, import a subscription |
-| GET/POST/DELETE | `/api/clients` | LAN clients; a POST route must be xray or a tunnel `/api/platform` lists |
+| GET/POST/DELETE | `/api/clients` | LAN clients; a POST route must be xray, a tunnel already in the config, or a tunnel `/api/platform` lists; 503 when the platform cannot answer for a route outside the config |
 | POST | `/api/clients/pause`, `/api/clients/resume` | Pause and resume a client |
 | GET/POST | `/api/excludes/sets` | Country exclusion sets |
 | GET/POST/DELETE | `/api/excludes/ips` | Excluded IPs and CIDRs |
