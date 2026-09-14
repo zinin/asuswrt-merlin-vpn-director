@@ -1,14 +1,19 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
+	"syscall"
+	"time"
 
 	"golang.org/x/net/proxy"
+	"golang.org/x/sys/unix"
 )
 
 // NewHTTPClient creates an HTTP client optionally configured with a SOCKS5 proxy.
@@ -94,3 +99,255 @@ type PermanentError struct {
 
 func (e *PermanentError) Error() string { return e.Err.Error() }
 func (e *PermanentError) Unwrap() error { return e.Err }
+
+// PathSource is the current Telegram API path and the sink for dial/TLS failures.
+type PathSource interface {
+	Current() Path
+	ReportFailure(Path)
+}
+
+// IdleCloser is implemented by a PathSource that must close keep-alives on a path change.
+type IdleCloser interface {
+	RegisterIdleCloser(func())
+}
+
+var errNoPath = errors.New("telegram API unreachable on every path")
+
+type pathDialer struct {
+	lookupIPv4  func(ctx context.Context, host string) ([]net.IP, error)
+	bindControl func(iface string) func(network, address string, c syscall.RawConn) error
+	socksDial   func(ctx context.Context, port int, network, addr string) (net.Conn, error)
+	tcpDial     func(ctx context.Context, network, addr string, control func(network, address string, c syscall.RawConn) error) (net.Conn, error)
+	dnsDial     func(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+var productionDialer pathDialer
+
+// DialPath connects using p. The caller snapshots p; this function does not.
+func DialPath(ctx context.Context, p Path, network, addr string) (net.Conn, error) {
+	return productionDialer.dial(ctx, p, network, addr)
+}
+
+func (d *pathDialer) dial(ctx context.Context, p Path, network, addr string) (net.Conn, error) {
+	switch p.kind {
+	case kindSOCKS:
+		return d.dialSOCKS(ctx, p, addr)
+	case kindTunnel:
+		return d.dialTunnel(ctx, p, addr)
+	case kindDirect:
+		return d.dialDirect(ctx, addr)
+	default:
+		return nil, errNoPath
+	}
+}
+
+func (d *pathDialer) dialSOCKS(ctx context.Context, p Path, addr string) (net.Conn, error) {
+	fn := d.socksDial
+	if fn == nil {
+		fn = defaultSOCKSDial
+	}
+	return fn(ctx, p.socksPort, "tcp", addr)
+}
+
+func defaultSOCKSDial(ctx context.Context, port int, network, addr string) (net.Conn, error) {
+	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil, proxy.Direct)
+	if err != nil {
+		return nil, err
+	}
+	if cd, ok := dialer.(proxy.ContextDialer); ok {
+		return cd.DialContext(ctx, network, addr)
+	}
+	return dialer.Dial(network, addr)
+}
+
+func (d *pathDialer) dialDirect(ctx context.Context, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := d.lookupDirect(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return d.dialIPv4s(ctx, ips, port, nil)
+}
+
+func (d *pathDialer) dialTunnel(ctx context.Context, p Path, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := d.lookupTunnel(ctx, p.iface, host)
+	if err != nil {
+		return nil, err
+	}
+	// Call bindControl even when tcpDial is injected so tests can record iface.
+	return d.dialIPv4s(ctx, ips, port, d.control(p.iface))
+}
+
+func (d *pathDialer) control(iface string) func(network, address string, c syscall.RawConn) error {
+	if d.bindControl != nil {
+		return d.bindControl(iface)
+	}
+	return bindToDeviceControl(iface)
+}
+
+func (d *pathDialer) lookupDirect(ctx context.Context, host string) ([]net.IP, error) {
+	if ip := ipv4Literal(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	if d.lookupIPv4 != nil {
+		return d.lookupIPv4(ctx, host)
+	}
+	return net.DefaultResolver.LookupIP(ctx, "ip4", host)
+}
+
+func (d *pathDialer) lookupTunnel(ctx context.Context, iface, host string) ([]net.IP, error) {
+	if ip := ipv4Literal(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	if d.lookupIPv4 != nil {
+		return d.lookupIPv4(ctx, host)
+	}
+	r := &net.Resolver{
+		PreferGo: true, // cgo resolver ignores Dial
+		Dial:     d.tunnelDNSDial(iface),
+	}
+	return r.LookupIP(ctx, "ip4", host)
+}
+
+func (d *pathDialer) tunnelDNSDial(iface string) func(ctx context.Context, network, address string) (net.Conn, error) {
+	if d.dnsDial != nil {
+		return d.dnsDial
+	}
+	control := d.control(iface)
+	return func(ctx context.Context, network, _ string) (net.Conn, error) {
+		// Ignore the resolver's address so resolv.conf is not used.
+		switch network {
+		case "udp", "udp4", "udp6":
+			network = "udp4"
+		default:
+			network = "tcp4"
+		}
+		var lastErr error
+		for _, dns := range []string{"8.8.8.8:53", "1.1.1.1:53"} {
+			conn, err := (&net.Dialer{Control: control}).DialContext(ctx, network, dns)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+}
+
+func (d *pathDialer) dialIPv4s(ctx context.Context, ips []net.IP, port string, control func(network, address string, c syscall.RawConn) error) (net.Conn, error) {
+	var lastErr error
+	tried := false
+	for _, ip := range ips {
+		v4 := ip.To4()
+		if v4 == nil {
+			continue
+		}
+		tried = true
+		conn, err := d.doTCP(ctx, "tcp4", net.JoinHostPort(v4.String(), port), control)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if !tried {
+		return nil, errors.New("no IPv4 address")
+	}
+	return nil, lastErr
+}
+
+func (d *pathDialer) doTCP(ctx context.Context, network, addr string, control func(network, address string, c syscall.RawConn) error) (net.Conn, error) {
+	if d.tcpDial != nil {
+		return d.tcpDial(ctx, network, addr, control)
+	}
+	return (&net.Dialer{Control: control}).DialContext(ctx, network, addr)
+}
+
+func ipv4Literal(host string) net.IP {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil
+	}
+	return ip.To4()
+}
+
+func bindToDeviceControl(iface string) func(network, address string, c syscall.RawConn) error {
+	return func(network, address string, c syscall.RawConn) error {
+		var sockErr error
+		if err := c.Control(func(fd uintptr) {
+			sockErr = unix.BindToDevice(int(fd), iface)
+		}); err != nil {
+			return err
+		}
+		return sockErr
+	}
+}
+
+type pathCtxKey struct{}
+
+type pathTransport struct {
+	src  PathSource
+	base *http.Transport
+}
+
+// NewPathClient returns an HTTP client that dials through src.Current().
+// Timeout is left at zero so getUpdates can long-poll.
+func NewPathClient(src PathSource) *http.Client {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	t := &pathTransport{src: src, base: base}
+	base.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
+	base.DialContext = t.dial
+	if ic, ok := src.(IdleCloser); ok {
+		ic.RegisterIdleCloser(base.CloseIdleConnections)
+	}
+	return &http.Client{Transport: t}
+}
+
+func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	p := t.src.Current()
+	req = req.WithContext(context.WithValue(req.Context(), pathCtxKey{}, p))
+	resp, err := t.base.RoundTrip(req)
+	if err != nil && isPathFailure(err) {
+		t.src.ReportFailure(p)
+	}
+	return resp, err
+}
+
+func (t *pathTransport) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	p, _ := ctx.Value(pathCtxKey{}).(Path)
+	if p.kind == kindNone {
+		p = t.src.Current()
+	}
+	return DialPath(ctx, p, network, addr)
+}
+
+func socksListening(port int) bool {
+	c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Second)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+func isPathFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	var op *net.OpError
+	return errors.As(err, &op)
+}

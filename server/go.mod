@@ -9,3 +9,5 @@ require golang.org/x/net v0.52.0
 require github.com/tredoe/osutil v1.5.0
 
 require github.com/golang-jwt/jwt/v5 v5.3.1
+
+require golang.org/x/sys v0.42.0
