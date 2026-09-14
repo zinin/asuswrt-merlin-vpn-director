@@ -71,7 +71,9 @@ table, because other firmware versions may still park policies at 200.
 
 TUN_DIR's insert position is `platform_prerouting_base_pos`: Merlin after the
 firmware's iface-mark rules (or 1 when it has none); Keenetic **2**, ahead of
-every `_NDM_*` jump.
+every `_NDM_*` jump. `tunnel_apply` then counts the `XRAY_TPROXY` jumps already
+in PREROUTING and goes behind them when the base position would land among
+them, so the order is `[XRAY_TPROXY, TUN_DIR]` on both platforms.
 
 **Implication**: If a client IP is in both `xray.clients` and a TD rule, traffic goes through Xray only. TD rule is ignored for that client.
 
@@ -201,6 +203,12 @@ platform_prerouting_base_pos()  # Platform contract
 
 Each LAN interface gets its own jump, at `base_pos`, `base_pos + 1`, … — one shared position would
 make every interface displace the one before it, and each rewrite is a window with no jump.
+
+`tunnel_apply` raises `base_pos` to one past the `XRAY_TPROXY` jumps already in PREROUTING when
+it would otherwise land among them. On Merlin without firmware iface-mark rules the base
+position is 1, the slot XRAY_TPROXY holds, and a rebuild used to put TUN_DIR ahead of it; the
+next apply then found the Xray jump off its position and purged and re-inserted it — a window
+with no TPROXY jump on every apply.
 
 Typically (one LAN interface):
 - Position 1: XRAY_TPROXY

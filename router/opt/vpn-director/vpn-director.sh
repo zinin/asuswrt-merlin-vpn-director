@@ -253,13 +253,11 @@ cmd_apply() {
             # hard-fails under errexit, so this order lets a Tunnel Director failure -
             # a malformed tunnels object, say - end the run without stripping Xray
             # clients of their TPROXY rules. The PREROUTING positions: XRAY_TPROXY always
-            # inserts at 1; TUN_DIR at the platform's base position, computed at insert
-            # time - on Merlin the slot after the firmware's iface-mark rules, which is 1
-            # as well when no firmware VPN client is up, so the two jumps then share
-            # position 1 and the one applied last comes first (pre-existing churn; Xray
-            # still wins through ip rule pref 200). Neither call is wrapped in `||` or
-            # `if !`: that would run its whole body with errexit off and let an unguarded
-            # failure inside pass as success.
+            # inserts at 1; TUN_DIR at the platform's base position, never ahead of the
+            # XRAY_TPROXY jumps already in place - tunnel_apply counts them - so the
+            # order is [XRAY_TPROXY, TUN_DIR] on both platforms. Neither call is wrapped
+            # in `||` or `if !`: that would run its whole body with errexit off and let
+            # an unguarded failure inside pass as success.
             tproxy_apply
             tunnel_apply
             ;;

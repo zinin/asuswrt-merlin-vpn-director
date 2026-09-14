@@ -15,7 +15,8 @@
 #   - firewall.sh (create_fw_chain, delete_fw_chain, ensure_fw_rule, sync_fw_rule,
 #                  purge_fw_rules, fw_chain_exists)
 #   - config.sh (TUN_DIR_TUNNELS_JSON, TUN_DIR_CHAIN, TUN_DIR_PREF_BASE,
-#                TUN_DIR_MARK_MASK, TUN_DIR_MARK_SHIFT)
+#                TUN_DIR_MARK_MASK, TUN_DIR_MARK_SHIFT; XRAY_CHAIN, to keep the
+#                PREROUTING jump behind the Xray jumps)
 #   - ipset.sh (_ipset_exists, parse_exclude_sets_from_json, TUN_DIR_HASH, TUN_DIR_TABLES)
 #
 # Public API:
@@ -377,6 +378,18 @@ tunnel_apply() {
     if [[ -z $base_pos ]]; then
         log -l ERROR "Cannot determine the PREROUTING insert position; Tunnel Director rules not applied"
         return 1
+    fi
+
+    # Never ahead of the Xray jumps. XRAY_TPROXY inserts from position 1 and
+    # runs before this chain by design (packet-flow.md); on Merlin the base
+    # position is 1 as well when the firmware has no iface-mark rules, so a
+    # rebuild put TUN_DIR first and the next apply found the Xray jump off its
+    # position and purged and re-inserted it - a window with no TPROXY jump on
+    # every apply. Count the jumps already there and go behind them.
+    local xray_jumps
+    xray_jumps=$(iptables -t mangle -S PREROUTING 2>/dev/null | grep -c -- "-j ${XRAY_CHAIN:-XRAY_TPROXY}\$" || true)
+    if (( base_pos <= xray_jumps )); then
+        base_pos=$((xray_jumps + 1))
     fi
 
     # A platform whose firmware accelerates established forwarded flows past

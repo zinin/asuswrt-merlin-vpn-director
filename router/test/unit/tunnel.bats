@@ -555,6 +555,27 @@ load_tunnel_module_with() {
     assert_output $'release wgc1 0\nensure wgc1 0'
 }
 
+# XRAY_TPROXY inserts from position 1 and runs before this chain by design. On
+# Merlin without firmware iface-mark rules the platform's base position is 1 as
+# well, so a rebuild put TUN_DIR ahead of the Xray jump and the next apply
+# found that jump off its position and purged and re-inserted it - a window
+# with no TPROXY jump on every apply.
+@test "tunnel_apply: the jump goes behind the XRAY_TPROXY jumps already in PREROUTING" {
+    load_tunnel_module
+    iptables() {
+        if [[ "$*" == "-t mangle -S PREROUTING" ]]; then
+            echo "iptables $*" >> /tmp/bats_iptables_calls.log
+            printf -- '-P PREROUTING ACCEPT\n-A PREROUTING -i br0 -j XRAY_TPROXY\n'
+            return 0
+        fi
+        command iptables "$@"
+    }
+    : > /tmp/bats_iptables_calls.log
+    run tunnel_apply
+    assert_success
+    grep -q -- '-I PREROUTING 2 -i br0 -m mark --mark 0x0/0xff0000 -j TUN_DIR' /tmp/bats_iptables_calls.log
+}
+
 # The jump is the whole point of the chain. A platform that cannot name its LAN
 # interfaces used to run the loop zero times, leaving a fully populated chain
 # with nothing jumping to it and tunnel_apply returning 0 - every client routed
