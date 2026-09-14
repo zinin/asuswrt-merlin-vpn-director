@@ -89,7 +89,8 @@ cd server && go run ./cmd/webui --dev
 - A tunnel key is any id `platform_tunnels` lists (Merlin: `wgcN` and `ovpncN` from
   `/etc/iproute2/rt_tables`, plus `main`; Keenetic: `OpenVPNN` and `WireguardN` from
   RCI, plus `main`); a key the platform does not list is skipped with a warning
-- Optional `gateway` is the Keenetic OpenVPN next hop; ignored on Merlin and on Keenetic WireGuard
+- Optional `gateway` is the OpenVPN next hop; ignored on WireGuard. On Merlin it
+  is also what fills ovpncN when the server does not push redirect-gateway.
 
 **IPSet Types**: Country sets — 2-letter ISO codes from multi-source download
 

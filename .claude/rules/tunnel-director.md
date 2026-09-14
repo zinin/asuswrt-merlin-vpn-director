@@ -41,7 +41,7 @@ Routes LAN client traffic through VPN tunnels. All traffic goes through the tunn
 | Tunnel key | A tunnel id `platform_tunnels` lists (Merlin: `wgcN`, `ovpncN` from `/etc/iproute2/rt_tables`, plus `main`; Keenetic: `OpenVPNN`, `WireguardN` from RCI, plus `main`) |
 | `clients` | Array of LAN IPs/CIDRs (RFC1918 only) |
 | `exclude` | Array of country codes for direct routing |
-| `gateway` | Optional. Keenetic OpenVPN next hop; ignored on Merlin and on Keenetic WireGuard |
+| `gateway` | Optional. OpenVPN next hop; ignored on WireGuard. On Merlin it fills ovpncN when the server does not push redirect-gateway |
 
 ## Behavior
 

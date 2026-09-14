@@ -93,18 +93,81 @@ platform_tunnel_table() {
     esac
 }
 
-# The firmware owns the tunnel tables, so there is no route spec to print and
-# nothing to install or release. Both _ensure and _release still have to answer
-# for any call the core makes: _ensure on every apply of an unchanged config,
-# _release for a recorded index whose route was never installed.
+# First host of an IPv4 CIDR (10.74.150.53/24 → 10.74.150.1). Same arithmetic
+# as Keenetic's _keenetic_first_host: a /31 or /32 is answered wrongly rather
+# than not at all, and tunnel_director.tunnels.<id>.gateway is what overrides
+# it. Prefix and octets are range-checked so a shift cannot fold 300 into a
+# neighbouring octet.
+_merlin_first_host() {
+    local cidr="${1:-}" a1 a2 a3 a4 pfx o net first left
+    local -a mask=()
+    [[ $cidr =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/([0-9]{1,2})$ ]] || return 1
+    a1="${BASH_REMATCH[1]}" a2="${BASH_REMATCH[2]}" a3="${BASH_REMATCH[3]}" a4="${BASH_REMATCH[4]}"
+    pfx="${BASH_REMATCH[5]}"
+    for o in "$a1" "$a2" "$a3" "$a4"; do
+        [[ $((10#$o)) -le 255 ]] || return 1
+    done
+    (( 10#$pfx <= 32 )) || return 1
+    left=$((10#$pfx))
+    for o in 0 1 2 3; do
+        if (( left >= 8 )); then
+            mask+=("255")
+            left=$((left - 8))
+        elif (( left > 0 )); then
+            mask+=("$(( 256 - (1 << (8 - left)) ))")
+            left=0
+        else
+            mask+=("0")
+        fi
+    done
+    net=$(( ((10#$a1 << 24) | (10#$a2 << 16) | (10#$a3 << 8) | 10#$a4) &
+           ((10#${mask[0]} << 24) | (10#${mask[1]} << 16) | (10#${mask[2]} << 8) | 10#${mask[3]}) ))
+    first=$(( net + 1 ))
+    printf '%d.%d.%d.%d\n' $(( (first >> 24) & 255 )) $(( (first >> 16) & 255 )) \
+        $(( (first >> 8) & 255 )) $(( first & 255 ))
+}
+
+# OpenVPN in policy mode (rgw=2) copies WAN into ovpncN when the server does
+# not push redirect-gateway. Tunnel Director then marks into a table whose
+# default is still the WAN, so the spec is that default: via the configured
+# gateway, else the first host of tun1N. Wireguard is a p2p device, so a
+# configured gateway has nothing to apply to. Only the OpenVPN path without a
+# gateway needs the interface to carry an address.
 platform_tunnel_route() {
-    return 1
+    local id="${1:-}" gateway="${2:-}" iface cidr
+    iface="$(platform_tunnel_iface "$id")" || return 1
+    case "$id" in
+        wgc[0-9]*)
+            printf 'default dev %s\n' "$iface"
+            ;;
+        ovpnc[0-9]*)
+            if [[ -z $gateway ]]; then
+                cidr="$(ip -4 -o addr show "$iface" 2>/dev/null |
+                    awk '{ for (i = 1; i <= NF; i++) if ($i == "inet") { print $(i + 1); exit } }')" || true
+                [[ -n $cidr ]] || return 1
+                gateway="$(_merlin_first_host "$cidr")" || return 1
+            fi
+            printf 'default via %s dev %s\n' "$gateway" "$iface"
+            ;;
+        *) return 1 ;;
+    esac
 }
 
+# "ip route replace" is idempotent, which tunnel.sh relies on: it calls this
+# on every apply, including those that change nothing, so the default follows
+# the interface across OpenVPN flaps once wan-event fires an apply.
 platform_tunnel_route_ensure() {
-    return 0
+    local id="${1:-}" idx="${2:-}" gateway="${3:-}" table spec
+    table="$(platform_tunnel_table "$id" "$idx")" || return 1
+    [[ $table != main ]] || return 0
+    spec="$(platform_tunnel_route "$id" "$gateway")" || return 1
+    # shellcheck disable=SC2086
+    ip route replace $spec table "$table" 2>/dev/null
 }
 
+# The rest of ovpncN/wgcN is firmware's (LAN routes, the tunnel prefix, DNS).
+# Flushing it would drop those. tunnel_stop only needs the ip rule gone; the
+# default we installed is inert without it.
 platform_tunnel_table_release() {
     return 0
 }

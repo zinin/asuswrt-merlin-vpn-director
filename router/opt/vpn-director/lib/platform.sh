@@ -44,8 +44,8 @@
 # What the core relies on beyond those signatures:
 #   * platform_tunnel_route has no caller in the core. It is there for the
 #     implementation's own use, as the source of the spec that
-#     platform_tunnel_route_ensure applies; a platform whose firmware owns the
-#     tunnel tables has no spec to print and returns 1.
+#     platform_tunnel_route_ensure applies. Both platforms print a default
+#     for the tunnel table (OpenVPN via a gateway, Wireguard by device).
 #   * platform_tunnel_route_ensure must be idempotent: tunnel.sh calls it for
 #     every recorded tunnel on every apply that finds the configuration already
 #     up to date, not only when something changed.
@@ -55,7 +55,8 @@
 #   * The optional trailing arguments are how a platform learns what only the
 #     config knows without reading config globals: tunnel.sh passes
 #     tunnel_director.tunnels.<id>.gateway (validated, or empty) and tproxy.sh
-#     passes "$XRAY_FWMARK/$XRAY_FWMARK_MASK". Merlin ignores both.
+#     passes "$XRAY_FWMARK/$XRAY_FWMARK_MASK". Wireguard ignores the gateway
+#     on both platforms; Merlin ignores the TPROXY mark (it has no extra rule).
 #   * platform_tunnel_offload_target names a target, not a rule: tunnel.sh owns
 #     where it goes. It builds the rule with the same match as the MARK rule of
 #     the client it belongs to and places it immediately before that rule, so a

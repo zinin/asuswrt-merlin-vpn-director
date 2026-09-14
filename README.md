@@ -225,7 +225,7 @@ Traffic from specified LAN clients is transparently redirected through Xray usin
 
 ### Tunnel Director
 
-Routes traffic from specified LAN clients through OpenVPN/WireGuard tunnels based on destination. Configurable exclusions allow direct access to specified countries for optimal performance. A tunnel key is an id the platform lists (`wgc1` / `ovpnc1` on Merlin, `OpenVPN0` / `Wireguard1` on KeeneticOS). On KeeneticOS an OpenVPN tunnel may set optional `gateway` (the next hop; otherwise the subnet's first host).
+Routes traffic from specified LAN clients through OpenVPN/WireGuard tunnels based on destination. Configurable exclusions allow direct access to specified countries for optimal performance. A tunnel key is an id the platform lists (`wgc1` / `ovpnc1` on Merlin, `OpenVPN0` / `Wireguard1` on KeeneticOS). An OpenVPN tunnel may set optional `gateway` (the next hop; otherwise the subnet's first host). WireGuard ignores it.
 
 ```json
 {

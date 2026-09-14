@@ -149,26 +149,92 @@ with_mock() {
     refute_output
 }
 
-@test "platform_tunnel_route: Merlin needs no route spec, so it always fails" {
-    load_platform
-    run platform_tunnel_route wgc1
-    assert_failure
-    refute_output
+# Firmware OpenVPN in policy mode (rgw=2) copies WAN into ovpncN when the
+# server does not push redirect-gateway. Tunnel Director then marks packets
+# into a table whose default is still the WAN. The spec is the default that
+# replace puts in that table; release stays a no-op because the rest of the
+# table is firmware's.
+
+with_tun_addr() {
+    printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/addrs"
+    export BATS_IP_ADDRS_FILE="$BATS_TEST_TMPDIR/addrs"
 }
 
-# _ensure has to be idempotent (tunnel.sh calls it on every up-to-date apply)
-# and _release has to answer for an index that was never ensured (tunnel_stop
-# walks the recorded state file unconditionally). Both hold trivially here.
-@test "platform_tunnel_route_ensure and _table_release: no-ops that succeed" {
+@test "platform_tunnel_route: OpenVPN via the subnet's first host, Wireguard by device" {
+    load_platform
+    with_tun_addr "tun12 10.74.150.53/24"
+    run platform_tunnel_route ovpnc2
+    assert_success
+    assert_output "default via 10.74.150.1 dev tun12"
+    run platform_tunnel_route wgc1
+    assert_success
+    assert_output "default dev wgc1"
+}
+
+@test "platform_tunnel_route: a configured gateway replaces the computed one" {
+    load_platform
+    run platform_tunnel_route ovpnc2 10.74.150.254
+    assert_success
+    assert_output "default via 10.74.150.254 dev tun12"
+}
+
+@test "platform_tunnel_route: nothing while the OpenVPN tunnel has no address" {
+    load_platform
+    with_tun_addr "tun11 10.73.149.53/24"
+    run platform_tunnel_route ovpnc2
+    assert_failure
+    refute_output
+    run platform_tunnel_route ovpnc1
+    assert_success
+    assert_output "default via 10.73.149.1 dev tun11"
+}
+
+@test "platform_tunnel_route_ensure: replaces the default in the tunnel's table, idempotently" {
+    load_platform
+    with_tun_addr "tun12 10.74.150.53/24"
+    : > /tmp/bats_ip_calls.log
+    run platform_tunnel_route_ensure ovpnc2 1
+    assert_success
+    run platform_tunnel_route_ensure ovpnc2 1
+    assert_success
+    assert_equal "$(grep -c 'ip route replace default via 10.74.150.1 dev tun12 table ovpnc2' /tmp/bats_ip_calls.log)" 2
+    run platform_tunnel_route_ensure wgc1 0 ""
+    assert_success
+    grep -q 'ip route replace default dev wgc1 table wgc1' /tmp/bats_ip_calls.log
+}
+
+@test "platform_tunnel_route_ensure: passes the gateway on and fails for a down OpenVPN tunnel" {
+    load_platform
+    with_tun_addr "tun12 10.74.150.53/24"
+    : > /tmp/bats_ip_calls.log
+    run platform_tunnel_route_ensure ovpnc2 1 10.74.150.254
+    assert_success
+    grep -q 'ip route replace default via 10.74.150.254 dev tun12 table ovpnc2' /tmp/bats_ip_calls.log
+    : > /tmp/bats_ip_calls.log
+    run platform_tunnel_route_ensure ovpnc1 0
+    assert_failure
+    refute grep -q 'table ovpnc1' /tmp/bats_ip_calls.log
+}
+
+@test "platform_tunnel_route_ensure and _table_release: main touches no table" {
     load_platform
     : > /tmp/bats_ip_calls.log
-    run platform_tunnel_route_ensure wgc1 0
+    run platform_tunnel_route_ensure main 4
     assert_success
-    run platform_tunnel_route_ensure wgc1 0
+    run platform_tunnel_table_release main 4
+    assert_success
+    [ ! -s /tmp/bats_ip_calls.log ]
+}
+
+# Unlike Keenetic, Merlin must not flush ovpncN/wgcN: firmware keeps LAN
+# routes, the tunnel prefix and DNS there. Stopping Tunnel Director only
+# drops the ip rule; the table stays.
+@test "platform_tunnel_table_release: does not flush a firmware table" {
+    load_platform
+    : > /tmp/bats_ip_calls.log
+    run platform_tunnel_table_release ovpnc2 1
     assert_success
     run platform_tunnel_table_release wgc1 0
-    assert_success
-    run platform_tunnel_table_release wgc9 7
     assert_success
     [ ! -s /tmp/bats_ip_calls.log ]
 }
