@@ -68,6 +68,8 @@ func DialPath(ctx context.Context, p Path, network, addr string) (net.Conn, erro
 }
 
 func (d *pathDialer) dial(ctx context.Context, p Path, network, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, productionDialTimeout)
+	defer cancel()
 	switch p.kind {
 	case kindSOCKS:
 		return d.dialSOCKS(ctx, p, addr)
@@ -198,24 +200,61 @@ func (d *pathDialer) tunnelDNSDial(iface string, mark uint32, dns string) func(c
 }
 
 func (d *pathDialer) dialIPv4s(ctx context.Context, ips []net.IP, port string, control func(network, address string, c syscall.RawConn) error) (net.Conn, error) {
-	var lastErr error
-	tried := false
+	var addrs []net.IP
 	for _, ip := range ips {
-		v4 := ip.To4()
-		if v4 == nil {
-			continue
+		if v4 := ip.To4(); v4 != nil {
+			addrs = append(addrs, v4)
 		}
-		tried = true
-		conn, err := d.doTCP(ctx, "tcp4", net.JoinHostPort(v4.String(), port), control)
+	}
+	if len(addrs) == 0 {
+		return nil, errors.New("no IPv4 address")
+	}
+	var lastErr error
+	for i, v4 := range addrs {
+		addrCtx := ctx
+		var cancel context.CancelFunc
+		if deadline, ok := ctx.Deadline(); ok {
+			partial, err := partialDeadline(time.Now(), deadline, len(addrs)-i)
+			if err != nil {
+				if lastErr != nil {
+					return nil, lastErr
+				}
+				return nil, err
+			}
+			addrCtx, cancel = context.WithDeadline(ctx, partial)
+		}
+		conn, err := d.doTCP(addrCtx, "tcp4", net.JoinHostPort(v4.String(), port), control)
+		if cancel != nil {
+			cancel()
+		}
 		if err == nil {
 			return conn, nil
 		}
 		lastErr = err
 	}
-	if !tried {
-		return nil, errors.New("no IPv4 address")
-	}
 	return nil, lastErr
+}
+
+// partialDeadline is net.Dialer's per-address slice of a shared deadline:
+// remaining/n, but at least 2s unless less time is left.
+func partialDeadline(now, deadline time.Time, addrsRemaining int) (time.Time, error) {
+	if deadline.IsZero() {
+		return deadline, nil
+	}
+	timeRemaining := deadline.Sub(now)
+	if timeRemaining <= 0 {
+		return time.Time{}, context.DeadlineExceeded
+	}
+	timeout := timeRemaining / time.Duration(addrsRemaining)
+	const saneMinimum = 2 * time.Second
+	if timeout < saneMinimum {
+		if timeRemaining < saneMinimum {
+			timeout = timeRemaining
+		} else {
+			timeout = saneMinimum
+		}
+	}
+	return now.Add(timeout), nil
 }
 
 func (d *pathDialer) doTCP(ctx context.Context, network, addr string, control func(network, address string, c syscall.RawConn) error) (net.Conn, error) {

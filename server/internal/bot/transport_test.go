@@ -84,6 +84,64 @@ func TestPathDialer_SOCKSKeepsHostname(t *testing.T) {
 	}
 }
 
+func TestDialDirect_LookupHasDeadline(t *testing.T) {
+	var had bool
+	d := pathDialer{
+		lookupIPv4: func(ctx context.Context, host string) ([]net.IP, error) {
+			_, had = ctx.Deadline()
+			return nil, errors.New("stop")
+		},
+	}
+	_, _ = d.dial(context.Background(), Path{kind: kindDirect}, "tcp", "api.telegram.org:443")
+	if !had {
+		t.Fatal("direct DNS lookup has no dial timeout")
+	}
+}
+
+func TestDialIPv4s_ReservesTimeForLaterAddresses(t *testing.T) {
+	var mu sync.Mutex
+	var secondRemain time.Duration
+	sawSecond := false
+	d := pathDialer{
+		tcpDial: func(ctx context.Context, network, addr string, control func(string, string, syscall.RawConn) error) (net.Conn, error) {
+			host, _, _ := net.SplitHostPort(addr)
+			if host == "5.6.7.8" {
+				mu.Lock()
+				sawSecond = true
+				if dl, ok := ctx.Deadline(); ok {
+					secondRemain = time.Until(dl)
+				}
+				mu.Unlock()
+				c1, c2 := net.Pipe()
+				c2.Close()
+				return c1, nil
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	conn, err := d.dialIPv4s(ctx, []net.IP{net.IPv4(1, 2, 3, 4), net.IPv4(5, 6, 7, 8)}, "443", nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("second address: %v", err)
+	}
+	conn.Close()
+	if elapsed > 4*time.Second {
+		t.Fatalf("first address consumed the budget: %s", elapsed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !sawSecond {
+		t.Fatal("second address not tried")
+	}
+	if secondRemain < time.Second {
+		t.Fatalf("second address remaining %s", secondRemain)
+	}
+}
+
 func TestPathDialer_TunnelBindsIface(t *testing.T) {
 	var gotIface string
 	var gotMark uint32
