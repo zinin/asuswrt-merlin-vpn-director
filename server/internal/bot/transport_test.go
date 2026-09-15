@@ -230,6 +230,54 @@ func TestNewPathClient_RegistersIdleCloser(t *testing.T) {
 	}
 }
 
+// CloseIdleConnections does not interrupt an in-use connection. getUpdates
+// long-polls with Client.Timeout=0, so a blackholed path would pin the sole
+// polling goroutine until the kernel TCP timeout. Retire must close that conn.
+func TestNewPathClient_PathChangeAbortsInFlight(t *testing.T) {
+	arrived := make(chan struct{})
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer close(hold)
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	if len(src.idle) != 1 {
+		t.Fatalf("idle closers %d", len(src.idle))
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL)
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			errc <- resp.Body.Close()
+			return
+		}
+		errc <- err
+	}()
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not reach the server")
+	}
+
+	src.idle[0](src.p)
+
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("in-flight getUpdates must not survive a path change")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight request still blocked after path change")
+	}
+}
+
 // CloseIdleConnections on a shared Transport is undone by the next RoundTrip
 // (queueForIdleConn clears closeIdle). An in-flight getUpdates can then return
 // its conn to the pool after a path switch. Retiring the Transport on the idle
@@ -243,8 +291,6 @@ func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 	var once1, once2 sync.Once
 	rel1 := func() { once1.Do(func() { close(release1) }) }
 	rel2 := func() { once2.Do(func() { close(release2) }) }
-	defer rel1()
-	defer rel2()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -261,6 +307,8 @@ func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
+	defer rel1()
+	defer rel2()
 
 	src := &fakeSource{p: Path{kind: kindDirect}}
 	client := NewPathClient(src)
@@ -290,6 +338,15 @@ func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 
 	src.idle[0](src.p) // path change: retire keep-alives so they cannot serve later requests
 
+	select {
+	case err := <-err1:
+		if err == nil {
+			t.Fatal("in-flight request survived path change")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not finish")
+	}
+
 	err2 := make(chan error, 1)
 	go func() { err2 <- do() }()
 	select {
@@ -299,16 +356,6 @@ func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("second request did not reach the server")
-	}
-
-	rel1()
-	select {
-	case err := <-err1:
-		if err != nil {
-			t.Fatalf("first request: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first request did not finish")
 	}
 
 	err3 := make(chan error, 1)

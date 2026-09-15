@@ -238,9 +238,54 @@ type pathTransport struct {
 	mu    sync.Mutex
 	bound Path
 	base  *http.Transport
+	gen   *connGen
 	// dialer nil means the package's production dialer. The field exists so a
 	// test injects a dialer instead of writing to that package variable.
 	dialer *pathDialer
+}
+
+// connGen is the live sockets of one Transport generation. CloseIdleConnections
+// leaves in-flight getUpdates alone; closeAll is what unblocks it on a path change.
+type connGen struct {
+	mu    sync.Mutex
+	conns map[net.Conn]struct{}
+}
+
+func newConnGen() *connGen {
+	return &connGen{conns: make(map[net.Conn]struct{})}
+}
+
+func (g *connGen) add(c net.Conn) {
+	g.mu.Lock()
+	g.conns[c] = struct{}{}
+	g.mu.Unlock()
+}
+
+func (g *connGen) remove(c net.Conn) {
+	g.mu.Lock()
+	delete(g.conns, c)
+	g.mu.Unlock()
+}
+
+func (g *connGen) closeAll() {
+	g.mu.Lock()
+	conns := g.conns
+	g.conns = make(map[net.Conn]struct{})
+	g.mu.Unlock()
+	for c := range conns {
+		_ = c.Close()
+	}
+}
+
+type trackedConn struct {
+	net.Conn
+	once sync.Once
+	gen  *connGen
+}
+
+func (c *trackedConn) Close() error {
+	c.once.Do(func() { c.gen.remove(c) })
+	return c.Conn.Close()
 }
 
 func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
@@ -260,22 +305,33 @@ func NewPathClient(src PathSource) *http.Client {
 // replace one dial without writing to productionDialer.
 func newPathClientWith(src PathSource, d *pathDialer) *http.Client {
 	t := &pathTransport{src: src, bound: src.Current(), dialer: d}
-	t.base = newPathBase(t.dial)
+	t.gen = newConnGen()
+	t.base = t.attach(t.gen)
 	if ic, ok := src.(IdleCloser); ok {
 		ic.RegisterIdleCloser(t.retireBase)
 	}
 	return &http.Client{Transport: t}
 }
 
+func (t *pathTransport) attach(gen *connGen) *http.Transport {
+	return newPathBase(func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return t.dialOn(ctx, network, addr, gen)
+	})
+}
+
 // retireBase installs a new Transport bound to next so keep-alives from the
-// previous path cannot be reused. In-flight RoundTrips keep the old pair.
+// previous path cannot be reused, and closes in-flight sockets of the old
+// generation so getUpdates is not pinned to a blackholed path.
 func (t *pathTransport) retireBase(next Path) {
 	t.mu.Lock()
 	old := t.base
+	oldGen := t.gen
 	t.bound = next
-	t.base = newPathBase(t.dial)
+	t.gen = newConnGen()
+	t.base = t.attach(t.gen)
 	t.mu.Unlock()
 	old.CloseIdleConnections()
+	oldGen.closeAll()
 }
 
 func (t *pathTransport) CloseIdleConnections() {
@@ -312,14 +368,20 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
-func (t *pathTransport) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+func (t *pathTransport) dialOn(ctx context.Context, network, addr string, gen *connGen) (net.Conn, error) {
 	p, _ := ctx.Value(pathCtxKey{}).(Path)
 	// Set once at construction and never mutated, so it needs no lock.
 	d := t.dialer
 	if d == nil {
 		d = &productionDialer
 	}
-	return d.dial(ctx, p, network, addr)
+	c, err := d.dial(ctx, p, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	tc := &trackedConn{Conn: c, gen: gen}
+	gen.add(tc)
+	return tc, nil
 }
 
 func socksListening(port int) bool {
