@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zinin/vpn-director/server/internal/config"
 	"github.com/zinin/vpn-director/server/internal/devmode"
@@ -95,5 +96,12 @@ func TestNew_ProductionUsesPathClientAndManager(t *testing.T) {
 	}
 	if _, isPath := c.Transport.(*pathTransport); !isPath {
 		t.Fatalf("transport is %T; production must dial through a pathTransport", c.Transport)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !b.pathManager.running {
+		if time.Now().After(deadline) {
+			t.Fatal("path monitor must start before getMe so a blackhole can fail over")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

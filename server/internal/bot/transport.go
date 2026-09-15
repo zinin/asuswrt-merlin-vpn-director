@@ -299,6 +299,9 @@ type pathTransport struct {
 	// afterBoundSnapshot is for tests: runs after the RoundTrip snapshot,
 	// before dispatch. Production is nil.
 	afterBoundSnapshot func()
+	// nonPollTimeout bounds getMe, setMyCommands, sendMessage. Zero means
+	// productionDialTimeout. getUpdates is not bounded (Client.Timeout is 0).
+	nonPollTimeout time.Duration
 }
 
 // connGen is one Transport generation. Retired generations reject new
@@ -446,6 +449,14 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.afterBoundSnapshot != nil && isTelegramPoll(req) {
 		t.afterBoundSnapshot()
 	}
+	var stopTimeout context.CancelFunc
+	if pw == nil {
+		timeout := t.nonPollTimeout
+		if timeout <= 0 {
+			timeout = productionDialTimeout
+		}
+		ctx, stopTimeout = context.WithTimeout(ctx, timeout)
+	}
 	ctx = context.WithValue(ctx, pathCtxKey{}, p)
 	req = req.WithContext(ctx)
 	var handshakeMu sync.Mutex
@@ -466,12 +477,27 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil && (isPathFailure(err) || hs != nil) {
 		t.src.ReportFailure(p)
 	}
+	var onBody []func()
 	if pw != nil {
 		if err != nil || resp == nil {
 			t.unregisterPoll(pw)
 		} else {
-			resp.Body = &pollBody{ReadCloser: resp.Body, done: func() { t.unregisterPoll(pw) }}
+			onBody = append(onBody, func() { t.unregisterPoll(pw) })
 		}
+	}
+	if stopTimeout != nil {
+		if err != nil || resp == nil {
+			stopTimeout()
+		} else {
+			onBody = append(onBody, stopTimeout)
+		}
+	}
+	if len(onBody) > 0 && resp != nil {
+		resp.Body = &pollBody{ReadCloser: resp.Body, done: func() {
+			for _, f := range onBody {
+				f()
+			}
+		}}
 	}
 	return resp, err
 }

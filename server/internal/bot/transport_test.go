@@ -748,6 +748,75 @@ func TestNewPathClient_SwitchBindsNewPathBeforeCurrentUpdates(t *testing.T) {
 	}
 }
 
+func TestNewPathClient_NonPollRequestTimesOut(t *testing.T) {
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer close(hold)
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	client.Transport.(*pathTransport).nonPollTimeout = 50 * time.Millisecond
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL + "/botTOKEN/getMe")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		errc <- err
+	}()
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("expected timeout")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("non-poll request has no timeout")
+	}
+}
+
+func TestNewPathClient_GetUpdatesIgnoresNonPollTimeout(t *testing.T) {
+	arrived := make(chan struct{})
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer close(hold)
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	client.Transport.(*pathTransport).nonPollTimeout = 50 * time.Millisecond
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL + "/botTOKEN/getUpdates")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			errc <- resp.Body.Close()
+			return
+		}
+		errc <- err
+	}()
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("getUpdates did not reach the server")
+	}
+	select {
+	case err := <-errc:
+		t.Fatalf("getUpdates timed out: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
 func TestNewPathClient_NoClientTimeout(t *testing.T) {
 	c := NewPathClient(&fakeSource{p: Path{kind: kindDirect}})
 	if c.Timeout != 0 {

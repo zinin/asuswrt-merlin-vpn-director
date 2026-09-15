@@ -89,6 +89,7 @@ func New(ctx context.Context, cfg *config.Config, p paths.Paths, version, versio
 	logSvc := service.NewLogService(b.executor)
 
 	var httpClient *http.Client
+	var stopMonitor context.CancelFunc
 	if b.devMode {
 		httpClient = &http.Client{}
 	} else {
@@ -101,6 +102,9 @@ func New(ctx context.Context, cfg *config.Config, p paths.Paths, version, versio
 		pm.SelectOnce(ctx)
 		b.pathManager = pm
 		httpClient = NewPathClient(pm)
+		monitorCtx, stop := context.WithCancel(ctx)
+		stopMonitor = stop
+		go pm.Start(monitorCtx)
 	}
 
 	endpoint := tgbotapi.APIEndpoint
@@ -109,6 +113,9 @@ func New(ctx context.Context, cfg *config.Config, p paths.Paths, version, versio
 	}
 	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, endpoint, httpClient)
 	if err != nil {
+		if stopMonitor != nil {
+			stopMonitor()
+		}
 		var apiErr *tgbotapi.Error
 		if errors.As(err, &apiErr) && apiErr.Code == 401 {
 			return nil, &PermanentError{Err: fmt.Errorf("invalid bot token: %w", err)}

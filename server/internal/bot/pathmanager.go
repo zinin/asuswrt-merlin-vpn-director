@@ -42,6 +42,7 @@ type PathManager struct {
 	mu      sync.Mutex
 	current Path
 	cycling bool
+	running bool
 	closers []func(Path)
 	// lastNoPath is the tried set already warned about, empty after a cycle that found a path.
 	lastNoPath string
@@ -133,6 +134,18 @@ func (m *PathManager) ReportFailure(p Path) {
 }
 
 func (m *PathManager) Start(ctx context.Context) {
+	m.mu.Lock()
+	if m.running {
+		m.mu.Unlock()
+		return
+	}
+	m.running = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.running = false
+		m.mu.Unlock()
+	}()
 	t := time.NewTicker(m.interval)
 	defer t.Stop()
 	for {
