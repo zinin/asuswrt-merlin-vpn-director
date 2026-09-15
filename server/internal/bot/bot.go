@@ -32,6 +32,10 @@ type Bot struct {
 	updater     updater.Updater
 	chatStore   *chatstore.Store
 	pathManager *PathManager
+	// apiBase is empty in production and set only by tests, where one local
+	// server answers both the path probe and the Telegram API, as one host
+	// does in production.
+	apiBase string
 	// version the bot is running. The startup notifier compares it with the
 	// version a failed update left behind.
 	version string
@@ -62,6 +66,11 @@ func WithChatStore(store *chatstore.Store) Option {
 	}
 }
 
+// withAPIBase points the path probe and the Telegram API at base. Tests only.
+func withAPIBase(base string) Option {
+	return func(b *Bot) { b.apiBase = base }
+}
+
 // New creates a new Bot with full dependency injection.
 // Use WithDevMode() and WithUpdater() options to configure the bot.
 func New(ctx context.Context, cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error) {
@@ -87,13 +96,18 @@ func New(ctx context.Context, cfg *config.Config, p paths.Paths, version, versio
 			Token:        cfg.BotToken,
 			LoadVPN:      configSvc.LoadVPNConfig,
 			LoadPlatform: vpnSvc.Platform,
+			APIBase:      b.apiBase,
 		})
 		pm.SelectOnce(ctx)
 		b.pathManager = pm
 		httpClient = NewPathClient(pm)
 	}
 
-	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, tgbotapi.APIEndpoint, httpClient)
+	endpoint := tgbotapi.APIEndpoint
+	if b.apiBase != "" {
+		endpoint = b.apiBase + "/bot%s/%s"
+	}
+	api, err := tgbotapi.NewBotAPIWithClient(cfg.BotToken, endpoint, httpClient)
 	if err != nil {
 		var apiErr *tgbotapi.Error
 		if errors.As(err, &apiErr) && apiErr.Code == 401 {
