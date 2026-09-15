@@ -296,6 +296,9 @@ type pathTransport struct {
 	// dialer nil means the package's production dialer. The field exists so a
 	// test injects a dialer instead of writing to that package variable.
 	dialer *pathDialer
+	// afterBoundSnapshot is for tests: runs after the RoundTrip snapshot,
+	// before dispatch. Production is nil.
+	afterBoundSnapshot func()
 }
 
 // connGen is one Transport generation. Retired generations reject new
@@ -406,12 +409,6 @@ func (t *pathTransport) retireBase(next Path) {
 	}
 }
 
-func (t *pathTransport) registerPoll(p *pollWait) {
-	t.mu.Lock()
-	t.polls = append(t.polls, p)
-	t.mu.Unlock()
-}
-
 func (t *pathTransport) unregisterPoll(p *pollWait) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -431,19 +428,25 @@ func (t *pathTransport) CloseIdleConnections() {
 }
 
 func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	t.mu.Lock()
-	p := t.bound
-	base := t.base
-	t.mu.Unlock()
-	ctx := context.WithValue(req.Context(), pathCtxKey{}, p)
+	ctx := req.Context()
 	var pw *pollWait
 	if isTelegramPoll(req) {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		ctx = context.WithValue(ctx, pollCtxKey{}, true)
 		pw = &pollWait{cancel: cancel}
-		t.registerPoll(pw)
 	}
+	t.mu.Lock()
+	p := t.bound
+	base := t.base
+	if pw != nil {
+		t.polls = append(t.polls, pw)
+	}
+	t.mu.Unlock()
+	if t.afterBoundSnapshot != nil && isTelegramPoll(req) {
+		t.afterBoundSnapshot()
+	}
+	ctx = context.WithValue(ctx, pathCtxKey{}, p)
 	req = req.WithContext(ctx)
 	var handshakeMu sync.Mutex
 	var handshakeErr error

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -468,6 +469,83 @@ func TestNewPathClient_SendOnReusedPollConnSurvivesPathChange(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("send did not finish after release")
+	}
+}
+
+func TestNewPathClient_PollSeesRetireAcrossSnapshot(t *testing.T) {
+	sendArrived := make(chan struct{})
+	holdSend := make(chan struct{})
+	pollArrived := make(chan struct{})
+	holdPoll := make(chan struct{})
+	var sendArrivedOnce, sendHoldOnce, pollArrivedOnce, pollHoldOnce sync.Once
+	releaseSend := func() { sendHoldOnce.Do(func() { close(holdSend) }) }
+	releasePoll := func() { pollHoldOnce.Do(func() { close(holdPoll) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/getUpdates") {
+			pollArrivedOnce.Do(func() { close(pollArrived) })
+			<-holdPoll
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		sendArrivedOnce.Do(func() { close(sendArrived) })
+		<-holdSend
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer releaseSend()
+	defer releasePoll()
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	pt := client.Transport.(*pathTransport)
+	pt.base.MaxConnsPerHost = 1
+
+	sendErr := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL + "/botTOKEN/sendMessage")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			sendErr <- resp.Body.Close()
+			return
+		}
+		sendErr <- err
+	}()
+	select {
+	case <-sendArrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("send did not reach the server")
+	}
+
+	pt.afterBoundSnapshot = func() { src.idle[0](src.p) }
+
+	pollErr := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL + "/botTOKEN/getUpdates")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			pollErr <- resp.Body.Close()
+			return
+		}
+		pollErr <- err
+	}()
+
+	releaseSend()
+	select {
+	case err := <-sendErr:
+		if err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("send did not finish")
+	}
+
+	select {
+	case err := <-pollErr:
+		if err == nil {
+			t.Fatal("getUpdates completed on the retired path")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("getUpdates remains blocked on the retired path")
 	}
 }
 
