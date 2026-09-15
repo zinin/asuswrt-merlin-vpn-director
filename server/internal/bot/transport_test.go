@@ -360,18 +360,18 @@ func TestNewPathClient_SwitchBindsNewPathBeforeCurrentUpdates(t *testing.T) {
 	direct := Path{kind: kindDirect}
 	src := &fakeSource{p: socks}
 
-	old := productionDialer
-	t.Cleanup(func() { productionDialer = old })
 	var mu sync.Mutex
 	var dialed []string
-	productionDialer.socksDial = func(ctx context.Context, port int, network, addr string) (net.Conn, error) {
-		mu.Lock()
-		dialed = append(dialed, "socks")
-		mu.Unlock()
-		return net.Dial(network, addr)
+	d := pathDialer{
+		socksDial: func(ctx context.Context, port int, network, addr string) (net.Conn, error) {
+			mu.Lock()
+			dialed = append(dialed, "socks")
+			mu.Unlock()
+			return net.Dial(network, addr)
+		},
 	}
 
-	client := NewPathClient(src)
+	client := newPathClientWith(src, &d)
 	if len(src.idle) != 1 {
 		t.Fatalf("idle closers %d", len(src.idle))
 	}

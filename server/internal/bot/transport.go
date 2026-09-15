@@ -47,6 +47,8 @@ type pathDialer struct {
 	dnsDial     func(ctx context.Context, network, address string) (net.Conn, error)
 }
 
+// productionDialer is written only at initialisation; tests inject a dialer
+// through newPathClientWith instead of writing here.
 var productionDialer pathDialer
 
 // Matches http.DefaultTransport's net.Dialer.Timeout. NewPathClient overwrites
@@ -236,6 +238,9 @@ type pathTransport struct {
 	mu    sync.Mutex
 	bound Path
 	base  *http.Transport
+	// dialer nil means the package's production dialer. The field exists so a
+	// test injects a dialer instead of writing to that package variable.
+	dialer *pathDialer
 }
 
 func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
@@ -248,7 +253,13 @@ func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn,
 // NewPathClient returns an HTTP client that dials through src.Current().
 // Timeout is left at zero so getUpdates can long-poll.
 func NewPathClient(src PathSource) *http.Client {
-	t := &pathTransport{src: src, bound: src.Current()}
+	return newPathClientWith(src, nil)
+}
+
+// newPathClientWith is NewPathClient with an injected dialer, so a test can
+// replace one dial without writing to productionDialer.
+func newPathClientWith(src PathSource, d *pathDialer) *http.Client {
+	t := &pathTransport{src: src, bound: src.Current(), dialer: d}
 	t.base = newPathBase(t.dial)
 	if ic, ok := src.(IdleCloser); ok {
 		ic.RegisterIdleCloser(t.retireBase)
@@ -303,7 +314,12 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func (t *pathTransport) dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	p, _ := ctx.Value(pathCtxKey{}).(Path)
-	return DialPath(ctx, p, network, addr)
+	// Set once at construction and never mutated, so it needs no lock.
+	d := t.dialer
+	if d == nil {
+		d = &productionDialer
+	}
+	return d.dial(ctx, p, network, addr)
 }
 
 func socksListening(port int) bool {
