@@ -387,6 +387,147 @@ func TestNewPathClient_PathChangeDoesNotAbortSend(t *testing.T) {
 	}
 }
 
+func TestNewPathBase_AdvertisesOnlyHTTP11(t *testing.T) {
+	tr := newPathBase(func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("no dial")
+	})
+	if tr.ForceAttemptHTTP2 {
+		t.Fatal("ForceAttemptHTTP2 still set")
+	}
+	if tr.TLSClientConfig == nil {
+		t.Fatal("TLSClientConfig is nil; cloned DefaultTransport still advertises h2")
+	}
+	found11 := false
+	for _, p := range tr.TLSClientConfig.NextProtos {
+		if p == "h2" || p == "h2c" {
+			t.Fatalf("ALPN still has %q: %v", p, tr.TLSClientConfig.NextProtos)
+		}
+		if p == "http/1.1" {
+			found11 = true
+		}
+	}
+	if !found11 {
+		t.Fatalf("ALPN %v", tr.TLSClientConfig.NextProtos)
+	}
+}
+
+func TestNewPathClient_SendOnReusedPollConnSurvivesPathChange(t *testing.T) {
+	sendArrived := make(chan struct{})
+	holdSend := make(chan struct{})
+	var holdOnce sync.Once
+	release := func() { holdOnce.Do(func() { close(holdSend) }) }
+	var arrivedOnce sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/botTOKEN/getUpdates" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		arrivedOnce.Do(func() { close(sendArrived) })
+		<-holdSend
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer release()
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	resp, err := client.Get(srv.URL + "/botTOKEN/getUpdates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL + "/botTOKEN/sendMessage")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			errc <- resp.Body.Close()
+			return
+		}
+		errc <- err
+	}()
+	select {
+	case <-sendArrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("send did not reach the server")
+	}
+
+	src.idle[0](src.p)
+	select {
+	case err := <-errc:
+		t.Fatalf("send on reused poll conn aborted: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("send did not finish after release")
+	}
+}
+
+func TestNewPathClient_PathChangeAbortsPollAfterHeaders(t *testing.T) {
+	arrived := make(chan struct{})
+	hold := make(chan struct{})
+	var holdOnce sync.Once
+	release := func() { holdOnce.Do(func() { close(hold) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/botTOKEN/getMe" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(arrived)
+		<-hold
+	}))
+	defer srv.Close()
+	defer release()
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	resp, err := client.Get(srv.URL + "/botTOKEN/getMe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL + "/botTOKEN/getUpdates")
+		if err != nil {
+			errc <- err
+			return
+		}
+		_, err = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		errc <- err
+	}()
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("getUpdates headers did not arrive")
+	}
+
+	src.idle[0](src.p)
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("getUpdates body survived path change after headers")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("getUpdates still blocked after path change")
+	}
+}
+
 // closeAll empties the generation's map but, without a retired flag, a dial
 // that started before retire can still add() and return an old-path socket.
 func TestNewPathClient_RetireRejectsLateDial(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -297,68 +298,66 @@ type pathTransport struct {
 	dialer *pathDialer
 }
 
-// connGen is the live sockets of one Transport generation.
-// Poll sockets (getUpdates) are closed on path change; send sockets are not.
+// connGen is one Transport generation. Retired generations reject new
+// getUpdates dials; they do not close sockets already used for sendMessage.
 type connGen struct {
 	mu      sync.Mutex
-	conns   map[net.Conn]bool
 	retired bool
 }
 
 func newConnGen() *connGen {
-	return &connGen{conns: make(map[net.Conn]bool)}
+	return &connGen{}
 }
 
-func (g *connGen) add(c net.Conn, poll bool) bool {
+func (g *connGen) allow(poll bool) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.retired && poll {
-		return false
-	}
-	g.conns[c] = poll
-	return true
+	return !(g.retired && poll)
 }
 
-func (g *connGen) remove(c net.Conn) {
-	g.mu.Lock()
-	delete(g.conns, c)
-	g.mu.Unlock()
-}
-
-func (g *connGen) closePolls() {
+func (g *connGen) retire() {
 	g.mu.Lock()
 	g.retired = true
-	var polls []net.Conn
-	for c, poll := range g.conns {
-		if poll {
-			polls = append(polls, c)
-			delete(g.conns, c)
-		}
-	}
 	g.mu.Unlock()
-	for _, c := range polls {
-		_ = c.Close()
-	}
 }
 
-type trackedConn struct {
-	net.Conn
+type pollBody struct {
+	io.ReadCloser
 	once sync.Once
-	gen  *connGen
+	done func()
 }
 
-func (c *trackedConn) Close() error {
-	c.once.Do(func() { c.gen.remove(c) })
-	return c.Conn.Close()
+func (b *pollBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.finish()
+	}
+	return n, err
+}
+
+func (b *pollBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.finish()
+	return err
+}
+
+func (b *pollBody) finish() {
+	b.once.Do(b.done)
 }
 
 func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
 	base.DialContext = dial
-	// HTTP/2 would multiplex getUpdates and Send on one conn; closing the
-	// poll stream's socket would then abort in-flight sendMessage too.
 	base.ForceAttemptHTTP2 = false
+	tlsCfg := base.TLSClientConfig
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{}
+	} else {
+		tlsCfg = tlsCfg.Clone()
+	}
+	tlsCfg.NextProtos = []string{"http/1.1"}
+	base.TLSClientConfig = tlsCfg
 	return base
 }
 
@@ -401,7 +400,7 @@ func (t *pathTransport) retireBase(next Path) {
 	t.base = t.attach(t.gen)
 	t.mu.Unlock()
 	old.CloseIdleConnections()
-	oldGen.closePolls()
+	oldGen.retire()
 	for _, p := range polls {
 		p.cancel()
 	}
@@ -437,13 +436,13 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.base
 	t.mu.Unlock()
 	ctx := context.WithValue(req.Context(), pathCtxKey{}, p)
+	var pw *pollWait
 	if isTelegramPoll(req) {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		ctx = context.WithValue(ctx, pollCtxKey{}, true)
-		pw := &pollWait{cancel: cancel}
+		pw = &pollWait{cancel: cancel}
 		t.registerPoll(pw)
-		defer t.unregisterPoll(pw)
 	}
 	req = req.WithContext(ctx)
 	var handshakeMu sync.Mutex
@@ -464,6 +463,13 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil && (isPathFailure(err) || hs != nil) {
 		t.src.ReportFailure(p)
 	}
+	if pw != nil {
+		if err != nil || resp == nil {
+			t.unregisterPoll(pw)
+		} else {
+			resp.Body = &pollBody{ReadCloser: resp.Body, done: func() { t.unregisterPoll(pw) }}
+		}
+	}
 	return resp, err
 }
 
@@ -479,12 +485,11 @@ func (t *pathTransport) dialOn(ctx context.Context, network, addr string, gen *c
 		return nil, err
 	}
 	poll, _ := ctx.Value(pollCtxKey{}).(bool)
-	tc := &trackedConn{Conn: c, gen: gen}
-	if !gen.add(tc, poll) {
+	if !gen.allow(poll) {
 		_ = c.Close()
 		return nil, errRetiredPath
 	}
-	return tc, nil
+	return c, nil
 }
 
 func socksListening(port int) bool {
