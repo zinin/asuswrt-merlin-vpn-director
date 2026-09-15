@@ -142,61 +142,66 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 		m.mu.Unlock()
 	}()
 
-	var cfg *vpnconfig.VPNDirectorConfig
-	if m.loadVPN != nil {
-		loaded, err := m.loadVPN()
-		if err != nil {
-			slog.Warn("Failed to load VPN Director config, no tunnel candidates", "error", err)
-			cfg = nil
-		} else {
-			cfg = loaded
-		}
-	}
-
-	var plat vpnconfig.PlatformInfo
-	if m.loadPlatform != nil {
-		loaded, err := m.loadPlatform()
-		if err != nil {
-			slog.Warn("Failed to read platform info, no tunnel candidates", "error", err)
-			plat = vpnconfig.PlatformInfo{}
-		} else {
-			plat = loaded
-		}
-	}
-
-	port := socksPort(cfg)
-	socksUp := m.listening(port)
-	idxByID := m.loadTunnelIdx()
-	cands := candidates(cfg, plat, socksUp, idxByID)
+	stored := current
 
 	var tried []string
 	direct := Path{kind: kindDirect}
 	directLive := m.probeOne(ctx, direct, &tried)
 
-	stored := current
+	// Discovery — the config read, the fork of "vpn-director.sh platform", the
+	// SOCKS listen check and the TUN_DIR_TABLES read — only feeds the backups,
+	// so a healthy direct path costs one probe and nothing else.
 	currentLive := false
-	currentProbed := false
-	if current.kind == kindSOCKS || current.kind == kindTunnel {
-		if fresh, ok := matchPath(cands, current); ok {
-			current = fresh
-			currentLive = m.probeOne(ctx, current, &tried)
-			currentProbed = true
-		}
-	}
-
-	needReplacement := !directLive && (current.kind == kindNone || !currentLive)
 	var replacement Path
-	if needReplacement {
-		for _, p := range cands {
-			if p.kind == kindDirect {
-				continue
+	if !directLive {
+		var cfg *vpnconfig.VPNDirectorConfig
+		if m.loadVPN != nil {
+			loaded, err := m.loadVPN()
+			if err != nil {
+				slog.Warn("Failed to load VPN Director config, no tunnel candidates", "error", err)
+				cfg = nil
+			} else {
+				cfg = loaded
 			}
-			if currentProbed && p.same(current) {
-				continue
+		}
+
+		var plat vpnconfig.PlatformInfo
+		if m.loadPlatform != nil {
+			loaded, err := m.loadPlatform()
+			if err != nil {
+				slog.Warn("Failed to read platform info, no tunnel candidates", "error", err)
+				plat = vpnconfig.PlatformInfo{}
+			} else {
+				plat = loaded
 			}
-			if m.probeOne(ctx, p, &tried) {
-				replacement = p
-				break
+		}
+
+		port := socksPort(cfg)
+		socksUp := m.listening(port)
+		idxByID := m.loadTunnelIdx()
+		cands := candidates(cfg, plat, socksUp, idxByID)
+
+		currentProbed := false
+		if current.kind == kindSOCKS || current.kind == kindTunnel {
+			if fresh, ok := matchPath(cands, current); ok {
+				current = fresh
+				currentLive = m.probeOne(ctx, current, &tried)
+				currentProbed = true
+			}
+		}
+
+		if current.kind == kindNone || !currentLive {
+			for _, p := range cands {
+				if p.kind == kindDirect {
+					continue
+				}
+				if currentProbed && p.same(current) {
+					continue
+				}
+				if m.probeOne(ctx, p, &tried) {
+					replacement = p
+					break
+				}
 			}
 		}
 	}
