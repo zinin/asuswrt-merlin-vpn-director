@@ -155,10 +155,12 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 	direct := Path{kind: kindDirect}
 	directLive := m.probeOne(ctx, direct, &tried)
 
+	stored := current
 	currentLive := false
 	currentProbed := false
 	if current.kind == kindSOCKS || current.kind == kindTunnel {
-		if pathIn(cands, current) {
+		if fresh, ok := matchPath(cands, current); ok {
+			current = fresh
 			currentLive = m.probeOne(ctx, current, &tried)
 			currentProbed = true
 		}
@@ -182,11 +184,14 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 	}
 
 	next := selectPath(current, directLive, currentLive, replacement)
-	if !next.same(current) {
-		slog.Info("Telegram API path selected", "from", current.String(), "to", next.String())
-		if current.kind == kindDirect && (next.kind == kindSOCKS || next.kind == kindTunnel) {
+	changed := !next.same(stored)
+	if changed {
+		slog.Info("Telegram API path selected", "from", stored.String(), "to", next.String())
+		if stored.kind == kindDirect && (next.kind == kindSOCKS || next.kind == kindTunnel) {
 			slog.Warn("Telegram API unreachable on WAN, using backup path")
 		}
+	}
+	if changed || !pathParamsEqual(next, stored) {
 		m.mu.Lock()
 		closers := slices.Clone(m.closers)
 		m.mu.Unlock()
@@ -214,13 +219,13 @@ func (m *PathManager) probeOne(ctx context.Context, p Path, tried *[]string) boo
 	return live
 }
 
-func pathIn(cands []Path, p Path) bool {
+func matchPath(cands []Path, p Path) (Path, bool) {
 	for _, c := range cands {
 		if c.same(p) {
-			return true
+			return c, true
 		}
 	}
-	return false
+	return Path{}, false
 }
 
 func pathFailReason(err error) string {

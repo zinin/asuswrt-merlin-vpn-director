@@ -41,6 +41,10 @@ func (p Path) same(q Path) bool {
 	return p.kind == q.kind && p.id == q.id
 }
 
+func pathParamsEqual(p, q Path) bool {
+	return p.same(q) && p.socksPort == q.socksPort && p.iface == q.iface
+}
+
 func socksPort(cfg *vpnconfig.VPNDirectorConfig) int {
 	_, socks := vpnconfig.XrayInboundPorts(cfg)
 	if socks <= 0 {

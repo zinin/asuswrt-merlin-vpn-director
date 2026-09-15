@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/net/proxy"
-	"golang.org/x/sys/unix"
 )
 
 // PermanentError wraps errors that should not be retried (config errors, auth failures).
@@ -133,6 +133,12 @@ func (d *pathDialer) lookupDirect(ctx context.Context, host string) ([]net.IP, e
 	return net.DefaultResolver.LookupIP(ctx, "ip4", host)
 }
 
+var tunnelDNSServers = []string{"8.8.8.8:53", "1.1.1.1:53"}
+
+// Cap per nameserver so a silent 8.8.8.8 cannot consume the whole probe budget
+// and skip 1.1.1.1.
+const tunnelDNSTimeout = 2 * time.Second
+
 func (d *pathDialer) lookupTunnel(ctx context.Context, iface, host string) ([]net.IP, error) {
 	if ip := ipv4Literal(host); ip != nil {
 		return []net.IP{ip}, nil
@@ -140,16 +146,32 @@ func (d *pathDialer) lookupTunnel(ctx context.Context, iface, host string) ([]ne
 	if d.lookupIPv4 != nil {
 		return d.lookupIPv4(ctx, host)
 	}
-	r := &net.Resolver{
-		PreferGo: true, // cgo resolver ignores Dial
-		Dial:     d.tunnelDNSDial(iface),
+	var lastErr error
+	for _, dns := range tunnelDNSServers {
+		dnsCtx, cancel := context.WithTimeout(ctx, tunnelDNSTimeout)
+		r := &net.Resolver{
+			PreferGo: true, // cgo resolver ignores Dial
+			Dial:     d.tunnelDNSDial(iface, dns),
+		}
+		ips, err := r.LookupIP(dnsCtx, "ip4", host)
+		cancel()
+		if err == nil {
+			return ips, nil
+		}
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return nil, err
+		}
+		lastErr = err
 	}
-	return r.LookupIP(ctx, "ip4", host)
+	return nil, lastErr
 }
 
-func (d *pathDialer) tunnelDNSDial(iface string) func(ctx context.Context, network, address string) (net.Conn, error) {
+func (d *pathDialer) tunnelDNSDial(iface, dns string) func(ctx context.Context, network, address string) (net.Conn, error) {
 	if d.dnsDial != nil {
-		return d.dnsDial
+		return func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return d.dnsDial(ctx, network, dns)
+		}
 	}
 	control := d.control(iface)
 	return func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -160,15 +182,7 @@ func (d *pathDialer) tunnelDNSDial(iface string) func(ctx context.Context, netwo
 		default:
 			network = "tcp4"
 		}
-		var lastErr error
-		for _, dns := range []string{"8.8.8.8:53", "1.1.1.1:53"} {
-			conn, err := newProductionDialer(control).DialContext(ctx, network, dns)
-			if err == nil {
-				return conn, nil
-			}
-			lastErr = err
-		}
-		return nil, lastErr
+		return newProductionDialer(control).DialContext(ctx, network, dns)
 	}
 }
 
@@ -208,42 +222,56 @@ func ipv4Literal(host string) net.IP {
 	return ip.To4()
 }
 
-func bindToDeviceControl(iface string) func(network, address string, c syscall.RawConn) error {
-	return func(network, address string, c syscall.RawConn) error {
-		var sockErr error
-		if err := c.Control(func(fd uintptr) {
-			sockErr = unix.BindToDevice(int(fd), iface)
-		}); err != nil {
-			return err
-		}
-		return sockErr
-	}
-}
-
 type pathCtxKey struct{}
 
 type pathTransport struct {
 	src  PathSource
+	mu   sync.Mutex
 	base *http.Transport
+}
+
+func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
+	base.DialContext = dial
+	return base
 }
 
 // NewPathClient returns an HTTP client that dials through src.Current().
 // Timeout is left at zero so getUpdates can long-poll.
 func NewPathClient(src PathSource) *http.Client {
-	base := http.DefaultTransport.(*http.Transport).Clone()
-	t := &pathTransport{src: src, base: base}
-	base.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
-	base.DialContext = t.dial
+	t := &pathTransport{src: src}
+	t.base = newPathBase(t.dial)
 	if ic, ok := src.(IdleCloser); ok {
-		ic.RegisterIdleCloser(base.CloseIdleConnections)
+		ic.RegisterIdleCloser(t.retireBase)
 	}
 	return &http.Client{Transport: t}
+}
+
+// retireBase swaps in a fresh Transport so keep-alives from the previous path
+// cannot be reused. In-flight RoundTrips keep the old Transport.
+func (t *pathTransport) retireBase() {
+	t.mu.Lock()
+	old := t.base
+	t.base = newPathBase(t.dial)
+	t.mu.Unlock()
+	old.CloseIdleConnections()
+}
+
+func (t *pathTransport) CloseIdleConnections() {
+	t.mu.Lock()
+	base := t.base
+	t.mu.Unlock()
+	base.CloseIdleConnections()
 }
 
 func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	p := t.src.Current()
 	req = req.WithContext(context.WithValue(req.Context(), pathCtxKey{}, p))
-	resp, err := t.base.RoundTrip(req)
+	t.mu.Lock()
+	base := t.base
+	t.mu.Unlock()
+	resp, err := base.RoundTrip(req)
 	if err != nil && isPathFailure(err) {
 		t.src.ReportFailure(p)
 	}

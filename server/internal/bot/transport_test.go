@@ -7,9 +7,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 type fakeSource struct {
@@ -131,10 +134,225 @@ func TestNewPathClient_RegistersIdleCloser(t *testing.T) {
 	}
 }
 
+// CloseIdleConnections on a shared Transport is undone by the next RoundTrip
+// (queueForIdleConn clears closeIdle). An in-flight getUpdates can then return
+// its conn to the pool after a path switch. Retiring the Transport on the idle
+// closer is what stops that reuse.
+func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
+	var mu sync.Mutex
+	var addrs []string
+	arrived := make(chan int, 8)
+	release1 := make(chan struct{})
+	release2 := make(chan struct{})
+	var once1, once2 sync.Once
+	rel1 := func() { once1.Do(func() { close(release1) }) }
+	rel2 := func() { once2.Do(func() { close(release2) }) }
+	defer rel1()
+	defer rel2()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n := len(addrs)
+		addrs = append(addrs, r.RemoteAddr)
+		mu.Unlock()
+		arrived <- n
+		switch n {
+		case 0:
+			<-release1
+		case 1:
+			<-release2
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	if len(src.idle) != 1 {
+		t.Fatalf("idle closers %d", len(src.idle))
+	}
+
+	do := func() error {
+		resp, err := client.Get(srv.URL)
+		if err != nil {
+			return err
+		}
+		io.Copy(io.Discard, resp.Body)
+		return resp.Body.Close()
+	}
+
+	err1 := make(chan error, 1)
+	go func() { err1 <- do() }()
+	select {
+	case n := <-arrived:
+		if n != 0 {
+			t.Fatalf("first request index %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not reach the server")
+	}
+
+	src.idle[0]() // path change: retire keep-alives so they cannot serve later requests
+
+	err2 := make(chan error, 1)
+	go func() { err2 <- do() }()
+	select {
+	case n := <-arrived:
+		if n != 1 {
+			t.Fatalf("second request index %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second request did not reach the server")
+	}
+
+	rel1()
+	select {
+	case err := <-err1:
+		if err != nil {
+			t.Fatalf("first request: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not finish")
+	}
+
+	err3 := make(chan error, 1)
+	go func() { err3 <- do() }()
+	select {
+	case n := <-arrived:
+		if n != 2 {
+			t.Fatalf("third request index %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("third request did not reach the server")
+	}
+
+	mu.Lock()
+	if addrs[2] == addrs[0] {
+		t.Fatalf("third request reused the pre-switch connection %s (addrs=%v)", addrs[0], addrs)
+	}
+	mu.Unlock()
+
+	rel2()
+	select {
+	case err := <-err2:
+		if err != nil {
+			t.Fatalf("second request: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second request did not finish")
+	}
+	select {
+	case err := <-err3:
+		if err != nil {
+			t.Fatalf("third request: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("third request did not finish")
+	}
+}
+
 func TestNewPathClient_NoClientTimeout(t *testing.T) {
 	c := NewPathClient(&fakeSource{p: Path{kind: kindDirect}})
 	if c.Timeout != 0 {
 		t.Fatalf("Timeout=%s; getUpdates long-polls", c.Timeout)
+	}
+}
+
+func TestLookupTunnel_FallsBackAfterDNSTimeout(t *testing.T) {
+	silent, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer silent.Close()
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			if _, _, err := silent.ReadFrom(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	good, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer good.Close()
+	go serveDNSA(good, net.IPv4(1, 2, 3, 4))
+
+	d := pathDialer{
+		dnsDial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			switch network {
+			case "udp", "udp6":
+				network = "udp4"
+			case "tcp", "tcp6":
+				network = "tcp4"
+			}
+			target := silent.LocalAddr().String()
+			if address == "1.1.1.1:53" {
+				target = good.LocalAddr().String()
+			}
+			var nd net.Dialer
+			return nd.DialContext(ctx, network, target)
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := d.lookupTunnel(ctx, "tun0", "vpn-director-dns-test.example.")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if len(ips) != 1 || !ips[0].Equal(net.IPv4(1, 2, 3, 4)) {
+		t.Fatalf("ips %v", ips)
+	}
+}
+
+func serveDNSA(pc net.PacketConn, ip net.IP) {
+	v4 := ip.To4()
+	if v4 == nil {
+		return
+	}
+	buf := make([]byte, 2048)
+	for {
+		n, addr, err := pc.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		var p dnsmessage.Parser
+		hdr, err := p.Start(buf[:n])
+		if err != nil {
+			continue
+		}
+		q, err := p.Question()
+		if err != nil {
+			continue
+		}
+		hdr.Response = true
+		hdr.RecursionAvailable = true
+		b := dnsmessage.NewBuilder(make([]byte, 0, 512), hdr)
+		b.EnableCompression()
+		if err := b.StartQuestions(); err != nil {
+			continue
+		}
+		if err := b.Question(q); err != nil {
+			continue
+		}
+		if err := b.StartAnswers(); err != nil {
+			continue
+		}
+		if err := b.AResource(dnsmessage.ResourceHeader{
+			Name:  q.Name,
+			Type:  dnsmessage.TypeA,
+			Class: dnsmessage.ClassINET,
+			TTL:   60,
+		}, dnsmessage.AResource{A: [4]byte{v4[0], v4[1], v4[2], v4[3]}}); err != nil {
+			continue
+		}
+		msg, err := b.Finish()
+		if err != nil {
+			continue
+		}
+		_, _ = pc.WriteTo(msg, addr)
 	}
 }
 

@@ -132,6 +132,95 @@ func TestPathManager_ReportFailureReselects(t *testing.T) {
 	t.Fatalf("still %s", m.Current())
 }
 
+func TestPathManager_RefreshesSOCKSPortWithoutDropping(t *testing.T) {
+	var mu sync.Mutex
+	port := 12346
+	livePort := 12346
+	m := NewPathManager(PathManagerConfig{
+		LoadVPN: func() (*vpnconfig.VPNDirectorConfig, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return &vpnconfig.VPNDirectorConfig{
+				Advanced: map[string]interface{}{"xray": map[string]interface{}{"socks_port": float64(port)}},
+			}, nil
+		},
+		LoadPlatform: func() (vpnconfig.PlatformInfo, error) { return vpnconfig.PlatformInfo{}, nil },
+		Listening:    func(int) bool { return true },
+		Probe: func(ctx context.Context, p Path) error {
+			if p.kind == kindDirect {
+				return errors.New("dead")
+			}
+			mu.Lock()
+			live := livePort
+			mu.Unlock()
+			if p.kind == kindSOCKS && p.socksPort == live {
+				return nil
+			}
+			return errors.New("dead")
+		},
+	})
+	m.SelectOnce(context.Background())
+	if m.Current().kind != kindSOCKS || m.Current().socksPort != 12346 {
+		t.Fatalf("first: %s port=%d", m.Current(), m.Current().socksPort)
+	}
+	n := 0
+	m.RegisterIdleCloser(func() { n++ })
+	mu.Lock()
+	port = 23456
+	livePort = 23456
+	mu.Unlock()
+	m.SelectOnce(context.Background())
+	cur := m.Current()
+	if cur.kind != kindSOCKS || cur.socksPort != 23456 {
+		t.Fatalf("after port change: %s port=%d", cur, cur.socksPort)
+	}
+	if n != 1 {
+		t.Fatalf("param change must retire connections: closers=%d", n)
+	}
+}
+
+func TestPathManager_RefreshesTunnelIfaceWithoutDropping(t *testing.T) {
+	var mu sync.Mutex
+	iface := "tun12"
+	liveIface := "tun12"
+	m := NewPathManager(PathManagerConfig{
+		LoadVPN: func() (*vpnconfig.VPNDirectorConfig, error) { return tdCfg(), nil },
+		LoadPlatform: func() (vpnconfig.PlatformInfo, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return vpnconfig.PlatformInfo{Tunnels: []vpnconfig.PlatformTunnel{
+				{ID: "ovpnc2", Iface: iface, Connected: true},
+			}}, nil
+		},
+		Listening: func(int) bool { return false },
+		Probe: func(ctx context.Context, p Path) error {
+			if p.kind != kindTunnel {
+				return errors.New("dead")
+			}
+			mu.Lock()
+			live := liveIface
+			mu.Unlock()
+			if p.iface == live {
+				return nil
+			}
+			return errors.New("dead")
+		},
+	})
+	m.SelectOnce(context.Background())
+	if m.Current().String() != "tunnel:ovpnc2" || m.Current().iface != "tun12" {
+		t.Fatalf("first: %s iface=%q", m.Current(), m.Current().iface)
+	}
+	mu.Lock()
+	iface = "tun13"
+	liveIface = "tun13"
+	mu.Unlock()
+	m.SelectOnce(context.Background())
+	cur := m.Current()
+	if cur.String() != "tunnel:ovpnc2" || cur.iface != "tun13" {
+		t.Fatalf("after iface change: %s iface=%q", cur, cur.iface)
+	}
+}
+
 func TestPathManager_ClosesIdleOnChange(t *testing.T) {
 	live := map[string]bool{"direct": true}
 	m := testMgr(t, live, tdCfg(), tdPlat(), false)
