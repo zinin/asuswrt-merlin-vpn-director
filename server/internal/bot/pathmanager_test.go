@@ -132,6 +132,93 @@ func TestPathManager_ReportFailureReselects(t *testing.T) {
 	t.Fatalf("still %s", m.Current())
 }
 
+func TestPathManager_TunnelPathGetsAppliedMark(t *testing.T) {
+	m := NewPathManager(PathManagerConfig{
+		LoadVPN:      func() (*vpnconfig.VPNDirectorConfig, error) { return tdCfg(), nil },
+		LoadPlatform: func() (vpnconfig.PlatformInfo, error) { return tdPlat(), nil },
+		Listening:    func(int) bool { return false },
+		LoadTunnelIdx: func() map[string]int {
+			return map[string]int{"ovpnc2": 0}
+		},
+		Probe: func(ctx context.Context, p Path) error {
+			if p.kind == kindTunnel && p.mark == 0x10000 {
+				return nil
+			}
+			return errors.New("dead")
+		},
+		Interval: time.Hour,
+	})
+	m.SelectOnce(context.Background())
+	if m.Current().String() != "tunnel:ovpnc2" || m.Current().mark != 0x10000 {
+		t.Fatalf("%s mark=0x%x", m.Current(), m.Current().mark)
+	}
+}
+
+func TestPathManager_FailureCycleHasNoDeadline(t *testing.T) {
+	ctx, cancel := newFailureCycleContext()
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("failure reselect must not share a deadline across probes")
+	}
+}
+
+func TestPathManager_ReportFailureReachesLaterTunnel(t *testing.T) {
+	cfg := &vpnconfig.VPNDirectorConfig{
+		TunnelDirector: vpnconfig.TunnelDirectorConfig{
+			Tunnels: map[string]vpnconfig.TunnelConfig{
+				"ovpnc2": {Clients: []string{"192.168.1.3"}},
+				"ovpnc3": {Clients: []string{"192.168.1.4"}},
+			},
+		},
+	}
+	plat := vpnconfig.PlatformInfo{Tunnels: []vpnconfig.PlatformTunnel{
+		{ID: "ovpnc2", Iface: "tun12", Connected: true},
+		{ID: "ovpnc3", Iface: "tun13", Connected: true},
+	}}
+	live := map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true, "tunnel:ovpnc3": true}
+	var mu sync.Mutex
+	m := NewPathManager(PathManagerConfig{
+		LoadVPN:      func() (*vpnconfig.VPNDirectorConfig, error) { return cfg, nil },
+		LoadPlatform: func() (vpnconfig.PlatformInfo, error) { return plat, nil },
+		Listening:    func(int) bool { return true },
+		Probe: func(ctx context.Context, p Path) error {
+			mu.Lock()
+			ok := live[p.String()]
+			mu.Unlock()
+			if ok {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(25 * time.Millisecond):
+				return errors.New("dead")
+			}
+		},
+		Interval: time.Hour,
+	})
+	m.SelectOnce(context.Background())
+	if m.Current().String() != "socks" {
+		t.Fatalf("setup: %s", m.Current())
+	}
+	mu.Lock()
+	live["socks"] = false
+	live["tunnel:ovpnc2"] = false
+	mu.Unlock()
+	m.ReportFailure(m.Current())
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Current().String() == "tunnel:ovpnc3" {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("later tunnel skipped: %s", m.Current())
+}
+
 func TestPathManager_RefreshesSOCKSPortWithoutDropping(t *testing.T) {
 	var mu sync.Mutex
 	port := 12346

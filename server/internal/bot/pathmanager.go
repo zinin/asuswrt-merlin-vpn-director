@@ -16,19 +16,27 @@ const defaultPathInterval = 30 * time.Second
 
 const defaultAPIBase = "https://api.telegram.org"
 
+// newFailureCycleContext starts the context for a ReportFailure reselect.
+// No overall deadline: each probePath call caps itself at probeTimeout so a
+// later live tunnel is still tried after earlier timeouts.
+var newFailureCycleContext = func() (context.Context, context.CancelFunc) {
+	return context.Background(), func() {}
+}
+
 var (
 	_ PathSource = (*PathManager)(nil)
 	_ IdleCloser = (*PathManager)(nil)
 )
 
 type PathManager struct {
-	token        string
-	loadVPN      func() (*vpnconfig.VPNDirectorConfig, error)
-	loadPlatform func() (vpnconfig.PlatformInfo, error)
-	listening    func(port int) bool
-	probe        func(ctx context.Context, p Path) error
-	apiBase      string
-	interval     time.Duration
+	token         string
+	loadVPN       func() (*vpnconfig.VPNDirectorConfig, error)
+	loadPlatform  func() (vpnconfig.PlatformInfo, error)
+	listening     func(port int) bool
+	probe         func(ctx context.Context, p Path) error
+	loadTunnelIdx func() map[string]int
+	apiBase       string
+	interval      time.Duration
 
 	mu      sync.Mutex
 	current Path
@@ -37,24 +45,26 @@ type PathManager struct {
 }
 
 type PathManagerConfig struct {
-	Token        string
-	LoadVPN      func() (*vpnconfig.VPNDirectorConfig, error)
-	LoadPlatform func() (vpnconfig.PlatformInfo, error)
-	Listening    func(port int) bool                     // nil => socksListening
-	Probe        func(ctx context.Context, p Path) error // nil => probePath(ctx, apiBase, token, p)
-	APIBase      string                                  // empty => https://api.telegram.org
-	Interval     time.Duration                           // 0 => 30s
+	Token         string
+	LoadVPN       func() (*vpnconfig.VPNDirectorConfig, error)
+	LoadPlatform  func() (vpnconfig.PlatformInfo, error)
+	Listening     func(port int) bool                     // nil => socksListening
+	Probe         func(ctx context.Context, p Path) error // nil => probePath(ctx, apiBase, token, p)
+	LoadTunnelIdx func() map[string]int                   // nil => TUN_DIR_TABLES
+	APIBase       string                                  // empty => https://api.telegram.org
+	Interval      time.Duration                           // 0 => 30s
 }
 
 func NewPathManager(cfg PathManagerConfig) *PathManager {
 	m := &PathManager{
-		token:        cfg.Token,
-		loadVPN:      cfg.LoadVPN,
-		loadPlatform: cfg.LoadPlatform,
-		listening:    cfg.Listening,
-		probe:        cfg.Probe,
-		apiBase:      cfg.APIBase,
-		interval:     cfg.Interval,
+		token:         cfg.Token,
+		loadVPN:       cfg.LoadVPN,
+		loadPlatform:  cfg.LoadPlatform,
+		listening:     cfg.Listening,
+		probe:         cfg.Probe,
+		loadTunnelIdx: cfg.LoadTunnelIdx,
+		apiBase:       cfg.APIBase,
+		interval:      cfg.Interval,
 	}
 	if m.listening == nil {
 		m.listening = socksListening
@@ -68,6 +78,11 @@ func NewPathManager(cfg PathManagerConfig) *PathManager {
 	if m.probe == nil {
 		m.probe = func(ctx context.Context, p Path) error {
 			return probePath(ctx, m.apiBase, m.token, p)
+		}
+	}
+	if m.loadTunnelIdx == nil {
+		m.loadTunnelIdx = func() map[string]int {
+			return loadTunnelIdxFile(defaultTunnelTablesPath)
 		}
 	}
 	return m
@@ -93,7 +108,7 @@ func (m *PathManager) ReportFailure(p Path) {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := newFailureCycleContext()
 		defer cancel()
 		m.SelectOnce(ctx)
 	}()
@@ -149,7 +164,8 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 
 	port := socksPort(cfg)
 	socksUp := m.listening(port)
-	cands := candidates(cfg, plat, socksUp)
+	idxByID := m.loadTunnelIdx()
+	cands := candidates(cfg, plat, socksUp, idxByID)
 
 	var tried []string
 	direct := Path{kind: kindDirect}

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"sync"
 	"syscall"
 	"testing"
@@ -85,12 +86,14 @@ func TestPathDialer_SOCKSKeepsHostname(t *testing.T) {
 
 func TestPathDialer_TunnelBindsIface(t *testing.T) {
 	var gotIface string
+	var gotMark uint32
 	d := pathDialer{
 		lookupIPv4: func(ctx context.Context, host string) ([]net.IP, error) {
 			return []net.IP{net.IPv4(1, 2, 3, 4)}, nil
 		},
-		bindControl: func(iface string) func(network, address string, c syscall.RawConn) error {
+		bindControl: func(iface string, mark uint32) func(network, address string, c syscall.RawConn) error {
 			gotIface = iface
+			gotMark = mark
 			return func(network, address string, c syscall.RawConn) error { return nil }
 		},
 		// dialTCP is not injected; use a listening socket on 1.2.3.4? that won't work.
@@ -105,10 +108,13 @@ func TestPathDialer_TunnelBindsIface(t *testing.T) {
 			return nil, errors.New("dial skipped")
 		},
 	}
-	p := Path{kind: kindTunnel, id: "ovpnc2", iface: "tun12"}
+	p := Path{kind: kindTunnel, id: "ovpnc2", iface: "tun12", mark: 0x10000}
 	_, _ = d.dial(context.Background(), p, "tcp", "api.telegram.org:443")
 	if gotIface != "tun12" {
 		t.Fatalf("iface %q", gotIface)
+	}
+	if gotMark != 0x10000 {
+		t.Fatalf("mark 0x%x", gotMark)
 	}
 }
 
@@ -155,6 +161,66 @@ func TestNewPathClient_ReportsTLSCloseAfterClientHello(t *testing.T) {
 	}
 	if len(src.failed) != 1 || !src.failed[0].same(src.p) {
 		t.Fatalf("ReportFailure skipped for %v; failures %+v", err, src.failed)
+	}
+}
+
+// WithClientTrace already composes with a previous ClientTrace. Copying those
+// hooks and chaining them ourselves makes TLSHandshakeStart run twice.
+func TestNewPathClient_HandshakeErrNoRace(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		time.Sleep(80 * time.Millisecond)
+		_ = c.Close()
+	}()
+	client := NewPathClient(&fakeSource{p: Path{kind: kindDirect}})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+ln.Addr().String()+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = client.Do(req)
+	time.Sleep(120 * time.Millisecond)
+}
+
+func TestNewPathClient_ExistingTraceHooksRunOnce(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 2048)
+		_, _ = c.Read(buf)
+		_ = c.Close()
+	}()
+
+	start := make(chan struct{})
+	ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+		TLSHandshakeStart: func() { close(start) },
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+ln.Addr().String()+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewPathClient(&fakeSource{p: Path{kind: kindDirect}})
+	_, _ = client.Do(req)
+	select {
+	case <-start:
+	case <-time.After(2 * time.Second):
+		t.Fatal("TLSHandshakeStart not called")
 	}
 }
 
@@ -373,7 +439,7 @@ func TestLookupTunnel_FallsBackAfterDNSTimeout(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ips, err := d.lookupTunnel(ctx, "tun0", "vpn-director-dns-test.example.")
+	ips, err := d.lookupTunnel(ctx, "tun0", 0, "vpn-director-dns-test.example.")
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}

@@ -40,7 +40,7 @@ var errNoPath = errors.New("telegram API unreachable on every path")
 
 type pathDialer struct {
 	lookupIPv4  func(ctx context.Context, host string) ([]net.IP, error)
-	bindControl func(iface string) func(network, address string, c syscall.RawConn) error
+	bindControl func(iface string, mark uint32) func(network, address string, c syscall.RawConn) error
 	socksDial   func(ctx context.Context, port int, network, addr string) (net.Conn, error)
 	tcpDial     func(ctx context.Context, network, addr string, control func(network, address string, c syscall.RawConn) error) (net.Conn, error)
 	dnsDial     func(ctx context.Context, network, address string) (net.Conn, error)
@@ -111,19 +111,19 @@ func (d *pathDialer) dialTunnel(ctx context.Context, p Path, addr string) (net.C
 	if err != nil {
 		return nil, err
 	}
-	ips, err := d.lookupTunnel(ctx, p.iface, host)
+	ips, err := d.lookupTunnel(ctx, p.iface, p.mark, host)
 	if err != nil {
 		return nil, err
 	}
 	// Call bindControl even when tcpDial is injected so tests can record iface.
-	return d.dialIPv4s(ctx, ips, port, d.control(p.iface))
+	return d.dialIPv4s(ctx, ips, port, d.control(p.iface, p.mark))
 }
 
-func (d *pathDialer) control(iface string) func(network, address string, c syscall.RawConn) error {
+func (d *pathDialer) control(iface string, mark uint32) func(network, address string, c syscall.RawConn) error {
 	if d.bindControl != nil {
-		return d.bindControl(iface)
+		return d.bindControl(iface, mark)
 	}
-	return bindToDeviceControl(iface)
+	return tunnelSocketControl(iface, mark)
 }
 
 func (d *pathDialer) lookupDirect(ctx context.Context, host string) ([]net.IP, error) {
@@ -142,7 +142,7 @@ var tunnelDNSServers = []string{"8.8.8.8:53", "1.1.1.1:53"}
 // and skip 1.1.1.1.
 const tunnelDNSTimeout = 2 * time.Second
 
-func (d *pathDialer) lookupTunnel(ctx context.Context, iface, host string) ([]net.IP, error) {
+func (d *pathDialer) lookupTunnel(ctx context.Context, iface string, mark uint32, host string) ([]net.IP, error) {
 	if ip := ipv4Literal(host); ip != nil {
 		return []net.IP{ip}, nil
 	}
@@ -154,7 +154,7 @@ func (d *pathDialer) lookupTunnel(ctx context.Context, iface, host string) ([]ne
 		dnsCtx, cancel := context.WithTimeout(ctx, tunnelDNSTimeout)
 		r := &net.Resolver{
 			PreferGo: true, // cgo resolver ignores Dial
-			Dial:     d.tunnelDNSDial(iface, dns),
+			Dial:     d.tunnelDNSDial(iface, mark, dns),
 		}
 		ips, err := r.LookupIP(dnsCtx, "ip4", host)
 		cancel()
@@ -170,13 +170,13 @@ func (d *pathDialer) lookupTunnel(ctx context.Context, iface, host string) ([]ne
 	return nil, lastErr
 }
 
-func (d *pathDialer) tunnelDNSDial(iface, dns string) func(ctx context.Context, network, address string) (net.Conn, error) {
+func (d *pathDialer) tunnelDNSDial(iface string, mark uint32, dns string) func(ctx context.Context, network, address string) (net.Conn, error) {
 	if d.dnsDial != nil {
 		return func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return d.dnsDial(ctx, network, dns)
 		}
 	}
-	control := d.control(iface)
+	control := d.control(iface, mark)
 	return func(ctx context.Context, network, _ string) (net.Conn, error) {
 		// Ignore the resolver's address so resolv.conf is not used.
 		switch network {
@@ -276,35 +276,25 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.base
 	t.mu.Unlock()
 	req = req.WithContext(context.WithValue(req.Context(), pathCtxKey{}, p))
+	var handshakeMu sync.Mutex
 	var handshakeErr error
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), composeTLSHandshakeTrace(
-		httptrace.ContextClientTrace(req.Context()),
-		func(_ tls.ConnectionState, err error) {
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
 			if err != nil {
+				handshakeMu.Lock()
 				handshakeErr = err
+				handshakeMu.Unlock()
 			}
 		},
-	)))
+	}))
 	resp, err := base.RoundTrip(req)
-	if err != nil && (isPathFailure(err) || handshakeErr != nil) {
+	handshakeMu.Lock()
+	hs := handshakeErr
+	handshakeMu.Unlock()
+	if err != nil && (isPathFailure(err) || hs != nil) {
 		t.src.ReportFailure(p)
 	}
 	return resp, err
-}
-
-func composeTLSHandshakeTrace(prev *httptrace.ClientTrace, fn func(tls.ConnectionState, error)) *httptrace.ClientTrace {
-	if prev == nil {
-		return &httptrace.ClientTrace{TLSHandshakeDone: fn}
-	}
-	out := *prev
-	old := prev.TLSHandshakeDone
-	out.TLSHandshakeDone = func(cs tls.ConnectionState, err error) {
-		fn(cs, err)
-		if old != nil {
-			old(cs, err)
-		}
-	}
-	return &out
 }
 
 func (t *pathTransport) dial(ctx context.Context, network, addr string) (net.Conn, error) {

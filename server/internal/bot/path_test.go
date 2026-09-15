@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zinin/vpn-director/server/internal/vpnconfig"
@@ -60,7 +61,7 @@ func TestCandidates(t *testing.T) {
 		{ID: "wgc1", Iface: "wgc1", Connected: false},
 		{ID: "OpenVPN0", Iface: "", Connected: true},
 	}}
-	got := candidates(cfg, plat, true)
+	got := candidates(cfg, plat, true, nil)
 	want := []string{"direct", "socks", "tunnel:ovpnc2"}
 	if len(got) != len(want) {
 		t.Fatalf("len=%d names=%v", len(got), names(got))
@@ -74,16 +75,67 @@ func TestCandidates(t *testing.T) {
 		t.Fatalf("iface=%q socksPort=%d", got[2].iface, got[1].socksPort)
 	}
 
-	noSocks := candidates(cfg, plat, false)
+	noSocks := candidates(cfg, plat, false, nil)
 	if len(noSocks) != 2 || noSocks[0].String() != "direct" || noSocks[1].String() != "tunnel:ovpnc2" {
 		t.Fatalf("socks down: %v", names(noSocks))
 	}
 
-	if n := names(candidates(nil, plat, true)); len(n) != 2 || n[0] != "direct" || n[1] != "socks" {
+	if n := names(candidates(nil, plat, true, nil)); len(n) != 2 || n[0] != "direct" || n[1] != "socks" {
 		t.Fatalf("nil cfg: %v", n)
 	}
-	if n := names(candidates(cfg, vpnconfig.PlatformInfo{}, true)); len(n) != 2 {
+	if n := names(candidates(cfg, vpnconfig.PlatformInfo{}, true, nil)); len(n) != 2 {
 		t.Fatalf("platform empty: %v", n)
+	}
+}
+
+func TestParseTunnelTables(t *testing.T) {
+	got := parseTunnelTables(strings.NewReader("0 ovpnc2\n1 OpenVPN0\n\nbad\n2 wgc1\n"))
+	if got["ovpnc2"] != 0 || got["OpenVPN0"] != 1 || got["wgc1"] != 2 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestTunnelMark(t *testing.T) {
+	if m := tunnelMark(0, 16); m != 0x10000 {
+		t.Fatalf("idx0: 0x%x", m)
+	}
+	if m := tunnelMark(1, 16); m != 0x20000 {
+		t.Fatalf("idx1: 0x%x", m)
+	}
+}
+
+func TestMarkShift(t *testing.T) {
+	if markShift(nil) != 16 {
+		t.Fatal("nil")
+	}
+	cfg := &vpnconfig.VPNDirectorConfig{
+		Advanced: map[string]interface{}{
+			"tunnel_director": map[string]interface{}{"mark_shift": float64(8)},
+		},
+	}
+	if markShift(cfg) != 8 {
+		t.Fatalf("got %d", markShift(cfg))
+	}
+}
+
+func TestCandidates_AppliesTunnelMark(t *testing.T) {
+	cfg := &vpnconfig.VPNDirectorConfig{
+		TunnelDirector: vpnconfig.TunnelDirectorConfig{
+			Tunnels: map[string]vpnconfig.TunnelConfig{
+				"ovpnc2": {Clients: []string{"192.168.1.3"}},
+			},
+		},
+	}
+	plat := vpnconfig.PlatformInfo{Tunnels: []vpnconfig.PlatformTunnel{
+		{ID: "ovpnc2", Iface: "tun12", Connected: true},
+	}}
+	got := candidates(cfg, plat, false, map[string]int{"ovpnc2": 0})
+	if len(got) != 2 || got[1].mark != 0x10000 {
+		t.Fatalf("mark 0x%x paths %v", got[1].mark, names(got))
+	}
+	noIdx := candidates(cfg, plat, false, nil)
+	if noIdx[1].mark != 0 {
+		t.Fatalf("missing tables: mark 0x%x", noIdx[1].mark)
 	}
 }
 
