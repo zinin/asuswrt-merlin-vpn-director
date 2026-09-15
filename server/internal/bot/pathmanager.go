@@ -100,6 +100,21 @@ func (m *PathManager) RegisterIdleCloser(fn func(Path)) {
 	m.mu.Unlock()
 }
 
+// ReportFailure starts a reselect when the failing path is still the current one.
+// A failure for a path that has since been retired is a no-op, so a late error on
+// an old keep-alive cannot flap the path that replaced it.
+//
+// A failure that arrives while a cycle is running is dropped rather than queued,
+// which is safe because the caller retries: tgbotapi's GetUpdatesChan loop
+// re-issues the request after every failure — a 3-second pause in v5.5.1 — so
+// while a path is dead the next failure lands within seconds of the running cycle
+// finishing and starts a fresh one. The drop costs one retry interval, not the
+// 30-second tick.
+//
+// There is deliberately no minimum interval between failure-driven cycles:
+// m.cycling already keeps cycles from overlapping, so the rate is bounded by the
+// duration of a cycle, which is at least one HTTPS probe — and a cycle that ends
+// on a live direct is exactly one probe.
 func (m *PathManager) ReportFailure(p Path) {
 	m.mu.Lock()
 	skip := !p.same(m.current) || m.cycling
