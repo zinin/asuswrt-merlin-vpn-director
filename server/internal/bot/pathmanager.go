@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +43,8 @@ type PathManager struct {
 	current Path
 	cycling bool
 	closers []func(Path)
+	// lastNoPath is the tried set already warned about, empty after a cycle that found a path.
+	lastNoPath string
 }
 
 type PathManagerConfig struct {
@@ -241,7 +244,20 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 		m.mu.Unlock()
 	}
 	if next.kind == kindNone {
-		slog.Warn("Telegram API unreachable on every path", "tried", tried)
+		key := strings.Join(tried, ",")
+		m.mu.Lock()
+		repeat := key == m.lastNoPath
+		m.lastNoPath = key
+		m.mu.Unlock()
+		if repeat {
+			slog.Debug("Telegram API still unreachable on every path", "tried", tried)
+		} else {
+			slog.Warn("Telegram API unreachable on every path", "tried", tried)
+		}
+	} else {
+		m.mu.Lock()
+		m.lastNoPath = ""
+		m.mu.Unlock()
 	}
 }
 

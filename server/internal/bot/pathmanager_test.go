@@ -318,6 +318,42 @@ func TestPathManager_RefreshesTunnelIfaceWithoutDropping(t *testing.T) {
 	}
 }
 
+func noPathKey(m *PathManager) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastNoPath
+}
+
+// The WARN for a set of dead paths fires once; an identical repeat drops to
+// DEBUG, and a cycle that finds a path arms the WARN again.
+func TestPathManager_NoPathKeyTracksTheTriedSet(t *testing.T) {
+	live := &liveMap{m: map[string]bool{"direct": false, "socks": false, "tunnel:ovpnc2": false}}
+	m := testMgr(t, live, tdCfg(), tdPlat(), true)
+
+	m.SelectOnce(context.Background())
+	if m.Current().String() != "none" {
+		t.Fatalf("setup: %s", m.Current())
+	}
+	first := noPathKey(m)
+	if first == "" {
+		t.Fatal("a cycle with no path must record the tried set")
+	}
+
+	m.SelectOnce(context.Background())
+	if got := noPathKey(m); got != first {
+		t.Fatalf("an identical outage changed the key: %q -> %q", first, got)
+	}
+
+	live.set("direct", true)
+	m.SelectOnce(context.Background())
+	if m.Current().String() != "direct" {
+		t.Fatalf("recovery: %s", m.Current())
+	}
+	if got := noPathKey(m); got != "" {
+		t.Fatalf("a cycle with a path must clear the key, got %q", got)
+	}
+}
+
 func TestPathManager_ClosesIdleOnChange(t *testing.T) {
 	live := &liveMap{m: map[string]bool{"direct": true}}
 	m := testMgr(t, live, tdCfg(), tdPlat(), false)
