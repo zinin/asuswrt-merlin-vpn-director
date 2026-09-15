@@ -64,7 +64,7 @@ func WithChatStore(store *chatstore.Store) Option {
 
 // New creates a new Bot with full dependency injection.
 // Use WithDevMode() and WithUpdater() options to configure the bot.
-func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error) {
+func New(ctx context.Context, cfg *config.Config, p paths.Paths, version, versionFull, commit, buildDate string, opts ...Option) (*Bot, error) {
 	b := &Bot{version: version}
 
 	// Apply options
@@ -88,7 +88,7 @@ func New(cfg *config.Config, p paths.Paths, version, versionFull, commit, buildD
 			LoadVPN:      configSvc.LoadVPNConfig,
 			LoadPlatform: vpnSvc.Platform,
 		})
-		pm.SelectOnce(context.Background())
+		pm.SelectOnce(ctx)
 		b.pathManager = pm
 		httpClient = NewPathClient(pm)
 	}
