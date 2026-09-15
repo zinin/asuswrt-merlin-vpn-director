@@ -18,12 +18,12 @@ import (
 type fakeSource struct {
 	p      Path
 	failed []Path
-	idle   []func()
+	idle   []func(Path)
 }
 
-func (f *fakeSource) Current() Path                { return f.p }
-func (f *fakeSource) ReportFailure(p Path)         { f.failed = append(f.failed, p) }
-func (f *fakeSource) RegisterIdleCloser(fn func()) { f.idle = append(f.idle, fn) }
+func (f *fakeSource) Current() Path                    { return f.p }
+func (f *fakeSource) ReportFailure(p Path)             { f.failed = append(f.failed, p) }
+func (f *fakeSource) RegisterIdleCloser(fn func(Path)) { f.idle = append(f.idle, fn) }
 
 func TestDialPath_None(t *testing.T) {
 	_, err := DialPath(context.Background(), Path{}, "tcp", "example.com:443")
@@ -126,6 +126,38 @@ func TestNewPathClient_ReportsDialFailure(t *testing.T) {
 	}
 }
 
+// A peer that accepts TCP and closes after ClientHello makes crypto/tls
+// return plain io.EOF, which is not a net.Error. RoundTrip must still
+// ReportFailure so PathManager reselects instead of waiting for the 30s probe.
+func TestNewPathClient_ReportsTLSCloseAfterClientHello(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			buf := make([]byte, 2048)
+			_, _ = c.Read(buf)
+			_ = c.Close()
+		}
+	}()
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+	_, err = client.Get("https://" + ln.Addr().String() + "/")
+	if err == nil {
+		t.Fatal("expected TLS handshake error")
+	}
+	if len(src.failed) != 1 || !src.failed[0].same(src.p) {
+		t.Fatalf("ReportFailure skipped for %v; failures %+v", err, src.failed)
+	}
+}
+
 func TestNewPathClient_RegistersIdleCloser(t *testing.T) {
 	src := &fakeSource{p: Path{kind: kindDirect}}
 	_ = NewPathClient(src)
@@ -192,7 +224,7 @@ func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 		t.Fatal("first request did not reach the server")
 	}
 
-	src.idle[0]() // path change: retire keep-alives so they cannot serve later requests
+	src.idle[0](src.p) // path change: retire keep-alives so they cannot serve later requests
 
 	err2 := make(chan error, 1)
 	go func() { err2 <- do() }()
@@ -248,6 +280,49 @@ func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("third request did not finish")
+	}
+}
+
+// retireBase installs a new pool before PathManager stores current. A request
+// in that window must dial the path passed to the closer, not the stale Current(),
+// or the new pool keeps an old-path connection forever.
+func TestNewPathClient_SwitchBindsNewPathBeforeCurrentUpdates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	socks := Path{kind: kindSOCKS, socksPort: 12346}
+	direct := Path{kind: kindDirect}
+	src := &fakeSource{p: socks}
+
+	old := productionDialer
+	t.Cleanup(func() { productionDialer = old })
+	var mu sync.Mutex
+	var dialed []string
+	productionDialer.socksDial = func(ctx context.Context, port int, network, addr string) (net.Conn, error) {
+		mu.Lock()
+		dialed = append(dialed, "socks")
+		mu.Unlock()
+		return net.Dial(network, addr)
+	}
+
+	client := NewPathClient(src)
+	if len(src.idle) != 1 {
+		t.Fatalf("idle closers %d", len(src.idle))
+	}
+	src.idle[0](direct)
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dialed) != 0 {
+		t.Fatalf("new pool dialed stale Current()=%s: %v", src.Current(), dialed)
 	}
 }
 

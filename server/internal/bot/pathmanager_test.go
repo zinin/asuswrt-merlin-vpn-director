@@ -164,7 +164,7 @@ func TestPathManager_RefreshesSOCKSPortWithoutDropping(t *testing.T) {
 		t.Fatalf("first: %s port=%d", m.Current(), m.Current().socksPort)
 	}
 	n := 0
-	m.RegisterIdleCloser(func() { n++ })
+	m.RegisterIdleCloser(func(Path) { n++ })
 	mu.Lock()
 	port = 23456
 	livePort = 23456
@@ -225,7 +225,7 @@ func TestPathManager_ClosesIdleOnChange(t *testing.T) {
 	live := map[string]bool{"direct": true}
 	m := testMgr(t, live, tdCfg(), tdPlat(), false)
 	n := 0
-	m.RegisterIdleCloser(func() { n++ })
+	m.RegisterIdleCloser(func(Path) { n++ })
 	m.SelectOnce(context.Background()) // none -> direct
 	if n != 1 {
 		t.Fatalf("first select closes idle: %d", n)

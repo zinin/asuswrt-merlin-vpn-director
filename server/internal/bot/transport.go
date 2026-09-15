@@ -2,9 +2,11 @@ package bot
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"sync"
@@ -29,8 +31,9 @@ type PathSource interface {
 }
 
 // IdleCloser is implemented by a PathSource that must close keep-alives on a path change.
+// The callback receives the path the new transport generation is bound to.
 type IdleCloser interface {
-	RegisterIdleCloser(func())
+	RegisterIdleCloser(func(Path))
 }
 
 var errNoPath = errors.New("telegram API unreachable on every path")
@@ -225,9 +228,10 @@ func ipv4Literal(host string) net.IP {
 type pathCtxKey struct{}
 
 type pathTransport struct {
-	src  PathSource
-	mu   sync.Mutex
-	base *http.Transport
+	src   PathSource
+	mu    sync.Mutex
+	bound Path
+	base  *http.Transport
 }
 
 func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
@@ -240,7 +244,7 @@ func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn,
 // NewPathClient returns an HTTP client that dials through src.Current().
 // Timeout is left at zero so getUpdates can long-poll.
 func NewPathClient(src PathSource) *http.Client {
-	t := &pathTransport{src: src}
+	t := &pathTransport{src: src, bound: src.Current()}
 	t.base = newPathBase(t.dial)
 	if ic, ok := src.(IdleCloser); ok {
 		ic.RegisterIdleCloser(t.retireBase)
@@ -248,11 +252,12 @@ func NewPathClient(src PathSource) *http.Client {
 	return &http.Client{Transport: t}
 }
 
-// retireBase swaps in a fresh Transport so keep-alives from the previous path
-// cannot be reused. In-flight RoundTrips keep the old Transport.
-func (t *pathTransport) retireBase() {
+// retireBase installs a new Transport bound to next so keep-alives from the
+// previous path cannot be reused. In-flight RoundTrips keep the old pair.
+func (t *pathTransport) retireBase(next Path) {
 	t.mu.Lock()
 	old := t.base
+	t.bound = next
 	t.base = newPathBase(t.dial)
 	t.mu.Unlock()
 	old.CloseIdleConnections()
@@ -266,23 +271,44 @@ func (t *pathTransport) CloseIdleConnections() {
 }
 
 func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	p := t.src.Current()
-	req = req.WithContext(context.WithValue(req.Context(), pathCtxKey{}, p))
 	t.mu.Lock()
+	p := t.bound
 	base := t.base
 	t.mu.Unlock()
+	req = req.WithContext(context.WithValue(req.Context(), pathCtxKey{}, p))
+	var handshakeErr error
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), composeTLSHandshakeTrace(
+		httptrace.ContextClientTrace(req.Context()),
+		func(_ tls.ConnectionState, err error) {
+			if err != nil {
+				handshakeErr = err
+			}
+		},
+	)))
 	resp, err := base.RoundTrip(req)
-	if err != nil && isPathFailure(err) {
+	if err != nil && (isPathFailure(err) || handshakeErr != nil) {
 		t.src.ReportFailure(p)
 	}
 	return resp, err
 }
 
+func composeTLSHandshakeTrace(prev *httptrace.ClientTrace, fn func(tls.ConnectionState, error)) *httptrace.ClientTrace {
+	if prev == nil {
+		return &httptrace.ClientTrace{TLSHandshakeDone: fn}
+	}
+	out := *prev
+	old := prev.TLSHandshakeDone
+	out.TLSHandshakeDone = func(cs tls.ConnectionState, err error) {
+		fn(cs, err)
+		if old != nil {
+			old(cs, err)
+		}
+	}
+	return &out
+}
+
 func (t *pathTransport) dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	p, _ := ctx.Value(pathCtxKey{}).(Path)
-	if p.kind == kindNone {
-		p = t.src.Current()
-	}
 	return DialPath(ctx, p, network, addr)
 }
 

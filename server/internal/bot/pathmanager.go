@@ -33,7 +33,7 @@ type PathManager struct {
 	mu      sync.Mutex
 	current Path
 	cycling bool
-	closers []func()
+	closers []func(Path)
 }
 
 type PathManagerConfig struct {
@@ -79,7 +79,7 @@ func (m *PathManager) Current() Path {
 	return m.current
 }
 
-func (m *PathManager) RegisterIdleCloser(fn func()) {
+func (m *PathManager) RegisterIdleCloser(fn func(Path)) {
 	m.mu.Lock()
 	m.closers = append(m.closers, fn)
 	m.mu.Unlock()
@@ -196,7 +196,7 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 		closers := slices.Clone(m.closers)
 		m.mu.Unlock()
 		for _, fn := range closers {
-			fn()
+			fn(next)
 		}
 		m.mu.Lock()
 		m.current = next
