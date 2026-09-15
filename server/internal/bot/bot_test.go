@@ -1,4 +1,107 @@
 package bot
 
-// Tests for Bot struct will be added in Task 7.3
-// Auth tests are in auth_test.go
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/zinin/vpn-director/server/internal/config"
+	"github.com/zinin/vpn-director/server/internal/devmode"
+	"github.com/zinin/vpn-director/server/internal/paths"
+)
+
+// newAPIServer answers getMe the way Telegram does and everything else with an
+// empty ok. One server stands for both the probe target and the API, as one
+// host does in production.
+func newAPIServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/getMe") {
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test","username":"testbot"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"result":{}}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func testPaths(t *testing.T) paths.Paths {
+	t.Helper()
+	dir := t.TempDir()
+	return paths.Paths{
+		ScriptsDir:     dir,
+		BotConfigPath:  dir + "/telegram-bot.json",
+		DefaultDataDir: dir + "/data",
+		XrayTemplate:   dir + "/xray.template.json",
+		XrayConfig:     dir + "/xray.json",
+		BotLogPath:     dir + "/bot.log",
+		VPNLogPath:     dir + "/vpn.log",
+		WebUILogPath:   dir + "/webui.log",
+		XrayLogPath:    dir + "/xray-error.log",
+	}
+}
+
+func testConfig() *config.Config {
+	return &config.Config{BotToken: "123:TESTTOKEN", AllowedUsers: []string{"tester"}}
+}
+
+func TestNew_DevModeUsesPlainClientAndNoPathManager(t *testing.T) {
+	srv := newAPIServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b, err := New(ctx, testConfig(), testPaths(t), "v0.0.0", "v0.0.0-test", "deadbee", "2026-01-01",
+		WithDevMode(devmode.NewExecutor()), withAPIBase(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.pathManager != nil {
+		t.Fatal("dev mode must not build a PathManager")
+	}
+	c, ok := b.api.Client.(*http.Client)
+	if !ok {
+		t.Fatalf("client is %T", b.api.Client)
+	}
+	// A nil Transport is http.DefaultTransport, which is what dev mode wants.
+	if _, isPath := c.Transport.(*pathTransport); isPath {
+		t.Fatal("dev mode must not dial through a pathTransport")
+	}
+}
+
+func TestNew_ProductionUsesPathClientAndManager(t *testing.T) {
+	srv := newAPIServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b, err := New(ctx, testConfig(), testPaths(t), "v0.0.0", "v0.0.0-test", "deadbee", "2026-01-01",
+		withAPIBase(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.pathManager == nil {
+		t.Fatal("production must build a PathManager")
+	}
+	if got := b.pathManager.Current().String(); got != "direct" {
+		t.Fatalf("path %q; the local server answers the probe, so direct is live", got)
+	}
+	c, ok := b.api.Client.(*http.Client)
+	if !ok {
+		t.Fatalf("client is %T", b.api.Client)
+	}
+	if _, isPath := c.Transport.(*pathTransport); !isPath {
+		t.Fatalf("transport is %T; production must dial through a pathTransport", c.Transport)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !b.pathManager.running {
+		if time.Now().After(deadline) {
+			t.Fatal("path monitor must start before getMe so a blackhole can fail over")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

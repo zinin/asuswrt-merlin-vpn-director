@@ -11,8 +11,6 @@ type Config struct {
 	AllowedUsers        []string      `json:"allowed_users"`
 	LogLevel            string        `json:"log_level"`
 	UpdateCheckInterval time.Duration `json:"-"` // Parsed from string
-	Proxy               string
-	ProxyFallbackDirect bool
 }
 
 // rawConfig is used for JSON unmarshaling with string duration
@@ -21,8 +19,6 @@ type rawConfig struct {
 	AllowedUsers        []string `json:"allowed_users"`
 	LogLevel            string   `json:"log_level"`
 	UpdateCheckInterval string   `json:"update_check_interval"`
-	Proxy               string   `json:"proxy"`
-	ProxyFallbackDirect bool     `json:"proxy_fallback_direct"`
 }
 
 func Load(path string) (*Config, error) {
@@ -37,11 +33,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		BotToken:            raw.BotToken,
-		AllowedUsers:        raw.AllowedUsers,
-		LogLevel:            raw.LogLevel,
-		Proxy:               raw.Proxy,
-		ProxyFallbackDirect: raw.ProxyFallbackDirect,
+		BotToken:     raw.BotToken,
+		AllowedUsers: raw.AllowedUsers,
+		LogLevel:     raw.LogLevel,
 	}
 
 	// Parse duration if provided and not "0"

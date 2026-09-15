@@ -24,6 +24,9 @@ type Deps struct {
 	Commit      string // Git commit hash
 	BuildDate   string // Build date
 	DevMode     bool   // Development mode flag
+	// TelegramPath is the bot's current Telegram API path, nil when there is
+	// none: dev mode, and the Web UI, which runs no path manager.
+	TelegramPath func() string
 }
 
 // configUpdateError phrases an UpdateVPNConfig failure the way the bot has

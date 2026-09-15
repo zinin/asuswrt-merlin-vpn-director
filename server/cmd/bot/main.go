@@ -150,11 +150,11 @@ func main() {
 	{
 		backoffs := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, 60 * time.Second}
 		for attempt := 0; ; attempt++ {
-			b, err = bot.New(cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
+			b, err = bot.New(ctx, cfg, p, Version, VersionFull, Commit, BuildDate, opts...)
 			if err == nil {
 				break
 			}
-			// Fail fast on permanent errors (invalid config, bad proxy URL)
+			// Fail fast on permanent errors (invalid config, invalid bot token)
 			var permErr *bot.PermanentError
 			if errors.As(err, &permErr) {
 				slog.Error("Fatal configuration error", "error", err)

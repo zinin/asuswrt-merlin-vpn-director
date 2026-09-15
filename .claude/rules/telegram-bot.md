@@ -17,7 +17,13 @@ server/
 │   ├── bot/                  # Core bot orchestration
 │   │   ├── bot.go            # Bot struct, Run(), message dispatch
 │   │   ├── router.go         # Command and callback routing
-│   │   └── auth.go           # Username-based authorization
+│   │   ├── auth.go           # Username-based authorization
+│   │   ├── path.go           # Telegram API path identity and candidates
+│   │   ├── pathmanager.go    # Probe cycle and current-path selection
+│   │   ├── probe.go          # One getMe over a given path; any HTTP status counts as live
+│   │   ├── transport.go      # DialPath, NewPathClient, SO_BINDTODEVICE
+│   │   ├── transport_linux.go # SO_BINDTODEVICE + SO_MARK socket control
+│   │   └── transport_other.go # Non-Linux stub that fails the dial
 │   ├── chatstore/            # Chat ID persistence
 │   │   └── store.go          # Thread-safe chat storage for notifications
 │   ├── config/               # Configuration
@@ -141,8 +147,6 @@ The bot only reads `notify.json` at startup, so a failure can wait there for a l
 {
   "bot_token": "123456:ABC...",
   "allowed_users": ["username1", "username2"],
-  "proxy": "socks5://127.0.0.1:12346",
-  "proxy_fallback_direct": true,
   "log_level": "info",
   "update_check_interval": "1h"
 }
@@ -151,12 +155,14 @@ The bot only reads `notify.json` at startup, so a failure can wait there for a l
 **Fields:**
 - `bot_token` — Telegram Bot API token (required)
 - `allowed_users` — Array of Telegram usernames (required)
-- `proxy` — SOCKS5 proxy URL for Telegram API (optional, empty = direct connection)
-- `proxy_fallback_direct` — Fall back to direct connection if proxy unavailable (default: `false`)
 - `log_level` — `debug`, `info`, `warn`, `error` (default: `info`)
 - `update_check_interval` — Go duration (`1h`, `30m`, `24h`). If omitted or `"0"`, automatic update checking is disabled
 
 Setup: `./setup_telegram_bot.sh`
+
+## Telegram API transport
+
+The bot reaches `api.telegram.org` without a `proxy` setting. A selection cycle runs at startup, every 30s, and after a path failure. Every cycle probes **direct**, and probes the current path as well when that is not `direct`; the backups — Xray SOCKS on `advanced.xray.socks_port` (default 12346) when that port listens, then each `tunnel_director.tunnels` key except `main` that has clients and a connected platform iface, sorted by id — are probed only when a replacement is needed (direct dead and the current path dead or unset), stopping at the first live one. A tunnel socket gets `SO_BINDTODEVICE` **plus** the Tunnel Director `SO_MARK` derived from `/tmp/tunnel_director/tun_dir_tables`, so a tunnel path needs an applied Tunnel Director config; tunnel DNS queries `8.8.8.8` then `1.1.1.1` over the bound device instead of `resolv.conf`. When no path answers, a WARN lists every candidate with its reason. `--dev` is direct only. Leftover `proxy` / `proxy_fallback_direct` keys in old JSON are ignored.
 
 ## Automatic Update Notifications
 
