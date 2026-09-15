@@ -81,4 +81,5 @@ if [[ -x /opt/etc/init.d/S98telegram-bot ]]; then
 fi
 
 echo
+echo "The bot finds its own way to api.telegram.org: direct, then Xray SOCKS, then a VPN Director tunnel"
 echo "Done! Send /start to the bot"

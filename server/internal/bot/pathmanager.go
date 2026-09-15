@@ -146,6 +146,7 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 	if m.loadVPN != nil {
 		loaded, err := m.loadVPN()
 		if err != nil {
+			slog.Warn("Failed to load VPN Director config, no tunnel candidates", "error", err)
 			cfg = nil
 		} else {
 			cfg = loaded
@@ -156,6 +157,7 @@ func (m *PathManager) SelectOnce(ctx context.Context) {
 	if m.loadPlatform != nil {
 		loaded, err := m.loadPlatform()
 		if err != nil {
+			slog.Warn("Failed to read platform info, no tunnel candidates", "error", err)
 			plat = vpnconfig.PlatformInfo{}
 		} else {
 			plat = loaded
@@ -248,7 +250,10 @@ func pathFailReason(err error) string {
 	if err == nil {
 		return "live"
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
 	var ne net.Error

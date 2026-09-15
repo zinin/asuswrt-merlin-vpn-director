@@ -21,8 +21,10 @@ func probePath(ctx context.Context, apiBase, token string, p Path) error {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return DialPath(ctx, p, network, addr)
 			},
+			ForceAttemptHTTP2: true,
 		},
 	}
+	defer client.CloseIdleConnections()
 	u := fmt.Sprintf("%s/bot%s/getMe", apiBase, token)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

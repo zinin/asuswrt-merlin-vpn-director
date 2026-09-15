@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -84,7 +85,9 @@ func (d *pathDialer) dialSOCKS(ctx context.Context, p Path, addr string) (net.Co
 }
 
 func defaultSOCKSDial(ctx context.Context, port int, network, addr string) (net.Conn, error) {
-	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil, proxy.Direct)
+	ctx, cancel := context.WithTimeout(ctx, productionDialTimeout)
+	defer cancel()
+	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil, &net.Dialer{Timeout: productionDialTimeout})
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +164,7 @@ func (d *pathDialer) lookupTunnel(ctx context.Context, iface string, mark uint32
 		if err == nil {
 			return ips, nil
 		}
+		slog.Debug("Tunnel DNS lookup failed", "dns", dns, "iface", iface, "host", host, "error", err)
 		var dnsErr *net.DNSError
 		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			return nil, err

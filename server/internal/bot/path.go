@@ -3,6 +3,7 @@ package bot
 import (
 	"bufio"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -145,6 +146,8 @@ func candidates(cfg *vpnconfig.VPNDirectorConfig, plat vpnconfig.PlatformInfo, s
 		var mark uint32
 		if idx, ok := idxByID[id]; ok {
 			mark = tunnelMark(idx, shift)
+		} else {
+			slog.Debug("Tunnel candidate has no applied mark", "tunnel", id, "file", defaultTunnelTablesPath)
 		}
 		out = append(out, Path{kind: kindTunnel, id: id, iface: pt.Iface, mark: mark})
 	}

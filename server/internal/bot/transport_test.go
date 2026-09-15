@@ -96,14 +96,10 @@ func TestPathDialer_TunnelBindsIface(t *testing.T) {
 			gotMark = mark
 			return func(network, address string, c syscall.RawConn) error { return nil }
 		},
-		// dialTCP is not injected; use a listening socket on 1.2.3.4? that won't work.
-		// Instead record bindControl and fail the connect: we only assert iface.
+		// The connect is failed deliberately: the test asserts only the recorded iface and mark.
 		tcpDial: func(ctx context.Context, network, addr string, control func(string, string, syscall.RawConn) error) (net.Conn, error) {
 			if network != "tcp4" {
 				t.Errorf("network %s", network)
-			}
-			if control != nil {
-				// invoke so bindControl's closure ran when building control
 			}
 			return nil, errors.New("dial skipped")
 		},
@@ -166,6 +162,8 @@ func TestNewPathClient_ReportsTLSCloseAfterClientHello(t *testing.T) {
 
 // WithClientTrace already composes with a previous ClientTrace. Copying those
 // hooks and chaining them ourselves makes TLSHandshakeStart run twice.
+// The test exercises the late TLS-handshake write and detects the race only
+// under -race, so it is intentionally assertion-free.
 func TestNewPathClient_HandshakeErrNoRace(t *testing.T) {
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -527,16 +525,12 @@ func TestIsPathFailure(t *testing.T) {
 	if !isPathFailure(op) {
 		t.Fatal("op")
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "ok")
-	}))
-	defer srv.Close()
-	resp, err := http.Get(srv.URL)
-	if err != nil {
-		t.Fatal(err)
+	// Nothing listens here; the dial error must read as a path failure.
+	_, err := http.Get("http://127.0.0.1:1/")
+	if err == nil {
+		t.Fatal("expected dial error")
 	}
-	resp.Body.Close()
-	if isPathFailure(err) {
-		t.Fatal("success is not a path failure")
+	if !isPathFailure(err) {
+		t.Fatalf("dial to a closed port must be a path failure: %v", err)
 	}
 }

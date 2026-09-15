@@ -154,7 +154,7 @@ func main() {
 			if err == nil {
 				break
 			}
-			// Fail fast on permanent errors (invalid config, bad proxy URL)
+			// Fail fast on permanent errors (invalid config, invalid bot token)
 			var permErr *bot.PermanentError
 			if errors.As(err, &permErr) {
 				slog.Error("Fatal configuration error", "error", err)

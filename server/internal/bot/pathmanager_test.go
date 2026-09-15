@@ -10,9 +10,27 @@ import (
 	"github.com/zinin/vpn-director/server/internal/vpnconfig"
 )
 
-func testMgr(t *testing.T, live map[string]bool, cfg *vpnconfig.VPNDirectorConfig, plat vpnconfig.PlatformInfo, socksUp bool) *PathManager {
+// liveMap guards the per-path probe verdict: a ReportFailure reselect probes
+// from its own goroutine while the test flips entries.
+type liveMap struct {
+	mu sync.Mutex
+	m  map[string]bool
+}
+
+func (l *liveMap) set(key string, v bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.m[key] = v
+}
+
+func (l *liveMap) get(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.m[key]
+}
+
+func testMgr(t *testing.T, live *liveMap, cfg *vpnconfig.VPNDirectorConfig, plat vpnconfig.PlatformInfo, socksUp bool) *PathManager {
 	t.Helper()
-	var mu sync.Mutex
 	return NewPathManager(PathManagerConfig{
 		Token: "TOKEN",
 		LoadVPN: func() (*vpnconfig.VPNDirectorConfig, error) {
@@ -24,9 +42,7 @@ func testMgr(t *testing.T, live map[string]bool, cfg *vpnconfig.VPNDirectorConfi
 		LoadPlatform: func() (vpnconfig.PlatformInfo, error) { return plat, nil },
 		Listening:    func(port int) bool { return socksUp },
 		Probe: func(ctx context.Context, p Path) error {
-			mu.Lock()
-			defer mu.Unlock()
-			if live[p.String()] {
+			if live.get(p.String()) {
 				return nil
 			}
 			return errors.New("dead")
@@ -53,13 +69,13 @@ func tdPlat() vpnconfig.PlatformInfo {
 }
 
 func TestPathManager_DirectWinsAndSwitchesBack(t *testing.T) {
-	live := map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true}
+	live := &liveMap{m: map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true}}
 	m := testMgr(t, live, tdCfg(), tdPlat(), true)
 	m.SelectOnce(context.Background())
 	if m.Current().String() != "socks" {
 		t.Fatalf("want socks, got %s", m.Current())
 	}
-	live["direct"] = true
+	live.set("direct", true)
 	m.SelectOnce(context.Background())
 	if m.Current().String() != "direct" {
 		t.Fatalf("switch back: %s", m.Current())
@@ -67,7 +83,7 @@ func TestPathManager_DirectWinsAndSwitchesBack(t *testing.T) {
 }
 
 func TestPathManager_EqualsStick(t *testing.T) {
-	live := map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true}
+	live := &liveMap{m: map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true}}
 	m := testMgr(t, live, tdCfg(), tdPlat(), true)
 	m.SelectOnce(context.Background())
 	if m.Current().String() != "socks" {
@@ -100,7 +116,7 @@ func TestPathManager_PlatformErrorSkipsTunnels(t *testing.T) {
 }
 
 func TestPathManager_ReportFailureNoopIfStale(t *testing.T) {
-	live := map[string]bool{"direct": true}
+	live := &liveMap{m: map[string]bool{"direct": true}}
 	m := testMgr(t, live, tdCfg(), tdPlat(), false)
 	m.SelectOnce(context.Background())
 	if m.Current().String() != "direct" {
@@ -114,13 +130,13 @@ func TestPathManager_ReportFailureNoopIfStale(t *testing.T) {
 }
 
 func TestPathManager_ReportFailureReselects(t *testing.T) {
-	live := map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true}
+	live := &liveMap{m: map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true}}
 	m := testMgr(t, live, tdCfg(), tdPlat(), true)
 	m.SelectOnce(context.Background())
 	if m.Current().String() != "socks" {
 		t.Fatal(m.Current())
 	}
-	live["socks"] = false
+	live.set("socks", false)
 	m.ReportFailure(m.Current())
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -175,17 +191,13 @@ func TestPathManager_ReportFailureReachesLaterTunnel(t *testing.T) {
 		{ID: "ovpnc2", Iface: "tun12", Connected: true},
 		{ID: "ovpnc3", Iface: "tun13", Connected: true},
 	}}
-	live := map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true, "tunnel:ovpnc3": true}
-	var mu sync.Mutex
+	live := &liveMap{m: map[string]bool{"direct": false, "socks": true, "tunnel:ovpnc2": true, "tunnel:ovpnc3": true}}
 	m := NewPathManager(PathManagerConfig{
 		LoadVPN:      func() (*vpnconfig.VPNDirectorConfig, error) { return cfg, nil },
 		LoadPlatform: func() (vpnconfig.PlatformInfo, error) { return plat, nil },
 		Listening:    func(int) bool { return true },
 		Probe: func(ctx context.Context, p Path) error {
-			mu.Lock()
-			ok := live[p.String()]
-			mu.Unlock()
-			if ok {
+			if live.get(p.String()) {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -204,10 +216,8 @@ func TestPathManager_ReportFailureReachesLaterTunnel(t *testing.T) {
 	if m.Current().String() != "socks" {
 		t.Fatalf("setup: %s", m.Current())
 	}
-	mu.Lock()
-	live["socks"] = false
-	live["tunnel:ovpnc2"] = false
-	mu.Unlock()
+	live.set("socks", false)
+	live.set("tunnel:ovpnc2", false)
 	m.ReportFailure(m.Current())
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -309,7 +319,7 @@ func TestPathManager_RefreshesTunnelIfaceWithoutDropping(t *testing.T) {
 }
 
 func TestPathManager_ClosesIdleOnChange(t *testing.T) {
-	live := map[string]bool{"direct": true}
+	live := &liveMap{m: map[string]bool{"direct": true}}
 	m := testMgr(t, live, tdCfg(), tdPlat(), false)
 	n := 0
 	m.RegisterIdleCloser(func(Path) { n++ })
@@ -317,8 +327,8 @@ func TestPathManager_ClosesIdleOnChange(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("first select closes idle: %d", n)
 	}
-	live["direct"] = false
-	live["tunnel:ovpnc2"] = true
+	live.set("direct", false)
+	live.set("tunnel:ovpnc2", true)
 	// socks down; replacement is tunnel
 	m.SelectOnce(context.Background())
 	if n != 2 {
