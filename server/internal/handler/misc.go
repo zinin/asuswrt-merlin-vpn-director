@@ -47,6 +47,11 @@ Commands:
 // HandleVersion handles /version command
 func (h *MiscHandler) HandleVersion(msg *tgbotapi.Message) {
 	text := h.deps.VersionFull + " (" + h.deps.Commit + ", " + h.deps.BuildDate + ")"
+	if h.deps.TelegramPath != nil {
+		if path := h.deps.TelegramPath(); path != "" {
+			text += "\nTelegram API path: " + path
+		}
+	}
 	h.deps.Sender.Send(msg.Chat.ID, telegram.EscapeMarkdownV2(text))
 }
 

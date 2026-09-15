@@ -138,6 +138,9 @@ func New(ctx context.Context, cfg *config.Config, p paths.Paths, version, versio
 		BuildDate:   buildDate,
 		DevMode:     b.devMode,
 	}
+	if pm := b.pathManager; pm != nil {
+		deps.TelegramPath = func() string { return pm.Current().String() }
+	}
 
 	// Create handlers
 	statusHandler := handler.NewStatusHandler(deps)

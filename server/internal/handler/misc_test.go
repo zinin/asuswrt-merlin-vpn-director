@@ -86,6 +86,28 @@ func TestMiscHandler_HandleVersion(t *testing.T) {
 	}
 }
 
+// With a path manager behind it, /version names the path the bot is using.
+func TestMiscHandler_HandleVersionShowsTelegramPath(t *testing.T) {
+	sender := &mockSender{}
+	deps := &Deps{
+		Sender:       sender,
+		Version:      "v1.0.0",
+		VersionFull:  "v1.0.0-5-gabc1234",
+		Commit:       "abc1234",
+		BuildDate:    "2026-01-30",
+		TelegramPath: func() string { return "tunnel:ovpnc2" },
+	}
+	h := NewMiscHandler(deps)
+
+	msg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 123}}
+	h.HandleVersion(msg)
+
+	expected := telegram.EscapeMarkdownV2("v1.0.0-5-gabc1234 (abc1234, 2026-01-30)\nTelegram API path: tunnel:ovpnc2")
+	if sender.lastText != expected {
+		t.Errorf("expected %q, got %q", expected, sender.lastText)
+	}
+}
+
 func TestMiscHandler_HandleStart(t *testing.T) {
 	sender := &mockSender{}
 	deps := &Deps{Sender: sender}
