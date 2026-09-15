@@ -10,6 +10,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -274,36 +275,47 @@ func ipv4Literal(host string) net.IP {
 
 type pathCtxKey struct{}
 
+type pollCtxKey struct{}
+
+type pollWait struct {
+	cancel context.CancelFunc
+}
+
+func isTelegramPoll(req *http.Request) bool {
+	return strings.Contains(req.URL.Path, "/getUpdates")
+}
+
 type pathTransport struct {
 	src   PathSource
 	mu    sync.Mutex
 	bound Path
 	base  *http.Transport
 	gen   *connGen
+	polls []*pollWait
 	// dialer nil means the package's production dialer. The field exists so a
 	// test injects a dialer instead of writing to that package variable.
 	dialer *pathDialer
 }
 
-// connGen is the live sockets of one Transport generation. CloseIdleConnections
-// leaves in-flight getUpdates alone; closeAll is what unblocks it on a path change.
+// connGen is the live sockets of one Transport generation.
+// Poll sockets (getUpdates) are closed on path change; send sockets are not.
 type connGen struct {
 	mu      sync.Mutex
-	conns   map[net.Conn]struct{}
+	conns   map[net.Conn]bool
 	retired bool
 }
 
 func newConnGen() *connGen {
-	return &connGen{conns: make(map[net.Conn]struct{})}
+	return &connGen{conns: make(map[net.Conn]bool)}
 }
 
-func (g *connGen) add(c net.Conn) bool {
+func (g *connGen) add(c net.Conn, poll bool) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.retired {
+	if g.retired && poll {
 		return false
 	}
-	g.conns[c] = struct{}{}
+	g.conns[c] = poll
 	return true
 }
 
@@ -313,13 +325,18 @@ func (g *connGen) remove(c net.Conn) {
 	g.mu.Unlock()
 }
 
-func (g *connGen) closeAll() {
+func (g *connGen) closePolls() {
 	g.mu.Lock()
 	g.retired = true
-	conns := g.conns
-	g.conns = make(map[net.Conn]struct{})
+	var polls []net.Conn
+	for c, poll := range g.conns {
+		if poll {
+			polls = append(polls, c)
+			delete(g.conns, c)
+		}
+	}
 	g.mu.Unlock()
-	for c := range conns {
+	for _, c := range polls {
 		_ = c.Close()
 	}
 }
@@ -339,6 +356,9 @@ func newPathBase(dial func(ctx context.Context, network, addr string) (net.Conn,
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.Proxy = func(*http.Request) (*url.URL, error) { return nil, nil }
 	base.DialContext = dial
+	// HTTP/2 would multiplex getUpdates and Send on one conn; closing the
+	// poll stream's socket would then abort in-flight sendMessage too.
+	base.ForceAttemptHTTP2 = false
 	return base
 }
 
@@ -367,18 +387,41 @@ func (t *pathTransport) attach(gen *connGen) *http.Transport {
 }
 
 // retireBase installs a new Transport bound to next so keep-alives from the
-// previous path cannot be reused, and closes in-flight sockets of the old
-// generation so getUpdates is not pinned to a blackholed path.
+// previous path cannot be reused, and cancels in-flight getUpdates so polling
+// is not pinned to a blackholed path. Other Bot API calls on the old generation
+// are left to finish.
 func (t *pathTransport) retireBase(next Path) {
 	t.mu.Lock()
 	old := t.base
 	oldGen := t.gen
+	polls := t.polls
+	t.polls = nil
 	t.bound = next
 	t.gen = newConnGen()
 	t.base = t.attach(t.gen)
 	t.mu.Unlock()
 	old.CloseIdleConnections()
-	oldGen.closeAll()
+	oldGen.closePolls()
+	for _, p := range polls {
+		p.cancel()
+	}
+}
+
+func (t *pathTransport) registerPoll(p *pollWait) {
+	t.mu.Lock()
+	t.polls = append(t.polls, p)
+	t.mu.Unlock()
+}
+
+func (t *pathTransport) unregisterPoll(p *pollWait) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i, x := range t.polls {
+		if x == p {
+			t.polls = append(t.polls[:i], t.polls[i+1:]...)
+			return
+		}
+	}
 }
 
 func (t *pathTransport) CloseIdleConnections() {
@@ -393,7 +436,16 @@ func (t *pathTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	p := t.bound
 	base := t.base
 	t.mu.Unlock()
-	req = req.WithContext(context.WithValue(req.Context(), pathCtxKey{}, p))
+	ctx := context.WithValue(req.Context(), pathCtxKey{}, p)
+	if isTelegramPoll(req) {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		ctx = context.WithValue(ctx, pollCtxKey{}, true)
+		pw := &pollWait{cancel: cancel}
+		t.registerPoll(pw)
+		defer t.unregisterPoll(pw)
+	}
+	req = req.WithContext(ctx)
 	var handshakeMu sync.Mutex
 	var handshakeErr error
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
@@ -426,8 +478,9 @@ func (t *pathTransport) dialOn(ctx context.Context, network, addr string, gen *c
 	if err != nil {
 		return nil, err
 	}
+	poll, _ := ctx.Value(pollCtxKey{}).(bool)
 	tc := &trackedConn{Conn: c, gen: gen}
-	if !gen.add(tc) {
+	if !gen.add(tc, poll) {
 		_ = c.Close()
 		return nil, errRetiredPath
 	}

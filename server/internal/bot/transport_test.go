@@ -310,7 +310,7 @@ func TestNewPathClient_PathChangeAbortsInFlight(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		resp, err := client.Get(srv.URL)
+		resp, err := client.Get(srv.URL + "/botTOKEN/getUpdates")
 		if err == nil {
 			io.Copy(io.Discard, resp.Body)
 			errc <- resp.Body.Close()
@@ -333,6 +333,57 @@ func TestNewPathClient_PathChangeAbortsInFlight(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("in-flight request still blocked after path change")
+	}
+}
+
+func TestNewPathClient_PathChangeDoesNotAbortSend(t *testing.T) {
+	arrived := make(chan struct{})
+	hold := make(chan struct{})
+	var holdOnce sync.Once
+	release := func() { holdOnce.Do(func() { close(hold) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		<-hold
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	defer release()
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := NewPathClient(src)
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL + "/botTOKEN/sendMessage")
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			errc <- resp.Body.Close()
+			return
+		}
+		errc <- err
+	}()
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("send did not reach the server")
+	}
+
+	src.idle[0](src.p)
+
+	select {
+	case err := <-errc:
+		t.Fatalf("send aborted on path change: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	release()
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("send did not finish after release")
 	}
 }
 
@@ -362,7 +413,7 @@ func TestNewPathClient_RetireRejectsLateDial(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		resp, err := client.Get(srv.URL)
+		resp, err := client.Get(srv.URL + "/botTOKEN/getUpdates")
 		if err == nil {
 			io.Copy(io.Discard, resp.Body)
 			errc <- resp.Body.Close()
@@ -396,30 +447,13 @@ func TestNewPathClient_RetireRejectsLateDial(t *testing.T) {
 func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 	var mu sync.Mutex
 	var addrs []string
-	arrived := make(chan int, 8)
-	release1 := make(chan struct{})
-	release2 := make(chan struct{})
-	var once1, once2 sync.Once
-	rel1 := func() { once1.Do(func() { close(release1) }) }
-	rel2 := func() { once2.Do(func() { close(release2) }) }
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		n := len(addrs)
 		addrs = append(addrs, r.RemoteAddr)
 		mu.Unlock()
-		arrived <- n
-		switch n {
-		case 0:
-			<-release1
-		case 1:
-			<-release2
-		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	defer rel1()
-	defer rel2()
 
 	src := &fakeSource{p: Path{kind: kindDirect}}
 	client := NewPathClient(src)
@@ -435,73 +469,20 @@ func TestNewPathClient_PathChangeDoesNotReuseOldConn(t *testing.T) {
 		io.Copy(io.Discard, resp.Body)
 		return resp.Body.Close()
 	}
-
-	err1 := make(chan error, 1)
-	go func() { err1 <- do() }()
-	select {
-	case n := <-arrived:
-		if n != 0 {
-			t.Fatalf("first request index %d", n)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first request did not reach the server")
+	if err := do(); err != nil {
+		t.Fatal(err)
 	}
-
-	src.idle[0](src.p) // path change: retire keep-alives so they cannot serve later requests
-
-	select {
-	case err := <-err1:
-		if err == nil {
-			t.Fatal("in-flight request survived path change")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first request did not finish")
+	src.idle[0](src.p)
+	if err := do(); err != nil {
+		t.Fatal(err)
 	}
-
-	err2 := make(chan error, 1)
-	go func() { err2 <- do() }()
-	select {
-	case n := <-arrived:
-		if n != 1 {
-			t.Fatalf("second request index %d", n)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("second request did not reach the server")
-	}
-
-	err3 := make(chan error, 1)
-	go func() { err3 <- do() }()
-	select {
-	case n := <-arrived:
-		if n != 2 {
-			t.Fatalf("third request index %d", n)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("third request did not reach the server")
-	}
-
 	mu.Lock()
-	if addrs[2] == addrs[0] {
-		t.Fatalf("third request reused the pre-switch connection %s (addrs=%v)", addrs[0], addrs)
+	defer mu.Unlock()
+	if len(addrs) != 2 {
+		t.Fatalf("requests %d addrs=%v", len(addrs), addrs)
 	}
-	mu.Unlock()
-
-	rel2()
-	select {
-	case err := <-err2:
-		if err != nil {
-			t.Fatalf("second request: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("second request did not finish")
-	}
-	select {
-	case err := <-err3:
-		if err != nil {
-			t.Fatalf("third request: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("third request did not finish")
+	if addrs[1] == addrs[0] {
+		t.Fatalf("reused the pre-switch connection %s", addrs[0])
 	}
 }
 
