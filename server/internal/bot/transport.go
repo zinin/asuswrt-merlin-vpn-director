@@ -39,6 +39,8 @@ type IdleCloser interface {
 
 var errNoPath = errors.New("telegram API unreachable on every path")
 
+var errRetiredPath = errors.New("telegram API path retired")
+
 type pathDialer struct {
 	lookupIPv4  func(ctx context.Context, host string) ([]net.IP, error)
 	bindControl func(iface string, mark uint32) func(network, address string, c syscall.RawConn) error
@@ -247,18 +249,23 @@ type pathTransport struct {
 // connGen is the live sockets of one Transport generation. CloseIdleConnections
 // leaves in-flight getUpdates alone; closeAll is what unblocks it on a path change.
 type connGen struct {
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
+	mu      sync.Mutex
+	conns   map[net.Conn]struct{}
+	retired bool
 }
 
 func newConnGen() *connGen {
 	return &connGen{conns: make(map[net.Conn]struct{})}
 }
 
-func (g *connGen) add(c net.Conn) {
+func (g *connGen) add(c net.Conn) bool {
 	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.retired {
+		return false
+	}
 	g.conns[c] = struct{}{}
-	g.mu.Unlock()
+	return true
 }
 
 func (g *connGen) remove(c net.Conn) {
@@ -269,6 +276,7 @@ func (g *connGen) remove(c net.Conn) {
 
 func (g *connGen) closeAll() {
 	g.mu.Lock()
+	g.retired = true
 	conns := g.conns
 	g.conns = make(map[net.Conn]struct{})
 	g.mu.Unlock()
@@ -380,7 +388,10 @@ func (t *pathTransport) dialOn(ctx context.Context, network, addr string, gen *c
 		return nil, err
 	}
 	tc := &trackedConn{Conn: c, gen: gen}
-	gen.add(tc)
+	if !gen.add(tc) {
+		_ = c.Close()
+		return nil, errRetiredPath
+	}
 	return tc, nil
 }
 

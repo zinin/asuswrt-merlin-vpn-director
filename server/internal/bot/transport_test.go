@@ -278,6 +278,59 @@ func TestNewPathClient_PathChangeAbortsInFlight(t *testing.T) {
 	}
 }
 
+// closeAll empties the generation's map but, without a retired flag, a dial
+// that started before retire can still add() and return an old-path socket.
+func TestNewPathClient_RetireRejectsLateDial(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	d := pathDialer{
+		tcpDial: func(ctx context.Context, network, addr string, control func(string, string, syscall.RawConn) error) (net.Conn, error) {
+			startOnce.Do(func() { close(started) })
+			<-release
+			return net.Dial(network, addr)
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	src := &fakeSource{p: Path{kind: kindDirect}}
+	client := newPathClientWith(src, &d)
+	if len(src.idle) != 1 {
+		t.Fatalf("idle closers %d", len(src.idle))
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(srv.URL)
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			errc <- resp.Body.Close()
+			return
+		}
+		errc <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dial did not start")
+	}
+
+	src.idle[0](src.p)
+	close(release)
+
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("late dial on a retired generation served a request")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("request still blocked after late dial")
+	}
+}
+
 // CloseIdleConnections on a shared Transport is undone by the next RoundTrip
 // (queueForIdleConn clears closeIdle). An in-flight getUpdates can then return
 // its conn to the pool after a path switch. Retiring the Transport on the idle
