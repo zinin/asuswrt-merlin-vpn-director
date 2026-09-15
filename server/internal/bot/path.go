@@ -64,6 +64,15 @@ func socksPort(cfg *vpnconfig.VPNDirectorConfig) int {
 	return socks
 }
 
+// The range test below is not what keeps a mark inside its field: tunnel.sh
+// refuses a tunnel whose slot exceeds mark_mask >> mark_shift and continues
+// before it appends that tunnel's line to TUN_DIR_TABLES (lib/tunnel.sh:466-470
+// and :548), so an index that would overflow the field never reaches this side.
+// The file is the invariant, which is why mark_mask is not read here.
+//
+// A fractional value falls back to the default because bash has no float
+// arithmetic — $((16.5)) is a syntax error in tunnel.sh — so truncating it here
+// would make the two sides disagree about a config the shell cannot run at all.
 func markShift(cfg *vpnconfig.VPNDirectorConfig) uint {
 	if cfg == nil {
 		return defaultMarkShift
@@ -73,7 +82,7 @@ func markShift(cfg *vpnconfig.VPNDirectorConfig) uint {
 		return defaultMarkShift
 	}
 	v, ok := td["mark_shift"].(float64)
-	if !ok || v < 0 || v > 31 {
+	if !ok || v < 0 || v > 31 || v != float64(uint(v)) {
 		return defaultMarkShift
 	}
 	return uint(v)

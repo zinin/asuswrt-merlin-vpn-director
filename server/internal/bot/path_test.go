@@ -118,6 +118,19 @@ func TestMarkShift(t *testing.T) {
 	}
 }
 
+// bash has no float arithmetic, so a fractional mark_shift names a config
+// tunnel.sh cannot run; truncating it here would hide that.
+func TestMarkShift_FractionalFallsBackToDefault(t *testing.T) {
+	cfg := &vpnconfig.VPNDirectorConfig{
+		Advanced: map[string]interface{}{
+			"tunnel_director": map[string]interface{}{"mark_shift": 16.5},
+		},
+	}
+	if got := markShift(cfg); got != defaultMarkShift {
+		t.Fatalf("got %d; want the default %d", got, defaultMarkShift)
+	}
+}
+
 func TestCandidates_AppliesTunnelMark(t *testing.T) {
 	cfg := &vpnconfig.VPNDirectorConfig{
 		TunnelDirector: vpnconfig.TunnelDirectorConfig{
