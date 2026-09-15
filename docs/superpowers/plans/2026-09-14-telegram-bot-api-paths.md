@@ -77,6 +77,18 @@ Also created in implementation: `server/internal/bot/probe.go`, `probe_test.go` 
 
 ✅ Done — see commit(s): `9f49388`
 
+### Post-review: connection pool, tunnel DNS fallback, sticky params, darwin bind
+
+✅ Done — see commit(s): `0414e5d`
+
+### Post-review: bind path to transport generation and report TLS EOF
+
+✅ Done — see commit(s): `b81c916`
+
+### Post-review: tunnel SO_MARK, failover budget, handshake race, ClientTrace
+
+✅ Done — see commit(s): `9070c48`
+
 ---
 
 ## After implementation (not a coding task)
@@ -95,7 +107,7 @@ Before a PR: `git rm` everything under `docs/superpowers/` and commit that remov
 | Spec | Task |
 |------|------|
 | §1 goal, bot-only | Task 5 (no other HTTP clients touched) |
-| §2 userspace bind, no fwmark | Task 2 |
+| §2 userspace bind, no fwmark | Task 2; later `9070c48` reuses the existing TD mark (`SO_MARK`) — owner-approved, not a new iptables chain |
 | §3 PathManager + Transport + Discovery, `--dev` direct | Tasks 4–5 |
 | §3.1 path identity | Task 1 |
 | §4 candidates, default 12346, pause keeps clients | Task 1 |
